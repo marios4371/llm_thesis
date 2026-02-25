@@ -1,0 +1,88 @@
+id,dataset,baseline_correct,mas_correct,baseline_ans,mas_ans,mas_used_baseline_fallback,expected_snippet
+gsm8k_test_1314,gsm8k_test,True,True,8.0,8.0,False,"3=<<5+3=8>>8 in 3 years
+#### 8"
+gsm-hard_92,gsm-hard,True,True,4358498.0,4358498.0,False,4358498.0
+gsm-plus_1568,gsm-plus:numerical substitution,True,True,120.0,120.0,False,120
+gsm8k_test_1221,gsm8k_test,True,True,10.0,10.0,False," to make 80 meatballs.
+#### 10"
+gsm-symbolic_p2_1051,gsm-symbolic:p2,True,True,3.0,3.0,False," episode = 3 episodes.
+
+#### 3"
+svamp_test_194,svamp:test,True,True,39.0,39.0,False,39
+gsm8k_test_141,gsm8k_test,True,True,400.0,400.0,False,"(100)=400 worker bees
+#### 400"
+svamp_test_141,svamp:test,True,True,37.0,37.0,False,37
+gsm-plus_833,gsm-plus:digit expansion,True,True,5000.0,5000.0,False,5000
+gsm-plus_9241,gsm-plus:digit expansion,True,True,130.0,130.0,False,130
+gsm-hard_807,gsm-hard,False,True,5072530.0,5072529.6,False,5072529.6
+gsm-hard_187,gsm-hard,False,True,71245.86,712071.6000000001,False,712071.6
+svamp_test_85,svamp:test,True,True,8.0,8.0,False,8
+gsm-plus_10117,gsm-plus:problem understanding,True,True,210.0,210.0,False,210
+gsm8k_test_1249,gsm8k_test,True,True,56.0,56.0,False," candles in the house.
+#### 56"
+gsm-symbolic_p2_2086,gsm-symbolic:p2,True,True,80.0,80.0,False,"tage is 32/40*100 = 80
+#### 80"
+gsm-symbolic_p2_214,gsm-symbolic:p2,True,True,399.0,399.0,False,"s is 532 - 133 = 399
+
+#### 399"
+gsm-symbolic_p2_695,gsm-symbolic:p2,True,False,516.0,501.0,False," = 516 potted plants.
+#### 516"
+gsm-plus_2434,gsm-plus:integer-decimal-fraction conversion,True,True,3302.0,3302.0,False,3302
+gsm-hard_1244,gsm-hard,False,True,91717.0,91716.8,False,91716.8
+gsm-symbolic_p2_924,gsm-symbolic:p2,True,True,196.0,196.0,False,"ays ₺220 - ₺24 = ₺196
+#### 196"
+gsm-hard_1120,gsm-hard,True,True,13874520.0,13874520.0,False,13874520.0
+gsm-hard_689,gsm-hard,False,True,348414240.0,348340440.0,False,348340440.0
+gsm-hard_436,gsm-hard,True,True,5.0,5.0,False,5.0
+gsm-plus_1136,gsm-plus:numerical substitution,True,True,315.0,315.0,False,315
+gsm-symbolic_p2_510,gsm-symbolic:p2,True,True,27.0,27.0,False,"bill is 30 - 3.0 = 27 
+#### 27"
+gsm8k_test_225,gsm8k_test,True,True,9.0,9.0,False," + 3 = <<6+3=9>>9 days.
+#### 9"
+svamp_test_28,svamp:test,True,True,11.0,11.0,False,11
+gsm-plus_2052,gsm-plus:reversing operation,True,True,40.0,40.0,False,40
+gsm8k_test_1051,gsm8k_test,True,True,15.0,15.0,False,"ns of water in 30 days
+#### 15"
+gsm8k_test_1007,gsm8k_test,True,True,34.0,34.0,False,"9+14+11=34>>34 sticks.
+#### 34"
+gsm-hard_1061,gsm-hard,False,False,12282904.0,12242902.666666668,False,3060743.666666666
+svamp_test_244,svamp:test,True,True,17.0,17.0,False,17
+gsm-symbolic_p2_1420,gsm-symbolic:p2,True,True,530.0,530.0,False,"530 unoccupied rooms.
+#### 530"
+gsm-plus_5459,gsm-plus:adding operation,True,True,70.0,70.0,False,70
+svamp_test_8,svamp:test,True,True,450.0,450.0,False,450
+gsm8k_test_726,gsm8k_test,True,True,10.0,10.0,False,"oes is x = <<10=10>>10
+#### 10"
+svamp_test_198,svamp:test,True,True,183.0,183.0,False,183
+gsm-symbolic_p2_114,gsm-symbolic:p2,True,False,50.0,38.19444444444444,False,"25% - 6.25% = 50.0%.
+#### 50.0"
+gsm-plus_10082,gsm-plus:integer-decimal-fraction conversion,True,False,5.0,6.0,False,5
+svamp_test_204,svamp:test,True,True,6.0,6.0,False,6
+gsm8k_test_428,gsm8k_test,True,False,26.0,-14.0,False,"ot get second hotdogs.
+#### 26"
+gsm-hard_97,gsm-hard,False,True,8609842.0,8609812.0,False,8609812.0
+gsm8k_test_1201,gsm8k_test,True,True,42.0,42.0,False," = <<20+22=42>>42 fish
+#### 42"
+gsm-symbolic_p2_2340,gsm-symbolic:p2,True,True,3.0,3.0,False,": 3450/1150 = 3 tickets
+#### 3"
+gsm8k_test_929,gsm8k_test,True,True,60.0,60.0,False," farther than the car.
+#### 60"
+gsm-hard_1108,gsm-hard,True,False,408245.0,408244.875,False,408245.0
+gsm-plus_3975,gsm-plus:critical thinking,False,False,numeric_value,26.0,False,None
+gsm-plus_3695,gsm-plus:critical thinking,True,False,None,153.0,False,None
+gsm-hard_988,gsm-hard,False,True,9023570.0,90335490.0,False,90335490.0
+gsm-symbolic_p2_2198,gsm-symbolic:p2,True,False,15.0,17.647058823529413,False,"= 27
+27/180 * 100 = 15
+#### 15"
+gsm-symbolic_p2_467,gsm-symbolic:p2,True,True,48.0,48.0,False,"alls came in the tube.
+#### 48"
+svamp_test_158,svamp:test,True,True,1.0,1.0,False,1
+svamp_test_144,svamp:test,True,True,1.0,1.0,False,1
+gsm-hard_888,gsm-hard,False,True,12740562.0,12731554.349999998,False,12731554.349999998
+svamp_test_138,svamp:test,False,False,45.408,45.408,True,127
+svamp_test_169,svamp:test,True,True,1.0,1.0,True,1
+gsm8k_test_436,gsm8k_test,True,True,15.0,15.0,True," <<20-5=15>>15 ounces.
+#### 15"
+gsm-symbolic_p2_2093,gsm-symbolic:p2,True,True,75.0,75.0,True,"tage is 36/48*100 = 75
+#### 75"
+gsm-plus_3564,gsm-plus:reversing operation,True,True,3.0,3.0,True,3
