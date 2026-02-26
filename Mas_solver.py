@@ -1,8 +1,9 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 6.2: OPTIMIZED - Architect-Engineer Pattern with Improved Prompts
+VERSION 7.0: Structured Hypothesis Testing (SHT)
+    Architect-Engineer Pattern + Multi-Hypothesis Verification
 
-MAJOR IMPROVEMENTS:
+MAJOR IMPROVEMENTS (v6.2 base):
 - Structured Mathematician prompt with explicit JSON schema + example
 - Clear Programmer instructions that follow blueprint exactly
 - Better blueprint extraction and code parsing
@@ -10,10 +11,17 @@ MAJOR IMPROVEMENTS:
 - Smart baseline fallback logic
 - Lower temperatures for more deterministic code generation
 
+NEW IN v7.0 - STRUCTURED HYPOTHESIS TESTING (SHT):
+- Confidence gate detects uncertainty (baseline disagreement, sanity checks)
+- Generates 2 structurally different alternative solution strategies
+- Each alternative uses a different mathematical archetype
+- Rule-based triage (majority voting) or LLM Judge for final selection
+- Full hypothesis logging for research analysis
+
 Expected Performance:
-- Baseline: ~65% accuracy (unchanged)
-- MAS: 75-80% accuracy (vs 45% before optimization)
-- Improvement: +10-15% over baseline (vs -20% before)
+- Baseline: ~83% accuracy
+- MAS only: ~83% accuracy
+- MAS + SHT: ~87-93% accuracy (hypothesis testing on uncertain problems)
 """
 
 from __future__ import annotations
@@ -638,6 +646,31 @@ class AgentResponse:
     reasoning_trace: str
     quality_metrics: Dict[str, Any] = field(default_factory=dict)
 
+@dataclass
+class HypothesisResult:
+    hypothesis_id: str          # "primary", "alt_1", "alt_2", "baseline"
+    strategy_name: str          # "arithmetic_sequential", "algebraic", etc.
+    blueprint: dict
+    code: Optional[str]
+    code_success: bool
+    execution_output: str
+    answer: str
+    parsed_answer: Optional[float]
+    confidence: float
+    agent_response: Optional[AgentResponse]
+
+@dataclass
+class HypothesisLog:
+    problem: str
+    expected: str
+    candidates: List[HypothesisResult] = field(default_factory=list)
+    triage_result: Optional[str] = None      # "confident_skip", "majority", "judge"
+    judge_reasoning: Optional[str] = None
+    final_answer: str = "unknown"
+    final_strategy: str = "none"
+    hypothesis_testing_triggered: bool = False
+    api_calls_used: int = 3
+
 class QualityEnhancedMultiAgentSolver:
     """
     OPTIMIZED Multi-Agent Solver with improved prompts and robustness.
@@ -656,6 +689,7 @@ class QualityEnhancedMultiAgentSolver:
         self.prog_temp = 0.05   # OPTIMIZED: Lower temperature for more deterministic code
         self.enable_baseline_fallback_on_mas_failure = True
         self.enable_metamorphic_testing = False  # Can be enabled if needed
+        self.enable_hypothesis_testing = True     # SHT: Structured Hypothesis Testing
 
     # -------------------------------------------------------------------------
     # OPTIMIZED: Extract Answer with Multiple Strategies
@@ -777,7 +811,7 @@ Output:
     # OPTIMIZED: Programmer Agent with Clear Instructions
     # -------------------------------------------------------------------------
     
-    def run_programmer_solver(self, problem: str, blueprint: dict) -> AgentResponse:
+    def run_programmer_solver(self, problem: str, blueprint: dict, max_attempts: int = 3) -> AgentResponse:
         """
         Enhanced Programmer that strictly follows the Architect's blueprint.
         
@@ -837,7 +871,7 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
         best_answer = None
         last_code = None
         
-        for attempt in range(3):
+        for attempt in range(max_attempts):
             msgs = [
                 {"role": "system", "content": sys_msg},
                 {"role": "user", "content": user_msg + repair_feedback}
@@ -1002,21 +1036,428 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
         
         return True, "\n".join(logs) if logs else "No tests evaluated"
 
+    # =========================================================================
+    # STRUCTURED HYPOTHESIS TESTING (SHT)
+    # =========================================================================
+
+    # -------------------------------------------------------------------------
+    # SHT Step 1: Confidence Gate (rule-based, 0 API calls)
+    # -------------------------------------------------------------------------
+
+    def _confidence_gate(self, primary_answer: str, baseline_answer: str,
+                         programmer_response: AgentResponse,
+                         blueprint: dict) -> Tuple[bool, str]:
+        """
+        Decide whether to trigger hypothesis testing.
+        Returns (is_confident, reason).
+        If is_confident=True, skip SHT. If False, trigger SHT.
+        """
+        # Criterion 1: Programmer failed entirely
+        if str(primary_answer).strip().lower() == "unknown":
+            return False, "programmer_failed"
+
+        # Criterion 2: Primary answer disagrees with baseline
+        primary_num = _extract_last_number(primary_answer)
+        baseline_num = _extract_last_number(baseline_answer)
+        if primary_num is not None and baseline_num is not None:
+            if abs(primary_num - baseline_num) > 1e-3:
+                return False, "baseline_disagreement"
+        elif str(primary_answer).strip() != str(baseline_answer).strip():
+            return False, "baseline_disagreement"
+
+        # Criterion 3: Programmer exhausted all repair attempts
+        attempts = programmer_response.quality_metrics.get("attempts", 1)
+        if programmer_response.quality_metrics.get("error") == "Max attempts reached":
+            return False, "max_attempts_exhausted"
+
+        # Criterion 4: Sanity checks on the answer
+        if primary_num is not None:
+            # 4a: Negative answer for a word problem (usually expects positive)
+            if primary_num < 0:
+                return False, "negative_answer"
+
+            # 4b: Answer is extremely large relative to givens
+            givens = blueprint.get("givens", {})
+            if givens:
+                max_given = max(
+                    (abs(v) for v in givens.values() if isinstance(v, (int, float))),
+                    default=0
+                )
+                if max_given > 0 and abs(primary_num) > max_given * 10000:
+                    return False, "answer_magnitude_suspicious"
+
+        # All checks passed — confident
+        return True, "all_checks_passed"
+
+    # -------------------------------------------------------------------------
+    # SHT Step 2: Alternative Hypothesis Generator (1 API call)
+    # -------------------------------------------------------------------------
+
+    STRATEGY_ARCHETYPES = [
+        "Arithmetic-Sequential: chain of basic operations (add, subtract, multiply, divide) applied step by step",
+        "Algebraic-Equational: set up one or more equations with unknowns and solve symbolically",
+        "Unit-Rate: compute a per-unit rate first, then scale to the target quantity",
+        "Working-Backwards: start from what the answer should look like and reverse the operations",
+        "Partitioning: split the problem into independent sub-problems, solve each, then combine",
+    ]
+
+    def generate_alternative_hypotheses(self, problem: str,
+                                        primary_blueprint: dict,
+                                        primary_answer: str) -> List[dict]:
+        """
+        Generate 2 structurally different solution blueprints.
+        Each uses a different mathematical strategy archetype.
+        Returns a list of blueprint dicts.
+        """
+        primary_strategy = primary_blueprint.get("notes", "")
+        primary_eqs = primary_blueprint.get("equations", [])
+
+        sys_msg = f"""You are an expert Mathematician who generates ALTERNATIVE solution strategies.
+
+You have already seen one solution approach. Now produce exactly 2 DIFFERENT approaches
+using DIFFERENT mathematical strategies.
+
+AVAILABLE STRATEGY ARCHETYPES:
+{chr(10).join(f'  {i+1}. {s}' for i, s in enumerate(self.STRATEGY_ARCHETYPES))}
+
+CRITICAL RULES:
+1. Each alternative MUST use a genuinely different strategy archetype
+2. Do NOT repeat the same equations or approach in different words
+3. Each alternative must be a complete, self-contained solution plan
+4. All equations must be valid Python code referencing givens['key']
+5. Return ONLY valid JSON, no preamble
+
+OUTPUT FORMAT (strict JSON):
+{{
+  "alternatives": [
+    {{
+      "strategy_name": "one of the archetype names above",
+      "unknown": "what we need to find",
+      "givens": {{"var_name": numeric_value, ...}},
+      "solution_steps": ["Step 1: ...", "Step 2: ..."],
+      "equations": ["step1 = givens['var'] ...", "answer = ..."]
+    }},
+    {{
+      "strategy_name": "a DIFFERENT archetype name",
+      "unknown": "what we need to find",
+      "givens": {{"var_name": numeric_value, ...}},
+      "solution_steps": ["Step 1: ...", "Step 2: ..."],
+      "equations": ["step1 = givens['var'] ...", "answer = ..."]
+    }}
+  ]
+}}"""
+
+        user_msg = f"""PROBLEM:
+{problem}
+
+EXISTING SOLUTION (use a DIFFERENT approach):
+Strategy: {primary_strategy}
+Equations: {json.dumps(primary_eqs)}
+Answer obtained: {primary_answer}
+
+Generate 2 alternative solution strategies as JSON."""
+
+        msgs = [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": user_msg}
+        ]
+
+        raw = self.client.call_model(msgs, temperature=0.2, max_tokens=1800)
+
+        # Parse the response
+        alternatives = []
+        try:
+            text = str(raw).strip()
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
+
+            # Try direct JSON parse
+            parsed = None
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                start, end = text.find("{"), text.rfind("}")
+                if start != -1 and end > start:
+                    try:
+                        parsed = json.loads(text[start:end+1])
+                    except json.JSONDecodeError:
+                        pass
+
+            if parsed and "alternatives" in parsed:
+                for alt in parsed["alternatives"][:2]:
+                    if isinstance(alt, dict):
+                        alt.setdefault("unknown", "the answer")
+                        alt.setdefault("givens", {})
+                        alt.setdefault("solution_steps", [])
+                        alt.setdefault("equations", [])
+                        alt.setdefault("strategy_name", "unknown_strategy")
+                        alternatives.append(alt)
+        except Exception as e:
+            logger.warning(f"SHT: Failed to parse alternative hypotheses: {e}")
+
+        return alternatives
+
+    # -------------------------------------------------------------------------
+    # SHT Step 3: Triage Candidates (rule-based, 0 API calls)
+    # -------------------------------------------------------------------------
+
+    def _triage_candidates(self, candidates: List[HypothesisResult]) -> Tuple[Optional[str], Optional[str], str]:
+        """
+        Rule-based voting among candidates.
+        Returns (winning_answer, winning_strategy, triage_method).
+        triage_method is one of: "unanimous", "majority", "no_majority"
+        """
+        # Filter to successful candidates with numeric answers
+        valid = [c for c in candidates if c.code_success and c.parsed_answer is not None]
+
+        if not valid:
+            return None, None, "no_valid_candidates"
+
+        # Group by numeric answer (tolerance 1e-3)
+        groups: Dict[str, List[HypothesisResult]] = {}
+        for c in valid:
+            matched = False
+            for key in groups:
+                if abs(c.parsed_answer - float(key)) < 1e-3:
+                    groups[key].append(c)
+                    matched = True
+                    break
+            if not matched:
+                groups[str(c.parsed_answer)] = [c]
+
+        if not groups:
+            return None, None, "no_valid_candidates"
+
+        # Sort groups by size (descending), then by average confidence
+        sorted_groups = sorted(
+            groups.items(),
+            key=lambda g: (len(g[1]), sum(c.confidence for c in g[1]) / len(g[1])),
+            reverse=True
+        )
+
+        best_answer_key, best_group = sorted_groups[0]
+        total_valid = len(valid)
+
+        # Unanimous agreement
+        if len(sorted_groups) == 1:
+            winner = best_group[0]
+            return winner.answer, winner.strategy_name, "unanimous"
+
+        # Majority (>= 2 out of valid candidates, and strictly more than any other group)
+        if len(best_group) >= 2 and (len(sorted_groups) < 2 or len(best_group) > len(sorted_groups[1][1])):
+            winner = best_group[0]
+            return winner.answer, winner.strategy_name, "majority"
+
+        # No clear majority
+        return None, None, "no_majority"
+
+    # -------------------------------------------------------------------------
+    # SHT Step 4: Judge Agent (0-1 API calls, only when no majority)
+    # -------------------------------------------------------------------------
+
+    def _judge_hypotheses(self, problem: str,
+                          candidates: List[HypothesisResult]) -> Tuple[str, str, str]:
+        """
+        LLM-based Judge that evaluates reasoning quality when triage fails.
+        Returns (final_answer, winning_strategy, judge_reasoning).
+        """
+        # Build candidate summaries for the Judge
+        candidate_summaries = []
+        for i, c in enumerate(candidates):
+            if not c.code_success:
+                status = f"FAILED (error: {c.execution_output[:100]})"
+            else:
+                status = f"SUCCESS → answer = {c.answer}"
+
+            summary = f"""--- Candidate {i+1}: {c.strategy_name} ({c.hypothesis_id}) ---
+Status: {status}
+Equations: {json.dumps(c.blueprint.get('equations', []))}
+Code (first 300 chars): {(c.code or 'N/A')[:300]}
+"""
+            candidate_summaries.append(summary)
+
+        sys_msg = """You are a mathematical reasoning Judge. Multiple solution strategies were tried for the same problem. Some may have errors.
+
+Your task: Evaluate each candidate's reasoning and select the MOST RELIABLE answer.
+
+Evaluation criteria (in order of importance):
+1. CODE EXECUTION: Did the code run successfully? Discard failed candidates.
+2. MATHEMATICAL CORRECTNESS: Are the equations and logic sound?
+3. COMPLETENESS: Does the approach account for ALL conditions in the problem?
+4. AGREEMENT: If multiple strategies agree on an answer, that's strong evidence.
+5. SIMPLICITY: Among equally valid approaches, prefer the simpler one.
+
+OUTPUT FORMAT:
+First explain your reasoning briefly (2-3 sentences).
+Then write: SELECTED_ANSWER: [[number]]
+Then write: SELECTED_STRATEGY: [[strategy_name]]"""
+
+        user_msg = f"""PROBLEM:
+{problem}
+
+CANDIDATES:
+{''.join(candidate_summaries)}
+
+Evaluate and select the most reliable answer."""
+
+        msgs = [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": user_msg}
+        ]
+
+        raw = self.client.call_model(msgs, temperature=0.0, max_tokens=800)
+        raw_text = str(raw)
+
+        # Extract judge's selected answer
+        answer_match = re.search(r'SELECTED_ANSWER:\s*\[\[([^\]]+)\]\]', raw_text)
+        strategy_match = re.search(r'SELECTED_STRATEGY:\s*\[\[([^\]]+)\]\]', raw_text)
+
+        if answer_match:
+            judge_answer = answer_match.group(1).strip()
+        else:
+            # Fallback: extract last number from judge response
+            num = _extract_last_number(raw_text)
+            judge_answer = str(num) if num is not None else "unknown"
+
+        judge_strategy = strategy_match.group(1).strip() if strategy_match else "judge_selection"
+
+        return judge_answer, judge_strategy, raw_text[:500]
+
+    # -------------------------------------------------------------------------
+    # SHT Step 5: Orchestrator
+    # -------------------------------------------------------------------------
+
+    def _structured_hypothesis_testing(self, problem: str, expected: str,
+                                       primary_blueprint: dict,
+                                       programmer_response: AgentResponse,
+                                       baseline_answer: str) -> HypothesisLog:
+        """
+        Main SHT orchestrator. Coordinates confidence gate, hypothesis
+        generation, execution, triage, and judging.
+        """
+        primary_answer = programmer_response.answer
+        primary_num = _extract_last_number(primary_answer)
+
+        log = HypothesisLog(
+            problem=problem,
+            expected=expected,
+            final_answer=primary_answer,
+            final_strategy="primary",
+        )
+
+        # Record primary as first candidate
+        primary_candidate = HypothesisResult(
+            hypothesis_id="primary",
+            strategy_name="primary_blueprint",
+            blueprint=primary_blueprint,
+            code=programmer_response.reasoning_trace,
+            code_success=programmer_response.confidence > 0.5,
+            execution_output=programmer_response.quality_metrics.get("execution_output", ""),
+            answer=primary_answer,
+            parsed_answer=primary_num,
+            confidence=programmer_response.confidence,
+            agent_response=programmer_response,
+        )
+        log.candidates.append(primary_candidate)
+
+        # Record baseline as a candidate too
+        baseline_num = _extract_last_number(baseline_answer)
+        baseline_candidate = HypothesisResult(
+            hypothesis_id="baseline",
+            strategy_name="zero_shot_baseline",
+            blueprint={},
+            code=None,
+            code_success=baseline_num is not None,
+            execution_output="",
+            answer=baseline_answer,
+            parsed_answer=baseline_num,
+            confidence=0.5,
+            agent_response=None,
+        )
+        log.candidates.append(baseline_candidate)
+
+        # --- Confidence Gate ---
+        is_confident, gate_reason = self._confidence_gate(
+            primary_answer, baseline_answer, programmer_response, primary_blueprint
+        )
+
+        if is_confident:
+            log.triage_result = "confident_skip"
+            log.final_answer = primary_answer
+            log.final_strategy = "primary_blueprint"
+            log.hypothesis_testing_triggered = False
+            log.api_calls_used = 3
+            return log
+
+        # --- Trigger SHT ---
+        logger.info(f"SHT triggered: {gate_reason}")
+        log.hypothesis_testing_triggered = True
+        api_calls = 3  # baseline + mathematician + programmer already used
+
+        # Generate 2 alternative blueprints (1 API call)
+        alt_blueprints = self.generate_alternative_hypotheses(
+            problem, primary_blueprint, primary_answer
+        )
+        api_calls += 1
+
+        # Execute each alternative through the Programmer (1 API call each, 1 attempt)
+        for idx, alt_bp in enumerate(alt_blueprints[:2]):
+            alt_response = self.run_programmer_solver(problem, alt_bp, max_attempts=1)
+            api_calls += 1
+
+            alt_num = _extract_last_number(alt_response.answer)
+            alt_candidate = HypothesisResult(
+                hypothesis_id=f"alt_{idx+1}",
+                strategy_name=alt_bp.get("strategy_name", f"alternative_{idx+1}"),
+                blueprint=alt_bp,
+                code=alt_response.reasoning_trace,
+                code_success=alt_response.confidence > 0.5,
+                execution_output=alt_response.quality_metrics.get("execution_output", ""),
+                answer=alt_response.answer,
+                parsed_answer=alt_num,
+                confidence=alt_response.confidence,
+                agent_response=alt_response,
+            )
+            log.candidates.append(alt_candidate)
+
+        # --- Triage (rule-based, 0 API calls) ---
+        triage_answer, triage_strategy, triage_method = self._triage_candidates(log.candidates)
+
+        if triage_method in ("unanimous", "majority"):
+            log.triage_result = triage_method
+            log.final_answer = triage_answer
+            log.final_strategy = triage_strategy
+            log.api_calls_used = api_calls
+            return log
+
+        # --- Judge (1 API call, only when no majority) ---
+        judge_answer, judge_strategy, judge_reasoning = self._judge_hypotheses(
+            problem, log.candidates
+        )
+        api_calls += 1
+
+        log.triage_result = "judge"
+        log.judge_reasoning = judge_reasoning
+        log.final_answer = judge_answer
+        log.final_strategy = judge_strategy
+        log.api_calls_used = api_calls
+        return log
+
     # -------------------------------------------------------------------------
     # Main Solve Method
     # -------------------------------------------------------------------------
-    
+
     def solve(self, problem: str, expected: str) -> Dict[str, Any]:
         """
-        Main solve method with baseline fallback.
-        
+        Main solve method with Structured Hypothesis Testing (SHT).
+
         Flow:
         1. Run baseline (zero-shot)
         2. Run Architect (Mathematician)
         3. Run Engineer (Programmer)
-        4. If MAS fails, fallback to baseline
+        4. SHT: Confidence gate → alternative hypotheses → triage → judge
+        5. Fallback to baseline if everything fails
         """
-        
+
         # Step 1: Baseline
         baseline_prompt = f"{problem}\n\nSolve this step-by-step. End with: ANSWER: [[numeric_value]]"
         base_raw = self.client.call_model(
@@ -1025,23 +1466,33 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
             max_tokens=800
         )
         base_ans, _ = self.extract_answer(base_raw)
-        
+
         # Step 2: Architect
         blackboard_logic = self.run_mathematician_analysis(problem)
-        
+
         # Step 3: Engineer
         programmer_response = self.run_programmer_solver(problem, blackboard_logic)
-        
-        # Step 4: Fallback logic
-        mas_answer = programmer_response.answer
-        used_baseline_fallback = False
-        
+
+        # Step 4: Structured Hypothesis Testing
+        hypothesis_log = None
+        if self.enable_hypothesis_testing:
+            hypothesis_log = self._structured_hypothesis_testing(
+                problem, expected, blackboard_logic,
+                programmer_response, base_ans
+            )
+            mas_answer = hypothesis_log.final_answer
+            used_baseline_fallback = False
+        else:
+            mas_answer = programmer_response.answer
+            used_baseline_fallback = False
+
+        # Step 5: Fallback logic (applies if SHT still returns "unknown")
         if self.enable_baseline_fallback_on_mas_failure:
             if str(mas_answer).strip().lower() == "unknown" and str(base_ans).strip().lower() != "unknown":
                 mas_answer = base_ans
                 used_baseline_fallback = True
-        
-        return {
+
+        result = {
             "problem": problem,
             "expected": expected,
             "baseline": {"answer": base_ans},
@@ -1051,8 +1502,30 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
                 "used_baseline_fallback": used_baseline_fallback,
                 "programmer_metrics": programmer_response.quality_metrics
             },
-            "agents": [programmer_response]
+            "agents": [programmer_response],
         }
+
+        # Attach SHT metadata
+        if hypothesis_log:
+            result["sht"] = {
+                "triggered": hypothesis_log.hypothesis_testing_triggered,
+                "triage_result": hypothesis_log.triage_result,
+                "final_strategy": hypothesis_log.final_strategy,
+                "num_candidates": len(hypothesis_log.candidates),
+                "api_calls_used": hypothesis_log.api_calls_used,
+                "judge_reasoning": hypothesis_log.judge_reasoning,
+                "candidates": [
+                    {
+                        "id": c.hypothesis_id,
+                        "strategy": c.strategy_name,
+                        "answer": c.answer,
+                        "success": c.code_success,
+                    }
+                    for c in hypothesis_log.candidates
+                ],
+            }
+
+        return result
 
 
 # --------------------------- Main Pipeline ---------------------------
@@ -1106,6 +1579,17 @@ class QualityAwarePipeline:
             detailed.append(res)
 
         self.results = detailed
+        sht_data = []
+        for r in detailed:
+            sht = r.get("sht", {})
+            sht_data.append({
+                "sht_triggered": sht.get("triggered", False),
+                "sht_triage_result": sht.get("triage_result", "n/a"),
+                "sht_winning_strategy": sht.get("final_strategy", "n/a"),
+                "sht_num_candidates": sht.get("num_candidates", 0),
+                "sht_api_calls": sht.get("api_calls_used", 3),
+            })
+
         df = pd.DataFrame([
             {
                 "id": r["id"],
@@ -1116,37 +1600,73 @@ class QualityAwarePipeline:
                 "mas_ans": r["mas"]["answer"],
                 "mas_used_baseline_fallback": r["mas"].get("used_baseline_fallback", False),
                 "expected_snippet": str(r["expected"])[-30:],
-            } for r in detailed
+                **sht_data[i],
+            } for i, r in enumerate(detailed)
         ])
         return df
 
     def report(self):
         if not self.results:
             return
-        df = pd.DataFrame([
-            {
+        rows = []
+        for r in self.results:
+            sht = r.get("sht", {})
+            rows.append({
                 "base": 1 if r["baseline"]["correct"] else 0,
                 "mas": 1 if r["mas"]["correct"] else 0,
                 "mas_fallback": 1 if r["mas"].get("used_baseline_fallback", False) else 0,
-            }
-            for r in self.results
-        ])
+                "sht_triggered": 1 if sht.get("triggered", False) else 0,
+                "sht_triage": sht.get("triage_result", "n/a"),
+            })
+        df = pd.DataFrame(rows)
         n = len(df)
         base_acc = df["base"].mean()
         mas_acc = df["mas"].mean()
         fb_rate = df["mas_fallback"].mean()
+        sht_trigger_rate = df["sht_triggered"].mean()
+
+        # SHT rescue/damage analysis
+        rescue_count = 0
+        damage_count = 0
+        for r in self.results:
+            sht = r.get("sht", {})
+            if not sht.get("triggered", False):
+                continue
+            # Compare: would the primary (pre-SHT) answer have been correct?
+            primary_candidates = [c for c in sht.get("candidates", []) if c["id"] == "primary"]
+            if primary_candidates:
+                primary_ans = primary_candidates[0]["answer"]
+                primary_correct = self.check_correctness(primary_ans, r["expected"])
+                mas_correct = r["mas"]["correct"]
+                if mas_correct and not primary_correct:
+                    rescue_count += 1
+                elif not mas_correct and primary_correct:
+                    damage_count += 1
+
+        sht_triggered_total = int(df["sht_triggered"].sum())
 
         print("\n" + "="*60)
-        print("          FINAL PERFORMANCE REPORT (OPTIMIZED)")
+        print("   PERFORMANCE REPORT (MAS + Structured Hypothesis Testing)")
         print("="*60)
         print(f"Total Examples: {n}")
         print("-" * 60)
-        print(f"{'Metric':<25} | {'Value':<10}")
+        print(f"{'Metric':<30} | {'Value':<10}")
         print("-" * 60)
-        print(f"{'Baseline Accuracy':<25} | {base_acc:.2%}")
-        print(f"{'MAS Accuracy':<25} | {mas_acc:.2%}")
-        print(f"{'MAS->Baseline Fallback':<25} | {fb_rate:.2%}")
-        print(f"{'Improvement':<25} | {(mas_acc - base_acc):+.2%}")
+        print(f"{'Baseline Accuracy':<30} | {base_acc:.2%}")
+        print(f"{'MAS+SHT Accuracy':<30} | {mas_acc:.2%}")
+        print(f"{'Improvement over Baseline':<30} | {(mas_acc - base_acc):+.2%}")
+        print(f"{'MAS->Baseline Fallback':<30} | {fb_rate:.2%}")
+        print("-" * 60)
+        print(f"{'SHT Trigger Rate':<30} | {sht_trigger_rate:.2%} ({sht_triggered_total}/{n})")
+        print(f"{'SHT Rescue (fixed wrong)':<30} | {rescue_count}")
+        print(f"{'SHT Damage (broke correct)':<30} | {damage_count}")
+        if sht_triggered_total > 0:
+            print(f"{'SHT Net Benefit':<30} | {rescue_count - damage_count:+d} problems")
+            triage_counts = df[df["sht_triggered"] == 1]["sht_triage"].value_counts()
+            print("-" * 60)
+            print("SHT Triage Breakdown:")
+            for method, count in triage_counts.items():
+                print(f"  {method:<26} | {count}")
         print("="*60 + "\n")
 
 
@@ -1154,15 +1674,17 @@ class QualityAwarePipeline:
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("  OPTIMIZED Multi-Agent Math Solver - VERSION 6.2")
-    print("  Key Improvements:")
+    print("  Multi-Agent Math Solver - VERSION 7.0")
+    print("  Architect-Engineer + Structured Hypothesis Testing (SHT)")
+    print("  Key Features:")
     print("  ✓ Structured Mathematician prompt with JSON schema + example")
     print("  ✓ Clear Programmer instructions that follow blueprint")
-    print("  ✓ Better error handling and answer extraction")
-    print("  ✓ Smart baseline fallback logic")
+    print("  ✓ Confidence gate detects uncertain answers")
+    print("  ✓ Alternative hypothesis generation (2 diverse strategies)")
+    print("  ✓ Rule-based triage + LLM Judge for final selection")
     print("=" * 70)
     print()
-    
+
     print("Select Provider:")
     print("1) Groq")
     print("2) Google")
@@ -1177,5 +1699,5 @@ if __name__ == "__main__":
         hardener="distractor",
     )
     pipeline.report()
-    df_results.to_csv("final_results_optimized.csv", index=False)
-    print("Results saved to 'final_results_optimized.csv'.")
+    df_results.to_csv("final_results_sht.csv", index=False)
+    print("Results saved to 'final_results_sht.csv'.")
