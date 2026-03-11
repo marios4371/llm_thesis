@@ -1,0 +1,21 @@
+id,dataset,baseline_correct,mas_correct,baseline_ans,mas_ans,mas_used_baseline_fallback,expected_snippet,sht_triggered,sht_triage_result,sht_winning_strategy,sht_num_candidates,sht_api_calls
+gsm8k_test_320,gsm8k_test,True,True,8.0,8.0,False,"<30-22=8>>8 were women.
+#### 8",False,confident_skip,primary_blueprint,2,3
+gsm8k_test_676,gsm8k_test,True,True,240.0,240.0,False," $<<1200-960=240>>240
+#### 240",True,unanimous,zero_shot_baseline,2,4
+gsm8k_test_5,gsm8k_test,True,True,64.0,64.0,False,"asses he wants to buy.
+#### 64",False,confident_skip,primary_blueprint,2,3
+gsm8k_test_363,gsm8k_test,True,True,6.0,6.0,False,"ve 3+3=<<3+3=6>>6 hours
+#### 6",False,confident_skip,primary_blueprint,2,3
+gsm8k_test_1150,gsm8k_test,True,True,21.0,21.0,False,"6+15=21>>21 roses now.
+#### 21",False,confident_skip,primary_blueprint,2,3
+gsm8k_test_969,gsm8k_test,False,True,2100.0,1800.0,False,"<1200+600=1800>>1800
+#### 1800",True,majority,primary_blueprint,4,6
+gsm8k_test_665,gsm8k_test,True,True,360.0,360.0,False,"<60*6=360>>360 hours.
+#### 360",False,confident_skip,primary_blueprint,2,3
+gsm8k_test_410,gsm8k_test,True,True,3.0,3.0,False,"-7=3.00>>3.00 left over
+#### 3",False,confident_skip,primary_blueprint,2,3
+gsm8k_test_1004,gsm8k_test,True,True,8.0,8.0,False,"than Martha in each box
+#### 8",False,confident_skip,primary_blueprint,2,3
+gsm8k_test_993,gsm8k_test,True,True,11.0,11.0,False," to France in one day.
+#### 11",False,confident_skip,primary_blueprint,2,3

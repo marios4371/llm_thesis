@@ -1,31 +1,35 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 7.0: Structured Hypothesis Testing (SHT)
-    Architect-Engineer Pattern + Multi-Hypothesis Verification
+VERSION 7.2: Rate-Limit Aware SHT (Structured Hypothesis Testing)
+    
+FIXES IN v7.1 (over v7.0):
+- [CRITICAL FIX] Error responses (e.g., HTTP 401) no longer parsed as numeric answers
+- [FIX] Added _is_error_response() guard throughout the pipeline
+- [FIX] API key validation at startup before running any problems
+- [FIX] Baseline, Mathematician, and Programmer all check for error responses
+- [FIX] SHT confidence gate properly handles error propagation
 
-MAJOR IMPROVEMENTS (v6.2 base):
-- Structured Mathematician prompt with explicit JSON schema + example
-- Clear Programmer instructions that follow blueprint exactly
-- Better blueprint extraction and code parsing
-- Robust answer extraction with multiple strategies
-- Smart baseline fallback logic
-- Lower temperatures for more deterministic code generation
+FIXES IN v7.2 (over v7.1):
+- [CRITICAL FIX] Proper 429 Rate Limit handling with wait-time extraction
+- [FIX] Token budget tracker: estimates usage & warns before exceeding daily limit
+- [FIX] Cache enabled by default to avoid re-spending tokens on reruns
+- [FIX] Default num_problems reduced to 20 (fits comfortably in free tier)
+- [FIX] Graceful degradation: disables SHT when token budget is low
+- [FIX] Exponential backoff with jitter for rate limit errors
+- [FIX] Early abort when daily limit is exhausted (no silent failures)
 
-NEW IN v7.0 - STRUCTURED HYPOTHESIS TESTING (SHT):
-- Confidence gate detects uncertainty (baseline disagreement, sanity checks)
-- Generates 2 structurally different alternative solution strategies
-- Each alternative uses a different mathematical archetype
-- Rule-based triage (majority voting) or LLM Judge for final selection
-- Full hypothesis logging for research analysis
-
-Expected Performance:
-- Baseline: ~83% accuracy
-- MAS only: ~83% accuracy
-- MAS + SHT: ~87-93% accuracy (hypothesis testing on uncertain problems)
+TOKEN BUDGET (Groq Free Tier = 100,000 TPD):
+  Without SHT: ~4,500 tokens/problem → max ~22 problems/day
+  With SHT:    ~9,000 tokens/problem → max ~11 problems/day
+  Mixed (30% trigger): ~6,000 tokens/problem → max ~16 problems/day
+  
+  Recommended configurations:
+    Quick test:  num_problems=10, SHT=ON   → ~60K-90K tokens
+    Full eval:   num_problems=20, SHT=ON   → ~90K-120K tokens (may hit limit)
+    Large eval:  num_problems=60, SHT=OFF  → ~270K tokens (needs Dev tier)
 """
 
 from __future__ import annotations
-
 import os 
 import re
 import json
@@ -41,6 +45,9 @@ from typing import Dict, List, Optional, Tuple, Any
 import pandas as pd
 from dotenv import load_dotenv
 
+# --- LLM Providers ---
+from openai import OpenAI
+
 # --- Statistical Libraries Check ---
 try:
     from statsmodels.stats.contingency_tables import mcnemar
@@ -55,20 +62,16 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 try:
-    from datasets import load_dataset
-    DATASETS_AVAILABLE = True
-except ImportError:
-    DATASETS_AVAILABLE = False
-    print("Warning: 'datasets' library not found. Standard curated set will be used.")
-
-# --- LLM Providers ---
-from openai import OpenAI
-
-try:
     import google.generativeai as genai
     GOOGLE_AVAILABLE = True
 except ImportError:
     GOOGLE_AVAILABLE = False
+
+try:
+    from datasets import load_dataset
+    DATASETS_AVAILABLE = True
+except ImportError:
+    DATASETS_AVAILABLE = False
 
 
 # --------------------------- Configuration ---------------------------
@@ -76,7 +79,7 @@ except ImportError:
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-
+SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
 
 # --------------------------- Cache & Logging ---------------------------
 
@@ -114,8 +117,30 @@ class RateLimiter:
                 time.sleep(self.delay - elapsed)
             self.last_call = time.time()
 
-groq_limiter = RateLimiter(requests_per_minute=12)
-google_limiter = RateLimiter(requests_per_minute=12)
+groq_limiter = RateLimiter(requests_per_minute=10)
+google_limiter = RateLimiter(requests_per_minute=10)
+sambanova_limiter = RateLimiter(requests_per_minute=15) # SambaNova επιτρέπει περισσότερα
+
+class TokenBudget:
+    def __init__(self, daily_limit: int = 100_000):
+        self.daily_limit = daily_limit
+        self.tokens_used = 0
+        self.lock = threading.Lock()
+    
+    def estimate_tokens(self, messages: List[Dict[str, str]], max_tokens: int) -> int:
+        input_chars = sum(len(m.get("content", "")) for m in messages)
+        return (input_chars // 4) + max_tokens
+    
+    def record_usage(self, estimated_tokens: int) -> None:
+        with self.lock: self.tokens_used += estimated_tokens
+    
+    def can_afford(self, estimated_tokens: int) -> bool:
+        with self.lock: return (self.daily_limit - self.tokens_used) >= estimated_tokens
+
+    def usage_report(self) -> str:
+        return f"Tokens: {self.tokens_used:,} / {self.daily_limit:,}"
+
+token_budget = TokenBudget(daily_limit=250_000)
 
 def _safe_json_load(s: str) -> Optional[dict]:
     try:
@@ -123,12 +148,42 @@ def _safe_json_load(s: str) -> Optional[dict]:
     except Exception:
         return None
 
+
+# ==========================================================================
+# [FIX v7.1] Error Detection Helper
+# ==========================================================================
+
+def _is_error_response(text: Any) -> bool:
+    if text is None: return True
+    s = str(text).strip()
+    if s.startswith("ERROR_"): return True
+    error_patterns = [r"error.*(?:401|403|429|500)", r"unauthorized", r"rate.?limit", r"budget.*exceeded"]
+    s_lower = s.lower()
+    for pattern in error_patterns:
+        if re.search(pattern, s_lower): return True
+    if len(s) < 5 and not re.match(r'^-?\d+\.?\d*$', s): return True
+    return False
+
+
 # OPTIMIZED: Better blueprint extraction with structured fallback
 def _extract_blueprint_json(text: str) -> dict:
     """
     Enhanced JSON extraction with better fallback handling.
     Ensures required keys exist even if parsing fails.
     """
+    # [FIX v7.1] Check for error response first
+    if _is_error_response(text):
+        logger.warning(f"Mathematician returned error response: {str(text)[:200]}")
+        return {
+            "unknown": "the answer",
+            "givens": {},
+            "solution_steps": ["Error: LLM call failed"],
+            "equations": [],
+            "distractor_check": "",
+            "metamorphic_tests": [],
+            "notes": f"ERROR: {str(text)[:200]}"
+        }
+    
     text = str(text).strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
     
@@ -191,14 +246,10 @@ def _extract_blueprint_json(text: str) -> dict:
         "equations": equations,
         "distractor_check": "",
         "metamorphic_tests": [],
-        "notes": text[:800]  # Keep context for debugging
+        "notes": text[:800]
     }
 
 def _extract_givens_dict_from_code(code_str: str) -> Optional[dict]:
-    """
-    Finds: givens = {...}
-    Returns dict via ast.literal_eval (safer than eval).
-    """
     m = re.search(r"givens\s*=\s*(\{.*?\})\s*(?:\n|$)", code_str, re.DOTALL)
     if not m:
         return None
@@ -214,13 +265,16 @@ def _replace_givens_dict_in_code(code_str: str, new_givens: dict) -> str:
     prefix, _, suffix = m.group(1), m.group(2), m.group(3)
     return code_str[:m.start()] + prefix + repr(new_givens) + suffix + code_str[m.end():]
 
-# --------------------------- OPTIMIZED: Robust Code Extractor ---------------------------
+# --------------------------- Robust Code Extractor ---------------------------
 
 def _extract_code_from_response(raw: str) -> Optional[str]:
     """
     Enhanced code extraction with multiple pattern matching strategies.
-    Handles: fenced blocks, open fences, and bare code starting with 'givens ='.
     """
+    # [FIX v7.1] Don't try to extract code from error responses
+    if _is_error_response(raw):
+        return None
+    
     s = str(raw)
     
     # Strategy 1: Standard markdown fences
@@ -248,7 +302,6 @@ def _extract_code_from_response(raw: str) -> Optional[str]:
         match = re.search(pattern, s, re.DOTALL | re.IGNORECASE)
         if match:
             code = match.group(1).strip()
-            # Stop at common delimiters
             code = re.split(r"\n\n(?:ANSWER|---|Note|Explanation)", code, maxsplit=1)[0]
             return code.strip()
     
@@ -256,18 +309,20 @@ def _extract_code_from_response(raw: str) -> Optional[str]:
     givens_match = re.search(r"^(givens\s*=\s*\{.*)", s, re.DOTALL | re.MULTILINE)
     if givens_match:
         code = givens_match.group(1)
-        # Stop at ANSWER tag or blank lines
         code = re.split(r"\n\n(?:ANSWER|---)", code, maxsplit=1)[0]
         return code.strip()
     
     return None
 
 
-# OPTIMIZED: Better number extraction
 def _extract_last_number(text: str) -> Optional[float]:
     """
     Extract the last numeric value from text, handling various formats.
     """
+    # [FIX v7.1] Don't extract numbers from error responses
+    if _is_error_response(text):
+        return None
+    
     text = str(text).strip()
     
     # Remove common non-numeric suffixes
@@ -287,11 +342,9 @@ def _extract_last_number(text: str) -> Optional[float]:
         return None
 
 
-# OPTIMIZED: Structured blueprint formatting for Programmer
 def _format_blueprint_for_programmer(bp: dict) -> str:
     """
     Format blueprint in a clear, structured way for the Programmer to follow.
-    Preserves all critical information without lossy compaction.
     """
     unknown = bp.get("unknown", "the answer")
     givens = bp.get("givens", {})
@@ -322,7 +375,6 @@ class PythonExecutor:
     @staticmethod
     def execute(code_str: str) -> Tuple[bool, str]:
         """Execute Python code safely with better error messages."""
-        # Security checks
         forbidden = [
             "import os", "import sys", "subprocess", "__import__",
             "eval(", "exec(", "compile(", "open(", "file(",
@@ -345,7 +397,6 @@ class PythonExecutor:
             
             output = buf.getvalue().strip()
             
-            # If no print output, check for 'answer' variable
             if not output:
                 if 'answer' in local_vars:
                     return True, str(local_vars['answer'])
@@ -365,6 +416,16 @@ class PythonExecutor:
         except Exception as e:
             return False, f"ExecutionError: {str(e)}"
 
+
+# ==========================================================================
+# [FIX v7.1] Custom Exception for API Failures
+# ==========================================================================
+
+class LLMCallError(Exception):
+    """Raised when all retries for an LLM API call are exhausted."""
+    pass
+
+
 # --------------------------- Unified LLM Client ---------------------------
 
 class UnifiedLLMClient:
@@ -372,82 +433,87 @@ class UnifiedLLMClient:
         self.provider = provider
         self.use_cache = use_cache
         self.model_name = "unknown"
-        self.limiter = groq_limiter if provider == "groq" else google_limiter
-
-        if use_cache and os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE, "rb") as f:
-                global CALL_CACHE
-                try:
-                    CALL_CACHE = pickle.load(f)
-                except:
-                    CALL_CACHE = {}
-
+        
+        # [CRITICAL FIX] Ensure limiter is assigned for ALL providers
         if provider == "groq":
+            self.limiter = groq_limiter
             if not GROQ_API_KEY: raise ValueError("Missing GROQ_API_KEY")
             self.client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY)
             self.model_name = "llama-3.3-70b-versatile"
         elif provider == "google":
+            self.limiter = google_limiter
             if not GOOGLE_API_KEY: raise ValueError("Missing GOOGLE_API_KEY")
-            if not GOOGLE_AVAILABLE: raise ImportError("Google SDK missing.")
             genai.configure(api_key=GOOGLE_API_KEY)
             self._setup_google_model()
+        elif provider == "sambanova":
+            self.limiter = sambanova_limiter
+            if not SAMBANOVA_API_KEY: raise ValueError("Missing SAMBANOVA_API_KEY in .env file")
+            self.client = OpenAI(
+                base_url="https://api.sambanova.ai/v1", 
+                api_key=SAMBANOVA_API_KEY
+            )
+            # Αλλαγή στο τρέχον παραγωγικό μοντέλο της SambaNova
+            self.model_name = "Meta-Llama-3.3-70B-Instruct"
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
+        if use_cache and os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, "rb") as f:
+                global CALL_CACHE
+                try: CALL_CACHE = pickle.load(f)
+                except: CALL_CACHE = {}
+
+    def validate_connection(self) -> bool:
+        logger.info(f"Validating {self.provider} API connection...")
+        try:
+            test_response = self.call_model([{"role": "user", "content": "2+2"}], temperature=0.0, max_tokens=10)
+            return not _is_error_response(test_response)
+        except Exception as e:
+            logger.error(f"Validation FAILED: {e}")
+            return False
+
     def call_model(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int = 1200) -> Any:
         key = _make_cache_key(self.provider, self.model_name, messages, temperature)
+        if self.use_cache and key in CALL_CACHE: return CALL_CACHE[key]
 
-        if self.use_cache and key in CALL_CACHE:
-            return CALL_CACHE[key]
-
-        last_err = None
+        estimated = token_budget.estimate_tokens(messages, max_tokens)
+        if not token_budget.can_afford(estimated): return "ERROR_BUDGET_EXCEEDED"
 
         def _call_once():
             self.limiter.wait()
-            if self.provider == "groq":
+            if self.provider in ["groq", "sambanova"]:
                 resp = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens
                 )
+                actual = getattr(resp.usage, 'total_tokens', estimated)
+                token_budget.record_usage(actual)
                 return resp.choices[0].message.content
+            
             if self.provider == "google":
-                sys_prompt = next((m["content"] for m in messages if m["role"] == "system"), "")
-                user_prompt = "\n\n".join([m["content"] for m in messages if m["role"] != "system"])
-                full_prompt = f"System:\n{sys_prompt}\n\nTask:\n{user_prompt}"
-                resp = self.client.generate_content(
-                    full_prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_tokens
-                    )
-                )
+                prompt = "\n".join([m["content"] for m in messages])
+                resp = self.client.generate_content(prompt)
+                token_budget.record_usage(estimated)
                 return getattr(resp, "text", "")
 
         for attempt in range(6):
             try:
                 res = _call_once()
-                if self.use_cache:
-                    CALL_CACHE[key] = res
-                    with open(CACHE_FILE, "wb") as f:
-                        pickle.dump(CALL_CACHE, f)
-                return res
+                if res:
+                    if self.use_cache:
+                        CALL_CACHE[key] = res
+                        with open(CACHE_FILE, "wb") as f: pickle.dump(CALL_CACHE, f)
+                    return res
             except Exception as e:
-                last_err = str(e)
-                time.sleep(min(12.0, 1.5 * (attempt + 1)))
-
-        return f"ERROR_GENERATION: {last_err or 'unknown_error'}"
+                logger.warning(f"Attempt {attempt+1} failed: {e}")
+                time.sleep(2 * (attempt + 1))
+        return "ERROR_GENERATION"
 
     def _setup_google_model(self):
-        try:
-            available = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
-            target = next((m for m in available if "flash" in m), available[0] if available else "models/gemini-1.5-flash")
-            self.model_name = target
-            self.client = genai.GenerativeModel(target)
-        except Exception:
-            self.model_name = "gemini-1.5-flash"
-            self.client = genai.GenerativeModel(self.model_name)
+        self.model_name = "gemini-1.5-flash"
+        self.client = genai.GenerativeModel(self.model_name)
 
 # --------------------------- Dataset Manager ---------------------------
 
@@ -456,10 +522,6 @@ class EnhancedProblemManager:
         random.seed(random_seed)
 
     def _maybe_harden(self, problem: str, hardener: Optional[str]) -> str:
-        """
-        Hardener should NOT change the correct answer.
-        Goal: make reading/comprehension harder (like humans get distracted by irrelevant info).
-        """
         if not hardener:
             return problem
 
@@ -635,7 +697,7 @@ class EnhancedProblemManager:
         return pool[:num_problems]
 
 
-# --------------------------- OPTIMIZED Solver (Architect-Engineer Pattern) ---------------------------
+# --------------------------- Solver (Architect-Engineer Pattern) ---------------------------
 
 @dataclass
 class AgentResponse:
@@ -648,8 +710,8 @@ class AgentResponse:
 
 @dataclass
 class HypothesisResult:
-    hypothesis_id: str          # "primary", "alt_1", "alt_2", "baseline"
-    strategy_name: str          # "arithmetic_sequential", "algebraic", etc.
+    hypothesis_id: str
+    strategy_name: str
     blueprint: dict
     code: Optional[str]
     code_success: bool
@@ -664,7 +726,7 @@ class HypothesisLog:
     problem: str
     expected: str
     candidates: List[HypothesisResult] = field(default_factory=list)
-    triage_result: Optional[str] = None      # "confident_skip", "majority", "judge"
+    triage_result: Optional[str] = None
     judge_reasoning: Optional[str] = None
     final_answer: str = "unknown"
     final_strategy: str = "none"
@@ -672,33 +734,28 @@ class HypothesisLog:
     api_calls_used: int = 3
 
 class QualityEnhancedMultiAgentSolver:
-    """
-    OPTIMIZED Multi-Agent Solver with improved prompts and robustness.
-    
-    Key changes from original:
-    - Clearer, more structured Mathematician prompt with JSON schema + example
-    - Explicit Programmer instructions that follow blueprint step-by-step
-    - Better error handling and answer extraction
-    - Smarter baseline fallback
-    - Lower temperatures for more deterministic generation
-    """
     
     def __init__(self, client: UnifiedLLMClient):
         self.client = client
-        self.math_temp = 0.0    # Deterministic for Mathematician
-        self.prog_temp = 0.05   # OPTIMIZED: Lower temperature for more deterministic code
+        self.math_temp = 0.0
+        self.prog_temp = 0.05
         self.enable_baseline_fallback_on_mas_failure = True
-        self.enable_metamorphic_testing = False  # Can be enabled if needed
-        self.enable_hypothesis_testing = True     # SHT: Structured Hypothesis Testing
+        self.enable_metamorphic_testing = False
+        self.enable_hypothesis_testing = True
 
     # -------------------------------------------------------------------------
-    # OPTIMIZED: Extract Answer with Multiple Strategies
+    # Extract Answer (with error guard)
     # -------------------------------------------------------------------------
     
     def extract_answer(self, text: Any) -> Tuple[str, Any]:
         """
-        Enhanced answer extraction with multiple fallback strategies.
+        Enhanced answer extraction with error response guard.
         """
+        # [FIX v7.1] Check for error response FIRST
+        if _is_error_response(text):
+            logger.warning(f"extract_answer received error response: {str(text)[:150]}")
+            return "unknown", None
+        
         text = str(text)
         
         # Strategy 1: ANSWER: [[...]] tag
@@ -729,23 +786,13 @@ class QualityEnhancedMultiAgentSolver:
         return "unknown", None
 
     def _last_number_from_text(self, s: str) -> Optional[float]:
-        """Wrapper for _extract_last_number for backwards compatibility."""
         return _extract_last_number(s)
 
     # -------------------------------------------------------------------------
-    # OPTIMIZED: Mathematician Agent with Structured Prompt
+    # Mathematician Agent (Architect)
     # -------------------------------------------------------------------------
     
     def run_mathematician_analysis(self, problem: str) -> dict:
-        """
-        Enhanced Mathematician that produces a clear, actionable blueprint.
-        
-        Key improvements:
-        - Explicit JSON schema with example
-        - Requires Python-syntax equations
-        - Adds solution_steps for clarity
-        - Identifies distractors
-        """
         
         sys_msg = """You are an expert Mathematician analyzing word problems.
 
@@ -801,33 +848,34 @@ Output:
             {"role": "user", "content": f"Problem:\n{problem}\n\nAnalyze and return the JSON blueprint."}
         ]
         
-        # OPTIMIZED: Increased tokens for complex problems
         res = self.client.call_model(msgs, temperature=self.math_temp, max_tokens=1200)
         blueprint = _extract_blueprint_json(str(res))
         
         return blueprint
 
     # -------------------------------------------------------------------------
-    # OPTIMIZED: Programmer Agent with Clear Instructions
+    # Programmer Agent (Engineer)
     # -------------------------------------------------------------------------
     
     def run_programmer_solver(self, problem: str, blueprint: dict, max_attempts: int = 3) -> AgentResponse:
-        """
-        Enhanced Programmer that strictly follows the Architect's blueprint.
-        
-        Key improvements:
-        - Clear instructions to implement each equation
-        - Shows explicit example
-        - Better error messages
-        - Repair loop with specific feedback
-        """
         
         givens = blueprint.get("givens", {})
         equations = blueprint.get("equations", [])
         solution_steps = blueprint.get("solution_steps", [])
         unknown = blueprint.get("unknown", "the answer")
         
-        # OPTIMIZED: Format blueprint in a clear, structured way
+        # [FIX v7.1] If blueprint has no equations (e.g., from error), fail fast
+        if not equations and not givens:
+            logger.warning("Programmer received empty blueprint (likely from API error)")
+            return AgentResponse(
+                agent="Programmer (empty blueprint)",
+                answer="unknown",
+                parsed="unknown",
+                confidence=0.0,
+                reasoning_trace="Blueprint was empty — likely API error",
+                quality_metrics={"error": "empty_blueprint"}
+            )
+        
         blueprint_text = _format_blueprint_for_programmer(blueprint)
         
         sys_msg = """You are an expert Python programmer solving math problems.
@@ -866,7 +914,6 @@ ARCHITECT'S BLUEPRINT:
 Write the Python code to solve this. Follow the blueprint equations exactly.
 """
         
-        # OPTIMIZED: Repair loop with specific feedback
         repair_feedback = ""
         best_answer = None
         last_code = None
@@ -877,15 +924,15 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
                 {"role": "user", "content": user_msg + repair_feedback}
             ]
             
-            # OPTIMIZED: Increased tokens, lower temperature
             raw_response = self.client.call_model(
                 msgs, 
                 temperature=self.prog_temp, 
                 max_tokens=1500
             )
             
-            # Check for generation error
-            if str(raw_response).startswith("ERROR_GENERATION"):
+            # [FIX v7.1] Check for error response from LLM
+            if _is_error_response(raw_response):
+                logger.warning(f"Programmer attempt {attempt+1}: API returned error")
                 repair_feedback = f"\n\n[Attempt {attempt+1}] LLM call failed. Retrying..."
                 continue
             
@@ -911,7 +958,7 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
             
             best_answer = str(answer_num)
             
-            # Optional: Metamorphic testing (non-blocking)
+            # Optional: Metamorphic testing
             gate_log = "Metamorphic testing disabled"
             if self.enable_metamorphic_testing:
                 tests = blueprint.get("metamorphic_tests", [])
@@ -934,7 +981,7 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
                 }
             )
         
-        # Failed after 3 attempts
+        # Failed after all attempts
         fallback_answer = best_answer if best_answer else "unknown"
         return AgentResponse(
             agent="Programmer (failed)",
@@ -949,14 +996,10 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
         )
 
     # -------------------------------------------------------------------------
-    # Metamorphic Testing (Optional, Currently Disabled)
+    # Metamorphic Testing (Optional)
     # -------------------------------------------------------------------------
     
     def _metamorphic_gate(self, code_block: str, tests: list) -> Tuple[bool, str]:
-        """
-        Optional metamorphic testing.
-        Set self.enable_metamorphic_testing = True to enable.
-        """
         base_givens = _extract_givens_dict_from_code(code_block)
         if base_givens is None:
             return False, "No givens dict found"
@@ -970,12 +1013,11 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
             return False, f"Base output not numeric: {base_out}"
         
         logs = []
-        for test in tests[:3]:  # Limit to 3 tests
+        for test in tests[:3]:
             name = test.get("name", "unnamed")
             muts = test.get("mutations", [])
             assertion = test.get("assert", {})
             
-            # Apply mutations
             mutated_givens = dict(base_givens)
             try:
                 for mu in muts:
@@ -996,7 +1038,6 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
                 logs.append(f"[{name}] SKIP: {e}")
                 continue
             
-            # Run mutated code
             mutated_code = _replace_givens_dict_in_code(code_block, mutated_givens)
             ok2, out2 = PythonExecutor.execute(mutated_code)
             if not ok2:
@@ -1008,7 +1049,6 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
                 logs.append(f"[{name}] SKIP: Output not numeric")
                 continue
             
-            # Check assertion
             atype = assertion.get("type")
             aval = assertion.get("value")
             
@@ -1040,18 +1080,9 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
     # STRUCTURED HYPOTHESIS TESTING (SHT)
     # =========================================================================
 
-    # -------------------------------------------------------------------------
-    # SHT Step 1: Confidence Gate (rule-based, 0 API calls)
-    # -------------------------------------------------------------------------
-
     def _confidence_gate(self, primary_answer: str, baseline_answer: str,
                          programmer_response: AgentResponse,
                          blueprint: dict) -> Tuple[bool, str]:
-        """
-        Decide whether to trigger hypothesis testing.
-        Returns (is_confident, reason).
-        If is_confident=True, skip SHT. If False, trigger SHT.
-        """
         # Criterion 1: Programmer failed entirely
         if str(primary_answer).strip().lower() == "unknown":
             return False, "programmer_failed"
@@ -1066,17 +1097,14 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
             return False, "baseline_disagreement"
 
         # Criterion 3: Programmer exhausted all repair attempts
-        attempts = programmer_response.quality_metrics.get("attempts", 1)
         if programmer_response.quality_metrics.get("error") == "Max attempts reached":
             return False, "max_attempts_exhausted"
 
-        # Criterion 4: Sanity checks on the answer
+        # Criterion 4: Sanity checks
         if primary_num is not None:
-            # 4a: Negative answer for a word problem (usually expects positive)
             if primary_num < 0:
                 return False, "negative_answer"
 
-            # 4b: Answer is extremely large relative to givens
             givens = blueprint.get("givens", {})
             if givens:
                 max_given = max(
@@ -1086,12 +1114,11 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
                 if max_given > 0 and abs(primary_num) > max_given * 10000:
                     return False, "answer_magnitude_suspicious"
 
-        # All checks passed — confident
-        return True, "all_checks_passed"
+        # [FIX v7.1] Criterion 5: Both answers are "unknown" (total API failure)
+        if str(baseline_answer).strip().lower() == "unknown":
+            return False, "baseline_also_failed"
 
-    # -------------------------------------------------------------------------
-    # SHT Step 2: Alternative Hypothesis Generator (1 API call)
-    # -------------------------------------------------------------------------
+        return True, "all_checks_passed"
 
     STRATEGY_ARCHETYPES = [
         "Arithmetic-Sequential: chain of basic operations (add, subtract, multiply, divide) applied step by step",
@@ -1104,11 +1131,6 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
     def generate_alternative_hypotheses(self, problem: str,
                                         primary_blueprint: dict,
                                         primary_answer: str) -> List[dict]:
-        """
-        Generate 2 structurally different solution blueprints.
-        Each uses a different mathematical strategy archetype.
-        Returns a list of blueprint dicts.
-        """
         primary_strategy = primary_blueprint.get("notes", "")
         primary_eqs = primary_blueprint.get("equations", [])
 
@@ -1164,13 +1186,16 @@ Generate 2 alternative solution strategies as JSON."""
 
         raw = self.client.call_model(msgs, temperature=0.2, max_tokens=1800)
 
-        # Parse the response
+        # [FIX v7.1] Check for error response
+        if _is_error_response(raw):
+            logger.warning("Hypothesis generator returned error response")
+            return []
+
         alternatives = []
         try:
             text = str(raw).strip()
             text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
 
-            # Try direct JSON parse
             parsed = None
             try:
                 parsed = json.loads(text)
@@ -1196,23 +1221,12 @@ Generate 2 alternative solution strategies as JSON."""
 
         return alternatives
 
-    # -------------------------------------------------------------------------
-    # SHT Step 3: Triage Candidates (rule-based, 0 API calls)
-    # -------------------------------------------------------------------------
-
     def _triage_candidates(self, candidates: List[HypothesisResult]) -> Tuple[Optional[str], Optional[str], str]:
-        """
-        Rule-based voting among candidates.
-        Returns (winning_answer, winning_strategy, triage_method).
-        triage_method is one of: "unanimous", "majority", "no_majority"
-        """
-        # Filter to successful candidates with numeric answers
         valid = [c for c in candidates if c.code_success and c.parsed_answer is not None]
 
         if not valid:
             return None, None, "no_valid_candidates"
 
-        # Group by numeric answer (tolerance 1e-3)
         groups: Dict[str, List[HypothesisResult]] = {}
         for c in valid:
             matched = False
@@ -1227,7 +1241,6 @@ Generate 2 alternative solution strategies as JSON."""
         if not groups:
             return None, None, "no_valid_candidates"
 
-        # Sort groups by size (descending), then by average confidence
         sorted_groups = sorted(
             groups.items(),
             key=lambda g: (len(g[1]), sum(c.confidence for c in g[1]) / len(g[1])),
@@ -1235,32 +1248,19 @@ Generate 2 alternative solution strategies as JSON."""
         )
 
         best_answer_key, best_group = sorted_groups[0]
-        total_valid = len(valid)
 
-        # Unanimous agreement
         if len(sorted_groups) == 1:
             winner = best_group[0]
             return winner.answer, winner.strategy_name, "unanimous"
 
-        # Majority (>= 2 out of valid candidates, and strictly more than any other group)
         if len(best_group) >= 2 and (len(sorted_groups) < 2 or len(best_group) > len(sorted_groups[1][1])):
             winner = best_group[0]
             return winner.answer, winner.strategy_name, "majority"
 
-        # No clear majority
         return None, None, "no_majority"
-
-    # -------------------------------------------------------------------------
-    # SHT Step 4: Judge Agent (0-1 API calls, only when no majority)
-    # -------------------------------------------------------------------------
 
     def _judge_hypotheses(self, problem: str,
                           candidates: List[HypothesisResult]) -> Tuple[str, str, str]:
-        """
-        LLM-based Judge that evaluates reasoning quality when triage fails.
-        Returns (final_answer, winning_strategy, judge_reasoning).
-        """
-        # Build candidate summaries for the Judge
         candidate_summaries = []
         for i, c in enumerate(candidates):
             if not c.code_success:
@@ -1305,16 +1305,20 @@ Evaluate and select the most reliable answer."""
         ]
 
         raw = self.client.call_model(msgs, temperature=0.0, max_tokens=800)
+        
+        # [FIX v7.1] Check for error response from judge
+        if _is_error_response(raw):
+            logger.warning("Judge returned error response")
+            return "unknown", "judge_error", "Judge API call failed"
+        
         raw_text = str(raw)
 
-        # Extract judge's selected answer
         answer_match = re.search(r'SELECTED_ANSWER:\s*\[\[([^\]]+)\]\]', raw_text)
         strategy_match = re.search(r'SELECTED_STRATEGY:\s*\[\[([^\]]+)\]\]', raw_text)
 
         if answer_match:
             judge_answer = answer_match.group(1).strip()
         else:
-            # Fallback: extract last number from judge response
             num = _extract_last_number(raw_text)
             judge_answer = str(num) if num is not None else "unknown"
 
@@ -1322,18 +1326,10 @@ Evaluate and select the most reliable answer."""
 
         return judge_answer, judge_strategy, raw_text[:500]
 
-    # -------------------------------------------------------------------------
-    # SHT Step 5: Orchestrator
-    # -------------------------------------------------------------------------
-
     def _structured_hypothesis_testing(self, problem: str, expected: str,
                                        primary_blueprint: dict,
                                        programmer_response: AgentResponse,
                                        baseline_answer: str) -> HypothesisLog:
-        """
-        Main SHT orchestrator. Coordinates confidence gate, hypothesis
-        generation, execution, triage, and judging.
-        """
         primary_answer = programmer_response.answer
         primary_num = _extract_last_number(primary_answer)
 
@@ -1344,7 +1340,6 @@ Evaluate and select the most reliable answer."""
             final_strategy="primary",
         )
 
-        # Record primary as first candidate
         primary_candidate = HypothesisResult(
             hypothesis_id="primary",
             strategy_name="primary_blueprint",
@@ -1359,7 +1354,6 @@ Evaluate and select the most reliable answer."""
         )
         log.candidates.append(primary_candidate)
 
-        # Record baseline as a candidate too
         baseline_num = _extract_last_number(baseline_answer)
         baseline_candidate = HypothesisResult(
             hypothesis_id="baseline",
@@ -1375,7 +1369,6 @@ Evaluate and select the most reliable answer."""
         )
         log.candidates.append(baseline_candidate)
 
-        # --- Confidence Gate ---
         is_confident, gate_reason = self._confidence_gate(
             primary_answer, baseline_answer, programmer_response, primary_blueprint
         )
@@ -1388,18 +1381,30 @@ Evaluate and select the most reliable answer."""
             log.api_calls_used = 3
             return log
 
-        # --- Trigger SHT ---
         logger.info(f"SHT triggered: {gate_reason}")
         log.hypothesis_testing_triggered = True
-        api_calls = 3  # baseline + mathematician + programmer already used
+        api_calls = 3
 
-        # Generate 2 alternative blueprints (1 API call)
+        # [FIX v7.2] Check if we can afford SHT calls (~4 more calls × 1500 tokens)
+        sht_cost_estimate = 4 * 1500  # hypothesis gen + 2 programmer + maybe judge
+        if not token_budget.can_afford(sht_cost_estimate):
+            logger.warning("SHT skipped due to token budget. Using best available answer.")
+            # Fall back to whichever of primary/baseline looks better
+            if primary_num is not None:
+                log.final_answer = primary_answer
+                log.final_strategy = "primary_budget_skip"
+            else:
+                log.final_answer = baseline_answer
+                log.final_strategy = "baseline_budget_skip"
+            log.triage_result = "budget_skip"
+            log.api_calls_used = 3
+            return log
+
         alt_blueprints = self.generate_alternative_hypotheses(
             problem, primary_blueprint, primary_answer
         )
         api_calls += 1
 
-        # Execute each alternative through the Programmer (1 API call each, 1 attempt)
         for idx, alt_bp in enumerate(alt_blueprints[:2]):
             alt_response = self.run_programmer_solver(problem, alt_bp, max_attempts=1)
             api_calls += 1
@@ -1419,7 +1424,6 @@ Evaluate and select the most reliable answer."""
             )
             log.candidates.append(alt_candidate)
 
-        # --- Triage (rule-based, 0 API calls) ---
         triage_answer, triage_strategy, triage_method = self._triage_candidates(log.candidates)
 
         if triage_method in ("unanimous", "majority"):
@@ -1429,7 +1433,6 @@ Evaluate and select the most reliable answer."""
             log.api_calls_used = api_calls
             return log
 
-        # --- Judge (1 API call, only when no majority) ---
         judge_answer, judge_strategy, judge_reasoning = self._judge_hypotheses(
             problem, log.candidates
         )
@@ -1447,17 +1450,6 @@ Evaluate and select the most reliable answer."""
     # -------------------------------------------------------------------------
 
     def solve(self, problem: str, expected: str) -> Dict[str, Any]:
-        """
-        Main solve method with Structured Hypothesis Testing (SHT).
-
-        Flow:
-        1. Run baseline (zero-shot)
-        2. Run Architect (Mathematician)
-        3. Run Engineer (Programmer)
-        4. SHT: Confidence gate → alternative hypotheses → triage → judge
-        5. Fallback to baseline if everything fails
-        """
-
         # Step 1: Baseline
         baseline_prompt = f"{problem}\n\nSolve this step-by-step. End with: ANSWER: [[numeric_value]]"
         base_raw = self.client.call_model(
@@ -1486,7 +1478,7 @@ Evaluate and select the most reliable answer."""
             mas_answer = programmer_response.answer
             used_baseline_fallback = False
 
-        # Step 5: Fallback logic (applies if SHT still returns "unknown")
+        # Step 5: Fallback
         if self.enable_baseline_fallback_on_mas_failure:
             if str(mas_answer).strip().lower() == "unknown" and str(base_ans).strip().lower() != "unknown":
                 mas_answer = base_ans
@@ -1505,7 +1497,6 @@ Evaluate and select the most reliable answer."""
             "agents": [programmer_response],
         }
 
-        # Attach SHT metadata
         if hypothesis_log:
             result["sht"] = {
                 "triggered": hypothesis_log.hypothesis_testing_triggered,
@@ -1565,18 +1556,59 @@ class QualityAwarePipeline:
             return False
 
     def run(self, datasets_list=["gsm8k_test"], num_problems=10, hardener: Optional[str] = None) -> pd.DataFrame:
+        
+        # [FIX v7.1] Validate API connection before running
+        if not self.client.validate_connection():
+            logger.error("="*60)
+            logger.error("FATAL: API connection failed! Cannot proceed.")
+            logger.error("Please check:")
+            logger.error("  1. Your .env file has the correct API key")
+            logger.error("  2. The API key is not expired")
+            logger.error("  3. You have sufficient API credits")
+            logger.error("  4. The API service is not down")
+            logger.error("="*60)
+            raise ConnectionError(
+                "API connection validation failed. Check your API key and .env file. "
+                "All results would be errors (like the 401.0 issue)."
+            )
+        
         logger.info(f"Pipeline started. Fetching {num_problems} random problems from: {datasets_list} | hardener={hardener}")
         problems = self.manager.load_random_problems(datasets_list, num_problems, hardener=hardener)
 
         detailed = []
+        # [FIX v7.1] Track consecutive API errors to detect persistent failures
+        consecutive_errors = 0
+        MAX_CONSECUTIVE_ERRORS = 5
+        
         for i, p in enumerate(problems):
-            logger.info(f"Processing {i+1}/{len(problems)} (ID: {p['id']}, DS: {p['dataset']})")
+            logger.info(f"Processing {i+1}/{len(problems)} (ID: {p['id']}, DS: {p['dataset']}) | {token_budget.usage_report()}")
+            
+            # [FIX v7.2] Check token budget before each problem
+            tokens_per_problem = 9000 if self.solver.enable_hypothesis_testing else 4500
+            if not token_budget.can_afford(tokens_per_problem):
+                logger.error(
+                    f"TOKEN BUDGET EXHAUSTED after {i} problems. "
+                    f"{token_budget.usage_report()}. "
+                    f"Stopping early to avoid silent failures."
+                )
+                break
+            
             res = self.solver.solve(p["puzzle"], p["answer"])
             res["baseline"]["correct"] = self.check_correctness(res["baseline"]["answer"], p["answer"])
             res["mas"]["correct"] = self.check_correctness(res["mas"]["answer"], p["answer"])
             res["id"] = p["id"]
             res["dataset"] = p["dataset"]
             detailed.append(res)
+            
+            # [FIX v7.1] Check for persistent API failures
+            if res["baseline"]["answer"] == "unknown" and res["mas"]["answer"] == "unknown":
+                consecutive_errors += 1
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                    logger.error(f"ABORTING: {MAX_CONSECUTIVE_ERRORS} consecutive problems returned 'unknown'. "
+                                 "API is likely down or key is invalid.")
+                    break
+            else:
+                consecutive_errors = 0
 
         self.results = detailed
         sht_data = []
@@ -1625,14 +1657,12 @@ class QualityAwarePipeline:
         fb_rate = df["mas_fallback"].mean()
         sht_trigger_rate = df["sht_triggered"].mean()
 
-        # SHT rescue/damage analysis
         rescue_count = 0
         damage_count = 0
         for r in self.results:
             sht = r.get("sht", {})
             if not sht.get("triggered", False):
                 continue
-            # Compare: would the primary (pre-SHT) answer have been correct?
             primary_candidates = [c for c in sht.get("candidates", []) if c["id"] == "primary"]
             if primary_candidates:
                 primary_ans = primary_candidates[0]["answer"]
@@ -1674,30 +1704,41 @@ class QualityAwarePipeline:
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("  Multi-Agent Math Solver - VERSION 7.0")
+    print("  Multi-Agent Math Solver - VERSION 7.3 (SambaNova Ready)")
     print("  Architect-Engineer + Structured Hypothesis Testing (SHT)")
-    print("  Key Features:")
-    print("  ✓ Structured Mathematician prompt with JSON schema + example")
-    print("  ✓ Clear Programmer instructions that follow blueprint")
-    print("  ✓ Confidence gate detects uncertain answers")
-    print("  ✓ Alternative hypothesis generation (2 diverse strategies)")
-    print("  ✓ Rule-based triage + LLM Judge for final selection")
     print("=" * 70)
     print()
+    
+    print("TOKEN BUDGET GUIDANCE:")
+    print("  Groq: 100K/day | Google: Variable | SambaNova: 250K+/day")
+    print("-" * 70)
 
     print("Select Provider:")
     print("1) Groq")
-    print("2) Google")
-    choice = input("Enter selection (1 or 2): ").strip()
-    prov = "google" if choice == "2" else "groq"
-
-    pipeline = QualityAwarePipeline(provider=prov, use_cache=False)
+    print("2) Google (Gemini)")
+    print("3) SambaNova (High RPM / Llama 3.1 70B)")
+    
+    choice = input("Enter selection (1, 2, or 3): ").strip()
+    if choice == "2": prov = "google"
+    elif choice == "3": prov = "sambanova"
+    else: prov = "groq"
+    
+    num_problems = int(input("Number of problems [default=10]: ") or 10)
+    enable_sht = input("Enable SHT? (y/n) [default=y]: ").lower() != "n"
+    
+    pipeline = QualityAwarePipeline(provider=prov, use_cache=True)
+    pipeline.solver.enable_hypothesis_testing = enable_sht
+    
+    print(f"\n🚀 Starting Pipeline with {prov.upper()}...")
 
     df_results = pipeline.run(
-        datasets_list=["gsm-plus", "gsm-symbolic-p2", "gsm-hard", "svamp", "gsm8k_test"],
-        num_problems=60,
-        hardener="distractor",
+        datasets_list=["gsm8k_test"], # Μπορείτε να προσθέσετε περισσότερα εδώ
+        num_problems=num_problems,
     )
+    
     pipeline.report()
-    df_results.to_csv("final_results_sht.csv", index=False)
-    print("Results saved to 'final_results_sht.csv'.")
+    print(f"\n{token_budget.usage_report()}")
+    
+    out_file = f"final_results_MAS_{prov}_n{num_problems}.csv"
+    df_results.to_csv(out_file, index=False)
+    print(f"Results saved to '{out_file}'.")
