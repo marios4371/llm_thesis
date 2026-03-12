@@ -1,6 +1,12 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 9.0: Critic-Based Hypothesis Testing
+VERSION 9.1: Rate Limit Hardening + Critic-Based Hypothesis Testing
+
+CHANGELOG v9.1 (over v9.0):
+- [FIX] RPM reduced from 30 → 12 to stay within Groq free tier TPM (~6K tokens/min for 70B)
+- [FIX] Inter-problem cooldown (3s with SHT, 2s without) to prevent TPM bursts
+- [FIX] Reduced max_tokens: baseline 800→500, hypothesis gen 1200→900, judge 800→500
+- [FIX] Retry attempts reduced from 6 → 4 to avoid cascading backoffs
 
 CHANGELOG v7.3 (over v7.2):
 - [NEW] Heterogeneous Model Configuration: each agent role can use a different LLM
@@ -240,7 +246,7 @@ class TokenBudget:
         return (f"Token usage: ~{self.tokens_used:,} / {self.daily_limit:,} "
                 f"({pct:.1f}%) | ~{self.remaining():,} remaining")
 
-groq_limiter = RateLimiter(requests_per_minute=30)   # Groq free tier allows 30 RPM
+groq_limiter = RateLimiter(requests_per_minute=12)   # Conservative: Groq free tier TPM is ~6K for 70B models
 google_limiter = RateLimiter(requests_per_minute=15)
 token_budget = TokenBudget(daily_limit=100_000)  # [NEW v7.2] Groq free tier
 
@@ -804,13 +810,13 @@ class UnifiedLLMClient:
                 token_budget.record_usage(estimated)
                 return getattr(resp, "text", "")
 
-        for attempt in range(6):
+        for attempt in range(4):
             try:
                 res = _call_once()
-                
+
                 if res is None or str(res).strip() == "":
                     last_err = "Empty response from API"
-                    logger.warning(f"Attempt {attempt+1}/6: Empty response. Retrying...")
+                    logger.warning(f"Attempt {attempt+1}/4: Empty response. Retrying...")
                     time.sleep(min(12.0, 1.5 * (attempt + 1)))
                     continue
                 
@@ -822,7 +828,7 @@ class UnifiedLLMClient:
             except Exception as e:
                 last_err = str(e)
                 err_str = str(e).lower()
-                logger.warning(f"Attempt {attempt+1}/6 failed: {type(e).__name__}: {str(e)[:200]}")
+                logger.warning(f"Attempt {attempt+1}/4 failed: {type(e).__name__}: {str(e)[:200]}")
                 
                 # [FIX v7.1] Auth errors — no point retrying
                 if "401" in err_str or "unauthorized" in err_str or "authentication" in err_str:
@@ -1277,7 +1283,7 @@ Output:
         ]
         
         res = self._get_client(AgentRole.MATHEMATICIAN).call_model(
-            msgs, temperature=self.math_temp, max_tokens=800
+            msgs, temperature=self.math_temp, max_tokens=600
         )
         blueprint = _extract_blueprint_json(str(res))
         
@@ -1754,7 +1760,7 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
         ]
 
         raw = self._get_client(AgentRole.HYPOTHESIS_GENERATOR).call_model(
-            msgs, temperature=0.3, max_tokens=1200
+            msgs, temperature=0.3, max_tokens=900
         )
 
         if _is_error_response(raw):
@@ -1878,7 +1884,7 @@ Evaluate and select the most reliable answer."""
             {"role": "user", "content": user_msg}
         ]
 
-        raw = self._get_client(AgentRole.JUDGE).call_model(msgs, temperature=0.0, max_tokens=800)
+        raw = self._get_client(AgentRole.JUDGE).call_model(msgs, temperature=0.0, max_tokens=500)
         
         # [FIX v7.1] Check for error response from judge
         if _is_error_response(raw):
@@ -2029,7 +2035,7 @@ Evaluate and select the most reliable answer."""
         base_raw = self._get_client(AgentRole.BASELINE).call_model(
             [{"role": "user", "content": baseline_prompt}],
             temperature=0.1,
-            max_tokens=800
+            max_tokens=500
         )
         base_ans, _ = self.extract_answer(base_raw)
 
@@ -2260,8 +2266,14 @@ class QualityAwarePipeline:
         MAX_CONSECUTIVE_ERRORS = 5
         
         for i, p in enumerate(problems):
+            # [FIX v9.1] Inter-problem cooldown to avoid TPM bursts
+            if i > 0:
+                cooldown = 3.0 if self.solver.enable_hypothesis_testing else 2.0
+                logger.info(f"Cooldown {cooldown:.0f}s between problems...")
+                time.sleep(cooldown)
+
             logger.info(f"Processing {i+1}/{len(problems)} (ID: {p['id']}, DS: {p['dataset']}) | {token_budget.usage_report()}")
-            
+
             # [FIX v7.2] Check token budget before each problem
             tokens_per_problem = 9000 if self.solver.enable_hypothesis_testing else 4500
             if not token_budget.can_afford(tokens_per_problem):
@@ -2415,9 +2427,10 @@ class QualityAwarePipeline:
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("  Multi-Agent Math Solver - VERSION 9.0 (Critic-SHT)")
+    print("  Multi-Agent Math Solver - VERSION 9.1 (Critic-SHT)")
     print("  Heterogeneous Models + Process Verification + SymPy Fallback")
     print("  + Structured Hypothesis Testing (SHT)")
+    print("  [v9.1] Rate limit fixes: RPM=12, inter-problem cooldown, reduced max_tokens")
     print("=" * 70)
     print()
     
