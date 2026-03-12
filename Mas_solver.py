@@ -1,35 +1,23 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 7.2: Rate-Limit Aware SHT (Structured Hypothesis Testing)
-    
-FIXES IN v7.1 (over v7.0):
-- [CRITICAL FIX] Error responses (e.g., HTTP 401) no longer parsed as numeric answers
-- [FIX] Added _is_error_response() guard throughout the pipeline
-- [FIX] API key validation at startup before running any problems
-- [FIX] Baseline, Mathematician, and Programmer all check for error responses
-- [FIX] SHT confidence gate properly handles error propagation
+VERSION 9.0: Critic-Based Hypothesis Testing
 
-FIXES IN v7.2 (over v7.1):
-- [CRITICAL FIX] Proper 429 Rate Limit handling with wait-time extraction
-- [FIX] Token budget tracker: estimates usage & warns before exceeding daily limit
-- [FIX] Cache enabled by default to avoid re-spending tokens on reruns
-- [FIX] Default num_problems reduced to 20 (fits comfortably in free tier)
-- [FIX] Graceful degradation: disables SHT when token budget is low
-- [FIX] Exponential backoff with jitter for rate limit errors
-- [FIX] Early abort when daily limit is exhausted (no silent failures)
+CHANGELOG v7.3 (over v7.2):
+- [NEW] Heterogeneous Model Configuration: each agent role can use a different LLM
+- [NEW] AgentRole enum (BASELINE, MATHEMATICIAN, PROGRAMMER, HYPOTHESIS_GENERATOR, JUDGE)
+- [NEW] ModelConfig dataclass + HETEROGENEOUS_PRESETS (5 presets)
+- [NEW] UnifiedLLMClient accepts model_override parameter
+- [NEW] Solver uses _get_client(role) — dispatches to role-specific client
+- [NEW] Pipeline supports heterogeneous_preset and custom_config params
+- [NEW] CSV output includes model_config per role for experiment tracking
+- [FIX] Client deduplication: same (provider, model) pair shares one connection
 
-TOKEN BUDGET (Groq Free Tier = 100,000 TPD):
-  Without SHT: ~4,500 tokens/problem → max ~22 problems/day
-  With SHT:    ~9,000 tokens/problem → max ~11 problems/day
-  Mixed (30% trigger): ~6,000 tokens/problem → max ~16 problems/day
-  
-  Recommended configurations:
-    Quick test:  num_problems=10, SHT=ON   → ~60K-90K tokens
-    Full eval:   num_problems=20, SHT=ON   → ~90K-120K tokens (may hit limit)
-    Large eval:  num_problems=60, SHT=OFF  → ~270K tokens (needs Dev tier)
+Inherits v7.1/v7.2 fixes:
+- Error response detection, token budget, 429 handling, cache, auth detection
 """
 
 from __future__ import annotations
+
 import os 
 import re
 import json
@@ -40,13 +28,11 @@ import threading
 import pickle
 import logging
 import ast
+from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 import pandas as pd
 from dotenv import load_dotenv
-
-# --- LLM Providers ---
-from openai import OpenAI
 
 # --- Statistical Libraries Check ---
 try:
@@ -62,16 +48,29 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 try:
+    from datasets import load_dataset
+    DATASETS_AVAILABLE = True
+except ImportError:
+    DATASETS_AVAILABLE = False
+    print("Warning: 'datasets' library not found. Standard curated set will be used.")
+
+# --- LLM Providers ---
+from openai import OpenAI
+
+try:
     import google.generativeai as genai
     GOOGLE_AVAILABLE = True
 except ImportError:
     GOOGLE_AVAILABLE = False
 
+# --- [NEW v8.0] Symbolic Solver ---
 try:
-    from datasets import load_dataset
-    DATASETS_AVAILABLE = True
+    import sympy
+    from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
+    SYMPY_AVAILABLE = True
 except ImportError:
-    DATASETS_AVAILABLE = False
+    SYMPY_AVAILABLE = False
+    print("Warning: 'sympy' not found. Symbolic solver fallback disabled. pip install sympy")
 
 
 # --------------------------- Configuration ---------------------------
@@ -79,7 +78,85 @@ except ImportError:
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
+
+
+# ========================== [NEW v7.3] Heterogeneous Model Config ==========================
+
+class AgentRole(Enum):
+    """
+    Each agent role in the MAS-SHT pipeline can be assigned
+    to a different provider + model combination.
+    """
+    BASELINE = "baseline"
+    MATHEMATICIAN = "mathematician"
+    PROGRAMMER = "programmer"
+    HYPOTHESIS_GENERATOR = "hypothesis_generator"
+    JUDGE = "judge"
+
+@dataclass
+class ModelConfig:
+    """
+    Configuration for a single model endpoint.
+    
+    provider: "groq" or "google"
+    model_name: specific model string (e.g., "llama-3.3-70b-versatile", "gemma2-9b-it")
+                If None, uses the provider's default.
+    """
+    provider: str = "groq"
+    model_name: Optional[str] = None  # None = use provider default
+
+
+# Pre-defined heterogeneous configurations
+# Users can also build custom configs
+
+HETEROGENEOUS_PRESETS: Dict[str, Dict[AgentRole, ModelConfig]] = {
+    # All roles use the same model (backward compatible, same as v7.2)
+    "homogeneous_groq": {
+        AgentRole.BASELINE:              ModelConfig("groq", "llama-3.3-70b-versatile"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("groq", "llama-3.3-70b-versatile"),
+        AgentRole.PROGRAMMER:            ModelConfig("groq", "llama-3.3-70b-versatile"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("groq", "llama-3.3-70b-versatile"),
+        AgentRole.JUDGE:                 ModelConfig("groq", "llama-3.3-70b-versatile"),
+    },
+    
+    # Cross-architecture diversity: different model families per role
+    # Key insight: diversity in model architecture → diversity in reasoning patterns
+    "diverse_groq": {
+        AgentRole.BASELINE:              ModelConfig("groq", "gemma2-9b-it"),              # Different family for baseline diversity
+        AgentRole.MATHEMATICIAN:         ModelConfig("groq", "llama-3.3-70b-versatile"),   # Best reasoning for blueprint
+        AgentRole.PROGRAMMER:            ModelConfig("groq", "llama-3.3-70b-versatile"),   # Needs precise instruction following
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("groq", "mixtral-8x7b-32768"),        # MoE architecture → diverse strategies
+        AgentRole.JUDGE:                 ModelConfig("groq", "llama-3.3-70b-versatile"),   # Needs strong evaluation
+    },
+    
+    # Cross-provider diversity: use both Groq and Google
+    "cross_provider": {
+        AgentRole.BASELINE:              ModelConfig("google", None),                       # Gemini as independent baseline
+        AgentRole.MATHEMATICIAN:         ModelConfig("groq", "llama-3.3-70b-versatile"),   # LLaMA for structured JSON output
+        AgentRole.PROGRAMMER:            ModelConfig("groq", "llama-3.3-70b-versatile"),   # LLaMA for code generation
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("google", None),                       # Gemini for diverse strategies
+        AgentRole.JUDGE:                 ModelConfig("groq", "llama-3.3-70b-versatile"),   # LLaMA for final judgment
+    },
+    
+    # Budget-optimized: small models where possible, large only where critical
+    "budget_optimized": {
+        AgentRole.BASELINE:              ModelConfig("groq", "llama-3.1-8b-instant"),      # Fast & cheap baseline
+        AgentRole.MATHEMATICIAN:         ModelConfig("groq", "llama-3.3-70b-versatile"),   # Full power for blueprint
+        AgentRole.PROGRAMMER:            ModelConfig("groq", "llama-3.1-8b-instant"),      # Small model can follow blueprints
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("groq", "llama-3.3-70b-versatile"),   # Needs creativity
+        AgentRole.JUDGE:                 ModelConfig("groq", "llama-3.3-70b-versatile"),   # Needs strong judgment
+    },
+    
+    # Homogeneous Google
+    "homogeneous_google": {
+        AgentRole.BASELINE:             ModelConfig("google", "gemini-2.5-flash-lite"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("google", "gemini-2.5-flash-lite"),
+        AgentRole.PROGRAMMER:            ModelConfig("google", "gemini-2.5-flash-lite"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("google", "gemini-2.5-flash-lite"),
+        AgentRole.JUDGE:                 ModelConfig("google", "gemini-2.5-flash-lite"),
+    },
+}
+
 
 # --------------------------- Cache & Logging ---------------------------
 
@@ -104,6 +181,7 @@ def _make_cache_key(provider: str, model_name: str, messages: List[Dict[str, str
     return hashlib.md5(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 class RateLimiter:
+    """Enhanced rate limiter with 429-specific backoff and token tracking."""
     def __init__(self, requests_per_minute: int = 12):
         self.delay = 60.0 / max(1, requests_per_minute)
         self.last_call = 0.0
@@ -117,30 +195,54 @@ class RateLimiter:
                 time.sleep(self.delay - elapsed)
             self.last_call = time.time()
 
-groq_limiter = RateLimiter(requests_per_minute=10)
-google_limiter = RateLimiter(requests_per_minute=10)
-sambanova_limiter = RateLimiter(requests_per_minute=15) # SambaNova επιτρέπει περισσότερα
 
 class TokenBudget:
+    """
+    [NEW v7.2] Tracks estimated token usage against daily limit.
+    Groq free tier: 100,000 tokens/day (TPD).
+    """
     def __init__(self, daily_limit: int = 100_000):
         self.daily_limit = daily_limit
         self.tokens_used = 0
         self.lock = threading.Lock()
+        self._warning_issued = False
     
     def estimate_tokens(self, messages: List[Dict[str, str]], max_tokens: int) -> int:
+        """Realistic estimate: input_chars/4 + max_tokens*0.35 (models rarely use full max)."""
         input_chars = sum(len(m.get("content", "")) for m in messages)
-        return (input_chars // 4) + max_tokens
+        estimated_input = input_chars // 4
+        estimated_output = int(max_tokens * 0.35)
+        return estimated_input + estimated_output
     
     def record_usage(self, estimated_tokens: int) -> None:
-        with self.lock: self.tokens_used += estimated_tokens
+        with self.lock:
+            self.tokens_used += estimated_tokens
     
     def can_afford(self, estimated_tokens: int) -> bool:
-        with self.lock: return (self.daily_limit - self.tokens_used) >= estimated_tokens
-
+        with self.lock:
+            remaining = self.daily_limit - self.tokens_used
+            if remaining < estimated_tokens:
+                if not self._warning_issued:
+                    logger.warning(
+                        f"TOKEN BUDGET: ~{self.tokens_used:,} used of {self.daily_limit:,} daily limit. "
+                        f"Need ~{estimated_tokens:,} but only ~{remaining:,} remaining."
+                    )
+                    self._warning_issued = True
+                return False
+            return True
+    
+    def remaining(self) -> int:
+        with self.lock:
+            return max(0, self.daily_limit - self.tokens_used)
+    
     def usage_report(self) -> str:
-        return f"Tokens: {self.tokens_used:,} / {self.daily_limit:,}"
+        pct = (self.tokens_used / self.daily_limit) * 100
+        return (f"Token usage: ~{self.tokens_used:,} / {self.daily_limit:,} "
+                f"({pct:.1f}%) | ~{self.remaining():,} remaining")
 
-token_budget = TokenBudget(daily_limit=250_000)
+groq_limiter = RateLimiter(requests_per_minute=30)   # Groq free tier allows 30 RPM
+google_limiter = RateLimiter(requests_per_minute=15)
+token_budget = TokenBudget(daily_limit=100_000)  # [NEW v7.2] Groq free tier
 
 def _safe_json_load(s: str) -> Optional[dict]:
     try:
@@ -154,14 +256,34 @@ def _safe_json_load(s: str) -> Optional[dict]:
 # ==========================================================================
 
 def _is_error_response(text: Any) -> bool:
-    if text is None: return True
+    """
+    Detect whether an LLM response is actually an error message.
+    This prevents HTTP status codes (401, 429, 500, etc.) from being
+    parsed as numeric answers.
+    """
+    if text is None:
+        return True
     s = str(text).strip()
-    if s.startswith("ERROR_"): return True
-    error_patterns = [r"error.*(?:401|403|429|500)", r"unauthorized", r"rate.?limit", r"budget.*exceeded"]
+    if s.startswith("ERROR_GENERATION"):
+        return True
+    if s.startswith("ERROR_"):  # Catches ERROR_AUTH_401, ERROR_RATE_LIMIT_DAILY, ERROR_BUDGET_EXCEEDED
+        return True
+    # Check for common API error patterns
+    error_patterns = [
+        r"error.*(?:401|403|429|500|502|503)",
+        r"(?:unauthorized|forbidden|rate.?limit|internal.?server)",
+        r"authentication.*(?:failed|error|invalid)",
+        r"api.?key.*(?:invalid|missing|expired)",
+        r"token.?limit.*(?:reached|exceeded)",
+        r"budget.*exceeded",
+    ]
     s_lower = s.lower()
     for pattern in error_patterns:
-        if re.search(pattern, s_lower): return True
-    if len(s) < 5 and not re.match(r'^-?\d+\.?\d*$', s): return True
+        if re.search(pattern, s_lower):
+            return True
+    # Too short to be a real response (likely error)
+    if len(s) < 5 and not re.match(r'^-?\d+\.?\d*$', s):
+        return True
     return False
 
 
@@ -418,6 +540,158 @@ class PythonExecutor:
 
 
 # ==========================================================================
+# [NEW v8.0] Symbolic Solver Fallback (SymPy)
+# ==========================================================================
+
+class SymbolicSolver:
+    """
+    When the Programmer's code execution fails, attempt to solve the
+    blueprint equations symbolically using SymPy.
+    
+    This eliminates arithmetic errors entirely by delegating computation
+    to a computer algebra system. Works best for problems expressible as
+    algebraic equations (linear, polynomial, rate/proportion).
+    
+    Flow:
+        1. Extract givens dict and equations from blueprint
+        2. Substitute givens into equations
+        3. Detect if there's an unknown variable to solve for
+        4. Execute the equation chain symbolically
+        5. Return numeric answer
+    """
+
+    @staticmethod
+    def solve_from_blueprint(blueprint: dict) -> Tuple[bool, str, str]:
+        """
+        Attempt to solve a blueprint's equations using SymPy.
+        
+        Returns:
+            (success: bool, answer: str, trace: str)
+        """
+        if not SYMPY_AVAILABLE:
+            return False, "unknown", "SymPy not installed"
+        
+        givens = blueprint.get("givens", {})
+        equations = blueprint.get("equations", [])
+        
+        if not equations:
+            return False, "unknown", "No equations in blueprint"
+        
+        trace_lines = ["[SymPy Symbolic Solver]"]
+        
+        try:
+            # Build a namespace with givens values
+            namespace = {}
+            givens_dict = {}
+            
+            for key, val in givens.items():
+                if isinstance(val, (int, float)):
+                    namespace[key] = val
+                    givens_dict[key] = val
+                    trace_lines.append(f"  Given: {key} = {val}")
+            
+            # Make givens accessible as dict too (for givens['key'] syntax)
+            namespace['givens'] = givens_dict
+            
+            # Execute each equation in order using Python eval with restricted builtins
+            safe_builtins = {
+                "abs": abs, "round": round, "min": min, "max": max,
+                "int": int, "float": float, "sum": sum, "len": len,
+                "pow": pow, "divmod": divmod,
+            }
+            
+            # Add math functions
+            import math
+            for fn_name in ['ceil', 'floor', 'sqrt', 'log', 'log10', 'exp', 'pi']:
+                if hasattr(math, fn_name):
+                    safe_builtins[fn_name] = getattr(math, fn_name)
+            
+            exec_globals = {"__builtins__": safe_builtins, "givens": givens_dict}
+            exec_locals = dict(namespace)
+            
+            last_result = None
+            for eq in equations:
+                eq = eq.strip()
+                if not eq or eq.startswith("#"):
+                    continue
+                
+                trace_lines.append(f"  Exec: {eq}")
+                
+                try:
+                    exec(eq, exec_globals, exec_locals)
+                    # Track the last assigned variable
+                    if "=" in eq and not eq.strip().startswith("if"):
+                        var_name = eq.split("=")[0].strip()
+                        if var_name in exec_locals:
+                            last_result = exec_locals[var_name]
+                except Exception as eq_err:
+                    trace_lines.append(f"  ERROR in equation: {eq_err}")
+                    # Try SymPy symbolic evaluation as last resort
+                    sympy_result = SymbolicSolver._try_sympy_eval(eq, exec_locals, givens_dict)
+                    if sympy_result is not None:
+                        var_name = eq.split("=")[0].strip()
+                        exec_locals[var_name] = sympy_result
+                        last_result = sympy_result
+                        trace_lines.append(f"  SymPy resolved: {var_name} = {sympy_result}")
+                    else:
+                        return False, "unknown", "\n".join(trace_lines)
+            
+            # Get final answer
+            answer = exec_locals.get("answer", last_result)
+            if answer is None:
+                return False, "unknown", "\n".join(trace_lines) + "\n  No 'answer' variable found"
+            
+            # Convert to float
+            try:
+                answer_float = float(answer)
+                trace_lines.append(f"  RESULT: {answer_float}")
+                return True, str(answer_float), "\n".join(trace_lines)
+            except (ValueError, TypeError):
+                return False, "unknown", "\n".join(trace_lines) + f"\n  Non-numeric answer: {answer}"
+            
+        except Exception as e:
+            trace_lines.append(f"  FATAL: {type(e).__name__}: {e}")
+            return False, "unknown", "\n".join(trace_lines)
+
+    @staticmethod
+    def _try_sympy_eval(equation_str: str, local_vars: dict, givens: dict) -> Optional[float]:
+        """
+        Try to evaluate a single equation using SymPy when Python exec fails.
+        Handles cases like division expressions, fractional arithmetic, etc.
+        """
+        if not SYMPY_AVAILABLE:
+            return None
+        
+        try:
+            # Extract RHS of assignment
+            if "=" not in equation_str:
+                return None
+            
+            parts = equation_str.split("=", 1)
+            rhs = parts[1].strip()
+            
+            # Replace givens['key'] with actual values
+            for key, val in givens.items():
+                rhs = rhs.replace(f"givens['{key}']", str(val))
+                rhs = rhs.replace(f'givens["{key}"]', str(val))
+            
+            # Replace known local variables
+            for key, val in local_vars.items():
+                if isinstance(val, (int, float)) and key != "givens":
+                    # Only replace whole words
+                    rhs = re.sub(rf'\b{re.escape(key)}\b', str(val), rhs)
+            
+            # Parse and evaluate with SymPy
+            transformations = standard_transformations + (implicit_multiplication_application,)
+            expr = parse_expr(rhs, transformations=transformations)
+            result = float(expr.evalf())
+            
+            return result
+        except Exception:
+            return None
+
+
+# ==========================================================================
 # [FIX v7.1] Custom Exception for API Failures
 # ==========================================================================
 
@@ -429,91 +703,177 @@ class LLMCallError(Exception):
 # --------------------------- Unified LLM Client ---------------------------
 
 class UnifiedLLMClient:
-    def __init__(self, provider: str = "groq", use_cache: bool = False):
+    def __init__(self, provider: str = "groq", use_cache: bool = False, model_override: Optional[str] = None):
+        """
+        [UPDATED v7.3] Accepts optional model_override to specify exact model.
+        This enables heterogeneous configurations where different agent roles
+        use different models from the same or different providers.
+        """
         self.provider = provider
         self.use_cache = use_cache
         self.model_name = "unknown"
-        
-        # [CRITICAL FIX] Ensure limiter is assigned for ALL providers
-        if provider == "groq":
-            self.limiter = groq_limiter
-            if not GROQ_API_KEY: raise ValueError("Missing GROQ_API_KEY")
-            self.client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY)
-            self.model_name = "llama-3.3-70b-versatile"
-        elif provider == "google":
-            self.limiter = google_limiter
-            if not GOOGLE_API_KEY: raise ValueError("Missing GOOGLE_API_KEY")
-            genai.configure(api_key=GOOGLE_API_KEY)
-            self._setup_google_model()
-        elif provider == "sambanova":
-            self.limiter = sambanova_limiter
-            if not SAMBANOVA_API_KEY: raise ValueError("Missing SAMBANOVA_API_KEY in .env file")
-            self.client = OpenAI(
-                base_url="https://api.sambanova.ai/v1", 
-                api_key=SAMBANOVA_API_KEY
-            )
-            # Αλλαγή στο τρέχον παραγωγικό μοντέλο της SambaNova
-            self.model_name = "Meta-Llama-3.3-70B-Instruct"
-        else:
-            raise ValueError(f"Unknown provider: {provider}")
+        self.limiter = groq_limiter if provider == "groq" else google_limiter
 
         if use_cache and os.path.exists(CACHE_FILE):
             with open(CACHE_FILE, "rb") as f:
                 global CALL_CACHE
-                try: CALL_CACHE = pickle.load(f)
-                except: CALL_CACHE = {}
+                try:
+                    CALL_CACHE = pickle.load(f)
+                except:
+                    CALL_CACHE = {}
 
+        if provider == "groq":
+            if not GROQ_API_KEY: raise ValueError("Missing GROQ_API_KEY in .env file")
+            self.client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY)
+            # [v7.3] Use model_override if provided, else default
+            self.model_name = model_override or "llama-3.3-70b-versatile"
+        elif provider == "google":
+            if not GOOGLE_API_KEY: raise ValueError("Missing GOOGLE_API_KEY in .env file")
+            if not GOOGLE_AVAILABLE: raise ImportError("Google SDK missing. pip install google-generativeai")
+            genai.configure(api_key=GOOGLE_API_KEY)
+            if model_override:
+                self.model_name = model_override
+                self.client = genai.GenerativeModel(model_override)
+            else:
+                self._setup_google_model()
+        else:
+            raise ValueError(f"Unknown provider: {provider}")
+    
+    def __repr__(self) -> str:
+        return f"LLMClient({self.provider}/{self.model_name})"
+
+    # [FIX v7.1] Validate API key at startup
     def validate_connection(self) -> bool:
+        """Test that the API key works before running the full pipeline."""
         logger.info(f"Validating {self.provider} API connection...")
         try:
-            test_response = self.call_model([{"role": "user", "content": "2+2"}], temperature=0.0, max_tokens=10)
-            return not _is_error_response(test_response)
+            test_response = self.call_model(
+                [{"role": "user", "content": "What is 2+2? Reply with just the number."}],
+                temperature=0.0,
+                max_tokens=50
+            )
+            if _is_error_response(test_response):
+                logger.error(f"API validation FAILED. Response: {test_response}")
+                return False
+            logger.info(f"API validation OK. Test response: {str(test_response)[:100]}")
+            return True
         except Exception as e:
-            logger.error(f"Validation FAILED: {e}")
+            logger.error(f"API validation FAILED with exception: {e}")
             return False
 
     def call_model(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int = 1200) -> Any:
         key = _make_cache_key(self.provider, self.model_name, messages, temperature)
-        if self.use_cache and key in CALL_CACHE: return CALL_CACHE[key]
 
+        if self.use_cache and key in CALL_CACHE:
+            return CALL_CACHE[key]
+
+        # [FIX v7.2] Check token budget before calling
         estimated = token_budget.estimate_tokens(messages, max_tokens)
-        if not token_budget.can_afford(estimated): return "ERROR_BUDGET_EXCEEDED"
+        if not token_budget.can_afford(estimated):
+            return "ERROR_BUDGET_EXCEEDED: Daily token limit reached. Wait 24h or upgrade to Dev tier."
+
+        last_err = None
 
         def _call_once():
             self.limiter.wait()
-            if self.provider in ["groq", "sambanova"]:
+            if self.provider == "groq":
                 resp = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens
                 )
-                actual = getattr(resp.usage, 'total_tokens', estimated)
-                token_budget.record_usage(actual)
+                # [FIX v7.2] Track actual token usage from response
+                if hasattr(resp, 'usage') and resp.usage:
+                    actual_tokens = getattr(resp.usage, 'total_tokens', estimated)
+                    token_budget.record_usage(actual_tokens)
+                else:
+                    token_budget.record_usage(estimated)
                 return resp.choices[0].message.content
-            
             if self.provider == "google":
-                prompt = "\n".join([m["content"] for m in messages])
-                resp = self.client.generate_content(prompt)
+                sys_prompt = next((m["content"] for m in messages if m["role"] == "system"), "")
+                user_prompt = "\n\n".join([m["content"] for m in messages if m["role"] != "system"])
+                full_prompt = f"System:\n{sys_prompt}\n\nTask:\n{user_prompt}"
+                resp = self.client.generate_content(
+                    full_prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_tokens
+                    )
+                )
                 token_budget.record_usage(estimated)
                 return getattr(resp, "text", "")
 
         for attempt in range(6):
             try:
                 res = _call_once()
-                if res:
-                    if self.use_cache:
-                        CALL_CACHE[key] = res
-                        with open(CACHE_FILE, "wb") as f: pickle.dump(CALL_CACHE, f)
-                    return res
+                
+                if res is None or str(res).strip() == "":
+                    last_err = "Empty response from API"
+                    logger.warning(f"Attempt {attempt+1}/6: Empty response. Retrying...")
+                    time.sleep(min(12.0, 1.5 * (attempt + 1)))
+                    continue
+                
+                if self.use_cache:
+                    CALL_CACHE[key] = res
+                    with open(CACHE_FILE, "wb") as f:
+                        pickle.dump(CALL_CACHE, f)
+                return res
             except Exception as e:
-                logger.warning(f"Attempt {attempt+1} failed: {e}")
-                time.sleep(2 * (attempt + 1))
-        return "ERROR_GENERATION"
+                last_err = str(e)
+                err_str = str(e).lower()
+                logger.warning(f"Attempt {attempt+1}/6 failed: {type(e).__name__}: {str(e)[:200]}")
+                
+                # [FIX v7.1] Auth errors — no point retrying
+                if "401" in err_str or "unauthorized" in err_str or "authentication" in err_str:
+                    logger.error("AUTHENTICATION ERROR: API key is invalid or expired.")
+                    return f"ERROR_AUTH_401: {last_err}"
+                
+                if "403" in err_str or "forbidden" in err_str:
+                    logger.error("FORBIDDEN: API key does not have access to this model.")
+                    return f"ERROR_AUTH_403: {last_err}"
+                
+                # [FIX v7.2] 429 Rate Limit — extract wait time from error message
+                if "429" in err_str or "rate_limit" in err_str or "rate limit" in err_str:
+                    # Try to extract wait time from Groq error (e.g., "try again in 8m27.168s")
+                    wait_match = re.search(r'try again in (\d+)m([\d.]+)s', str(e))
+                    if wait_match:
+                        wait_minutes = int(wait_match.group(1))
+                        wait_seconds = float(wait_match.group(2))
+                        total_wait = wait_minutes * 60 + wait_seconds + 5  # +5s buffer
+                        
+                        if total_wait > 600:  # More than 10 minutes = daily limit hit
+                            logger.error(
+                                f"DAILY TOKEN LIMIT REACHED. Groq says wait {wait_minutes}m{wait_seconds:.0f}s. "
+                                f"This usually means you've hit the 100K tokens/day free tier limit. "
+                                f"Options: (1) Wait until tomorrow, (2) Upgrade to Dev tier at console.groq.com"
+                            )
+                            return f"ERROR_RATE_LIMIT_DAILY: {last_err}"
+                        
+                        logger.info(f"Rate limited. Waiting {total_wait:.0f}s as requested by Groq...")
+                        time.sleep(total_wait)
+                        continue
+                    else:
+                        # Generic 429 — exponential backoff with jitter
+                        backoff = min(120, (2 ** attempt) * 5 + random.uniform(0, 5))
+                        logger.info(f"Rate limited (429). Backing off {backoff:.0f}s...")
+                        time.sleep(backoff)
+                        continue
+                
+                # Other errors — standard backoff
+                time.sleep(min(12.0, 1.5 * (attempt + 1)))
+
+        return f"ERROR_GENERATION: {last_err or 'unknown_error'}"
 
     def _setup_google_model(self):
-        self.model_name = "gemini-1.5-flash"
-        self.client = genai.GenerativeModel(self.model_name)
+        try:
+            available = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
+            target = next((m for m in available if "flash" in m), available[0] if available else "models/gemini-1.5-flash")
+            self.model_name = target
+            self.client = genai.GenerativeModel(target)
+        except Exception:
+            self.model_name = "gemini-1.5-flash"
+            self.client = genai.GenerativeModel(self.model_name)
 
 # --------------------------- Dataset Manager ---------------------------
 
@@ -735,13 +1095,71 @@ class HypothesisLog:
 
 class QualityEnhancedMultiAgentSolver:
     
-    def __init__(self, client: UnifiedLLMClient):
-        self.client = client
+    def __init__(self, client: UnifiedLLMClient = None,
+                 clients: Dict[AgentRole, UnifiedLLMClient] = None):
+        """
+        [UPDATED v7.3] Supports heterogeneous model configuration.
+        
+        Args:
+            client: Single client for all roles (backward compatible).
+            clients: Dict mapping AgentRole → UnifiedLLMClient.
+                     If both provided, 'clients' takes precedence.
+                     Missing roles in 'clients' fall back to 'client'.
+        """
+        # Build role→client mapping
+        self._clients: Dict[AgentRole, UnifiedLLMClient] = {}
+        
+        if clients:
+            self._clients = dict(clients)
+        
+        # Fill any missing roles with the default client
+        if client:
+            for role in AgentRole:
+                if role not in self._clients:
+                    self._clients[role] = client
+        
+        # Validate: every role must have a client
+        for role in AgentRole:
+            if role not in self._clients:
+                raise ValueError(f"No client configured for role {role.value}. "
+                                 "Provide either 'client' (default for all) or "
+                                 "complete 'clients' dict.")
+        
         self.math_temp = 0.0
         self.prog_temp = 0.05
         self.enable_baseline_fallback_on_mas_failure = True
         self.enable_metamorphic_testing = False
         self.enable_hypothesis_testing = True
+        
+        # [v7.3] Log the configuration
+        self._log_model_config()
+    
+    def _get_client(self, role: AgentRole) -> UnifiedLLMClient:
+        """Get the client assigned to a specific agent role."""
+        return self._clients[role]
+    
+    def _log_model_config(self):
+        """Log which model is assigned to each role."""
+        logger.info("=" * 50)
+        logger.info("HETEROGENEOUS MODEL CONFIGURATION:")
+        is_homogeneous = len(set(
+            f"{c.provider}/{c.model_name}" for c in self._clients.values()
+        )) == 1
+        if is_homogeneous:
+            c = list(self._clients.values())[0]
+            logger.info(f"  [Homogeneous] All roles → {c.provider}/{c.model_name}")
+        else:
+            for role in AgentRole:
+                c = self._clients[role]
+                logger.info(f"  {role.value:<25} → {c.provider}/{c.model_name}")
+        logger.info("=" * 50)
+    
+    def get_model_config_summary(self) -> Dict[str, str]:
+        """Return a summary dict for logging/CSV output."""
+        return {
+            f"model_{role.value}": f"{self._clients[role].provider}/{self._clients[role].model_name}"
+            for role in AgentRole
+        }
 
     # -------------------------------------------------------------------------
     # Extract Answer (with error guard)
@@ -793,6 +1211,13 @@ class QualityEnhancedMultiAgentSolver:
     # -------------------------------------------------------------------------
     
     def run_mathematician_analysis(self, problem: str) -> dict:
+        """
+        [v9.0] Enhanced Mathematician with:
+        1. Self-verification: asks the LLM to mentally compute the answer  
+           from its own equations and check if it's reasonable
+        2. Retry on failure: if JSON parsing fails, retries once with 
+           a simpler prompt instead of returning empty blueprint
+        """
         
         sys_msg = """You are an expert Mathematician analyzing word problems.
 
@@ -815,30 +1240,33 @@ OUTPUT FORMAT (strict JSON):
     "step2_result = step1_result * 2",
     "answer = step2_result"
   ],
+  "expected_answer": "your mental estimate of what the numeric answer should be",
   "distractor_check": "List any numbers/info in the problem to IGNORE (if any)"
 }
 
 CRITICAL RULES:
-1. Extract ONLY relevant numbers into 'givens'
+1. Extract ONLY relevant numbers into 'givens'. Ignore irrelevant numbers.
 2. Use descriptive variable names (e.g., 'initial_apples', 'eaten_apples')
-3. Each equation must be valid Python code
-4. Equations should reference the 'givens' dict explicitly
-5. solution_steps should guide step-by-step
-6. If you see irrelevant information, note it in distractor_check
-7. Return ONLY valid JSON, no preamble or explanation
+3. Each equation must be valid Python code referencing givens['key']
+4. The LAST equation must assign to 'answer'
+5. SELF-CHECK: Before outputting, mentally trace through your equations with the actual numbers. Does the result match your expected_answer? If not, fix your equations.
+6. Return ONLY valid JSON, no preamble or explanation
 
 EXAMPLE:
-Problem: "Jane has 10 apples. She eats 3. How many are left?"
+Problem: "Jane has 10 apples. She eats 3 and buys 5 more. How many does she have?"
 Output:
 {
-  "unknown": "number of apples remaining",
-  "givens": {"initial_apples": 10, "eaten_apples": 3},
+  "unknown": "total apples Jane has",
+  "givens": {"initial_apples": 10, "eaten_apples": 3, "bought_apples": 5},
   "solution_steps": [
-    "Step 1: Calculate remaining apples by subtracting eaten from initial"
+    "Step 1: Subtract eaten from initial: 10 - 3 = 7",
+    "Step 2: Add bought: 7 + 5 = 12"
   ],
   "equations": [
-    "answer = givens['initial_apples'] - givens['eaten_apples']"
+    "remaining = givens['initial_apples'] - givens['eaten_apples']",
+    "answer = remaining + givens['bought_apples']"
   ],
+  "expected_answer": "12",
   "distractor_check": "None"
 }
 """
@@ -848,8 +1276,29 @@ Output:
             {"role": "user", "content": f"Problem:\n{problem}\n\nAnalyze and return the JSON blueprint."}
         ]
         
-        res = self.client.call_model(msgs, temperature=self.math_temp, max_tokens=1200)
+        res = self._get_client(AgentRole.MATHEMATICIAN).call_model(
+            msgs, temperature=self.math_temp, max_tokens=800
+        )
         blueprint = _extract_blueprint_json(str(res))
+        
+        # [v9.0] If blueprint is empty (JSON parse failed), retry with simpler prompt
+        if not blueprint.get("equations") and not blueprint.get("givens"):
+            logger.info("Blueprint empty — retrying Mathematician with simplified prompt")
+            retry_msg = f"""Solve this math problem step by step. Extract the numbers, write Python equations, and give the answer.
+
+Problem: {problem}
+
+Reply with ONLY this JSON (no other text):
+{{"givens": {{"name": number}}, "equations": ["answer = ..."], "unknown": "what to find", "solution_steps": ["Step 1: ..."], "expected_answer": "number", "distractor_check": "None"}}"""
+            
+            res2 = self._get_client(AgentRole.MATHEMATICIAN).call_model(
+                [{"role": "user", "content": retry_msg}],
+                temperature=0.0, max_tokens=600
+            )
+            blueprint2 = _extract_blueprint_json(str(res2))
+            if blueprint2.get("equations") or blueprint2.get("givens"):
+                logger.info("Retry succeeded — got valid blueprint")
+                blueprint = blueprint2
         
         return blueprint
 
@@ -924,10 +1373,10 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
                 {"role": "user", "content": user_msg + repair_feedback}
             ]
             
-            raw_response = self.client.call_model(
+            raw_response = self._get_client(AgentRole.PROGRAMMER).call_model(
                 msgs, 
                 temperature=self.prog_temp, 
-                max_tokens=1500
+                max_tokens=1000
             )
             
             # [FIX v7.1] Check for error response from LLM
@@ -981,7 +1430,33 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
                 }
             )
         
-        # Failed after all attempts
+        # Failed after all attempts — try SymPy symbolic solver as fallback
+        sympy_answer = None
+        sympy_trace = ""
+        if SYMPY_AVAILABLE and blueprint.get("equations"):
+            logger.info("Programmer failed. Attempting SymPy symbolic solver fallback...")
+            sym_ok, sym_ans, sym_trace = SymbolicSolver.solve_from_blueprint(blueprint)
+            sympy_trace = sym_trace
+            if sym_ok:
+                sym_num = _extract_last_number(sym_ans)
+                if sym_num is not None:
+                    sympy_answer = str(sym_num)
+                    logger.info(f"SymPy fallback SUCCESS: {sympy_answer}")
+
+        if sympy_answer:
+            return AgentResponse(
+                agent="SymPy (symbolic fallback)",
+                answer=sympy_answer,
+                parsed=sympy_answer,
+                confidence=0.8,  # High confidence (correct arithmetic) but no code verification
+                reasoning_trace=sympy_trace[:500],
+                quality_metrics={
+                    "solver": "sympy_symbolic",
+                    "programmer_failed_attempts": max_attempts,
+                    "last_code_error": repair_feedback[:200] if repair_feedback else "N/A"
+                }
+            )
+
         fallback_answer = best_answer if best_answer else "unknown"
         return AgentResponse(
             agent="Programmer (failed)",
@@ -991,9 +1466,83 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
             reasoning_trace=last_code[:500] if last_code else "No code generated",
             quality_metrics={
                 "error": "Max attempts reached",
-                "last_feedback": repair_feedback
+                "last_feedback": repair_feedback,
+                "sympy_attempted": SYMPY_AVAILABLE,
+                "sympy_trace": sympy_trace[:200] if sympy_trace else "N/A"
             }
         )
+
+    # -------------------------------------------------------------------------
+    # [NEW v8.0] Process-Level Verification
+    # -------------------------------------------------------------------------
+    
+    def verify_code_against_blueprint(self, problem: str, blueprint: dict,
+                                       code: str, code_answer: str) -> Tuple[bool, str, float]:
+        """
+        [v9.0] Purely rule-based verification (0 API calls).
+        
+        Cross-checks:
+        1. Givens consistency: code uses same values as blueprint
+        2. Equation coverage: all blueprint equations have corresponding code
+        3. Answer sanity: sign, magnitude, and expected_answer match
+        """
+        givens = blueprint.get("givens", {})
+        equations = blueprint.get("equations", [])
+        
+        issues = []
+        
+        # Check 1: Givens consistency
+        code_givens = _extract_givens_dict_from_code(code)
+        if code_givens is not None and givens:
+            for key, val in givens.items():
+                if key not in code_givens:
+                    issues.append(f"Missing given '{key}'")
+                elif isinstance(val, (int, float)) and isinstance(code_givens.get(key), (int, float)):
+                    if abs(code_givens[key] - val) > 1e-6:
+                        issues.append(f"Givens mismatch '{key}': blueprint={val} code={code_givens[key]}")
+        
+        # Check 2: Equation variables in code
+        for eq in equations:
+            if "=" in eq:
+                var_name = eq.split("=")[0].strip()
+                if var_name not in code and var_name != "answer":
+                    issues.append(f"Missing variable '{var_name}'")
+        
+        # Check 3: Answer sanity
+        answer_num = _extract_last_number(code_answer)
+        if answer_num is not None:
+            if answer_num < 0 and not any(
+                kw in problem.lower() for kw in ["loss", "decrease", "debt", "negative", "below", "fewer", "less", "owe"]
+            ):
+                issues.append(f"Negative answer ({answer_num}) seems wrong for this problem")
+            
+            if givens:
+                max_given = max((abs(v) for v in givens.values() if isinstance(v, (int, float))), default=0)
+                if max_given > 0 and abs(answer_num) > max_given * 10000:
+                    issues.append(f"Answer ({answer_num}) implausibly large vs givens (max={max_given})")
+        
+        # Check 4: [v9.0] Cross-check with Mathematician's expected_answer
+        expected = blueprint.get("expected_answer", "")
+        if expected and answer_num is not None:
+            expected_num = _extract_last_number(str(expected))
+            if expected_num is not None and abs(expected_num) > 0.01:
+                rel_diff = abs(answer_num - expected_num) / max(abs(expected_num), 1e-9)
+                if rel_diff > 0.1:  # More than 10% off from Mathematician's estimate
+                    issues.append(f"Code answer ({answer_num}) differs from Mathematician estimate ({expected_num}) by {rel_diff:.0%}")
+        
+        # Score
+        if not issues:
+            return True, "All checks passed", 1.0
+        
+        critical = sum(1 for i in issues if "mismatch" in i.lower() or "negative" in i.lower() or "implausibly" in i.lower())
+        minor = len(issues) - critical
+        
+        if critical > 0:
+            confidence = max(0.3, 1.0 - critical * 0.25 - minor * 0.1)
+            return False, "; ".join(issues[:3]), confidence
+        
+        confidence = max(0.6, 1.0 - minor * 0.1)
+        return True, "; ".join(issues[:3]), confidence
 
     # -------------------------------------------------------------------------
     # Metamorphic Testing (Optional)
@@ -1131,40 +1680,59 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
     def generate_alternative_hypotheses(self, problem: str,
                                         primary_blueprint: dict,
                                         primary_answer: str) -> List[dict]:
-        primary_strategy = primary_blueprint.get("notes", "")
+        """
+        [v9.0] Critic-based hypothesis generation.
+        
+        Instead of "generate 2 completely different approaches" (which produces
+        correlated errors from the same model), we now ask:
+        
+        1. CRITIC: "Review this solution. What errors do you find?"
+        2. CORRECTION: "Provide a corrected solution fixing those errors."
+        
+        This transforms SHT from parallel exploration into peer review,
+        which is fundamentally more useful for catching reasoning errors.
+        """
         primary_eqs = primary_blueprint.get("equations", [])
+        primary_givens = primary_blueprint.get("givens", {})
+        primary_steps = primary_blueprint.get("solution_steps", [])
 
-        sys_msg = f"""You are an expert Mathematician who generates ALTERNATIVE solution strategies.
+        sys_msg = f"""You are a meticulous Mathematics Reviewer. 
+Your job is to FIND ERRORS in a proposed solution and provide CORRECTIONS.
 
-You have already seen one solution approach. Now produce exactly 2 DIFFERENT approaches
-using DIFFERENT mathematical strategies.
+A colleague solved a math problem and got the answer: {primary_answer}
 
-AVAILABLE STRATEGY ARCHETYPES:
-{chr(10).join(f'  {i+1}. {s}' for i, s in enumerate(self.STRATEGY_ARCHETYPES))}
+REVIEW CHECKLIST:
+1. Are all relevant numbers from the problem extracted correctly?
+2. Are any IRRELEVANT numbers (distractors) mistakenly included?
+3. Is each mathematical operation correct for what the problem asks?
+4. Are there any MISSING steps?
+5. Does the final answer actually answer what was asked?
 
-CRITICAL RULES:
-1. Each alternative MUST use a genuinely different strategy archetype
-2. Do NOT repeat the same equations or approach in different words
-3. Each alternative must be a complete, self-contained solution plan
-4. All equations must be valid Python code referencing givens['key']
-5. Return ONLY valid JSON, no preamble
+After your review, provide exactly 2 corrected solutions:
+- Correction 1: Fix the most likely error you found
+- Correction 2: Solve from scratch using a completely different approach
 
-OUTPUT FORMAT (strict JSON):
+OUTPUT FORMAT (strict JSON, no other text):
 {{
+  "review": "Brief description of error(s) found (or 'no errors found')",
   "alternatives": [
     {{
-      "strategy_name": "one of the archetype names above",
+      "strategy_name": "correction_of_[specific error]",
+      "error_found": "what was wrong in the original",
       "unknown": "what we need to find",
       "givens": {{"var_name": numeric_value, ...}},
       "solution_steps": ["Step 1: ...", "Step 2: ..."],
-      "equations": ["step1 = givens['var'] ...", "answer = ..."]
+      "equations": ["step1 = givens['var'] ...", "answer = ..."],
+      "expected_answer": "your mental estimate"
     }},
     {{
-      "strategy_name": "a DIFFERENT archetype name",
+      "strategy_name": "independent_rederivation",
+      "error_found": "solving from scratch to verify",
       "unknown": "what we need to find",
       "givens": {{"var_name": numeric_value, ...}},
       "solution_steps": ["Step 1: ...", "Step 2: ..."],
-      "equations": ["step1 = givens['var'] ...", "answer = ..."]
+      "equations": ["step1 = givens['var'] ...", "answer = ..."],
+      "expected_answer": "your mental estimate"
     }}
   ]
 }}"""
@@ -1172,21 +1740,23 @@ OUTPUT FORMAT (strict JSON):
         user_msg = f"""PROBLEM:
 {problem}
 
-EXISTING SOLUTION (use a DIFFERENT approach):
-Strategy: {primary_strategy}
+COLLEAGUE'S SOLUTION TO REVIEW:
+Givens: {json.dumps(primary_givens)}
+Steps: {json.dumps(primary_steps)}
 Equations: {json.dumps(primary_eqs)}
 Answer obtained: {primary_answer}
 
-Generate 2 alternative solution strategies as JSON."""
+Review for errors and provide 2 corrected/alternative solutions as JSON."""
 
         msgs = [
             {"role": "system", "content": sys_msg},
             {"role": "user", "content": user_msg}
         ]
 
-        raw = self.client.call_model(msgs, temperature=0.2, max_tokens=1800)
+        raw = self._get_client(AgentRole.HYPOTHESIS_GENERATOR).call_model(
+            msgs, temperature=0.3, max_tokens=1200
+        )
 
-        # [FIX v7.1] Check for error response
         if _is_error_response(raw):
             logger.warning("Hypothesis generator returned error response")
             return []
@@ -1208,16 +1778,20 @@ Generate 2 alternative solution strategies as JSON."""
                         pass
 
             if parsed and "alternatives" in parsed:
+                review = parsed.get("review", "")
+                if review:
+                    logger.info(f"SHT Critic review: {review[:150]}")
+                    
                 for alt in parsed["alternatives"][:2]:
                     if isinstance(alt, dict):
                         alt.setdefault("unknown", "the answer")
                         alt.setdefault("givens", {})
                         alt.setdefault("solution_steps", [])
                         alt.setdefault("equations", [])
-                        alt.setdefault("strategy_name", "unknown_strategy")
+                        alt.setdefault("strategy_name", "critic_correction")
                         alternatives.append(alt)
         except Exception as e:
-            logger.warning(f"SHT: Failed to parse alternative hypotheses: {e}")
+            logger.warning(f"SHT: Failed to parse critic response: {e}")
 
         return alternatives
 
@@ -1304,7 +1878,7 @@ Evaluate and select the most reliable answer."""
             {"role": "user", "content": user_msg}
         ]
 
-        raw = self.client.call_model(msgs, temperature=0.0, max_tokens=800)
+        raw = self._get_client(AgentRole.JUDGE).call_model(msgs, temperature=0.0, max_tokens=800)
         
         # [FIX v7.1] Check for error response from judge
         if _is_error_response(raw):
@@ -1452,7 +2026,7 @@ Evaluate and select the most reliable answer."""
     def solve(self, problem: str, expected: str) -> Dict[str, Any]:
         # Step 1: Baseline
         baseline_prompt = f"{problem}\n\nSolve this step-by-step. End with: ANSWER: [[numeric_value]]"
-        base_raw = self.client.call_model(
+        base_raw = self._get_client(AgentRole.BASELINE).call_model(
             [{"role": "user", "content": baseline_prompt}],
             temperature=0.1,
             max_tokens=800
@@ -1462,8 +2036,62 @@ Evaluate and select the most reliable answer."""
         # Step 2: Architect
         blackboard_logic = self.run_mathematician_analysis(problem)
 
-        # Step 3: Engineer
+        # Step 3: Engineer (with SymPy fallback built-in)
         programmer_response = self.run_programmer_solver(problem, blackboard_logic)
+
+        # Step 3b: [NEW v8.0] Process-Level Verification
+        verification_passed = True
+        verification_feedback = "Skipped"
+        verification_confidence = 1.0
+        
+        if (programmer_response.confidence > 0.5
+            and programmer_response.answer != "unknown"
+            and programmer_response.reasoning_trace
+            and "SymPy" not in programmer_response.agent):
+            # Only verify code-based solutions, not SymPy fallbacks
+            verification_passed, verification_feedback, verification_confidence = \
+                self.verify_code_against_blueprint(
+                    problem, blackboard_logic,
+                    programmer_response.reasoning_trace,
+                    programmer_response.answer
+                )
+            
+            # Adjust programmer confidence based on verification
+            adjusted_confidence = programmer_response.confidence * verification_confidence
+            programmer_response = AgentResponse(
+                agent=programmer_response.agent,
+                answer=programmer_response.answer,
+                parsed=programmer_response.parsed,
+                confidence=adjusted_confidence,
+                reasoning_trace=programmer_response.reasoning_trace,
+                quality_metrics={
+                    **programmer_response.quality_metrics,
+                    "verification_passed": verification_passed,
+                    "verification_confidence": verification_confidence,
+                    "verification_feedback": verification_feedback[:200],
+                }
+            )
+            
+            if not verification_passed:
+                logger.info(f"Process verification FAILED (conf={verification_confidence:.2f}). "
+                            f"Trying SymPy as alternative...")
+                if SYMPY_AVAILABLE and blackboard_logic.get("equations"):
+                    sym_ok, sym_ans, sym_trace = SymbolicSolver.solve_from_blueprint(blackboard_logic)
+                    if sym_ok:
+                        sym_num = _extract_last_number(sym_ans)
+                        if sym_num is not None:
+                            programmer_response = AgentResponse(
+                                agent="SymPy (post-verification fallback)",
+                                answer=str(sym_num),
+                                parsed=str(sym_num),
+                                confidence=0.75,
+                                reasoning_trace=sym_trace[:500],
+                                quality_metrics={
+                                    "solver": "sympy_post_verification",
+                                    "original_answer": programmer_response.answer,
+                                    "verification_rejection": verification_feedback[:200],
+                                }
+                            )
 
         # Step 4: Structured Hypothesis Testing
         hypothesis_log = None
@@ -1487,14 +2115,23 @@ Evaluate and select the most reliable answer."""
         result = {
             "problem": problem,
             "expected": expected,
-            "baseline": {"answer": base_ans},
+            "baseline": {
+                "answer": base_ans,
+                "model": str(self._get_client(AgentRole.BASELINE)),  # [v7.3]
+            },
             "mas": {
                 "answer": mas_answer,
                 "logic_trace": json.dumps(blackboard_logic, ensure_ascii=False)[:500],
                 "used_baseline_fallback": used_baseline_fallback,
-                "programmer_metrics": programmer_response.quality_metrics
+                "programmer_metrics": programmer_response.quality_metrics,
+                "verification": {
+                    "passed": verification_passed,
+                    "confidence": verification_confidence,
+                    "feedback": verification_feedback[:200],
+                },
             },
             "agents": [programmer_response],
+            "model_config": self.get_model_config_summary(),  # [v7.3]
         }
 
         if hypothesis_log:
@@ -1522,11 +2159,53 @@ Evaluate and select the most reliable answer."""
 # --------------------------- Main Pipeline ---------------------------
 
 class QualityAwarePipeline:
-    def __init__(self, provider: str = "groq", use_cache: bool = False):
-        self.client = UnifiedLLMClient(provider, use_cache=use_cache)
+    def __init__(self, provider: str = "groq", use_cache: bool = False,
+                 heterogeneous_preset: Optional[str] = None,
+                 custom_config: Optional[Dict[AgentRole, ModelConfig]] = None):
+        """
+        [UPDATED v7.3] Supports heterogeneous model configuration.
+        
+        Args:
+            provider: Default provider (used if no heterogeneous config).
+            use_cache: Whether to cache API calls.
+            heterogeneous_preset: Name of a preset from HETEROGENEOUS_PRESETS.
+            custom_config: Custom Dict[AgentRole, ModelConfig] mapping.
+        """
         self.manager = EnhancedProblemManager(random_seed=None)
-        self.solver = QualityEnhancedMultiAgentSolver(self.client)
         self.results: List[Dict[str, Any]] = []
+        
+        # Determine model configuration
+        if custom_config:
+            role_config = custom_config
+        elif heterogeneous_preset and heterogeneous_preset in HETEROGENEOUS_PRESETS:
+            role_config = HETEROGENEOUS_PRESETS[heterogeneous_preset]
+        else:
+            # Backward compatible: single provider for all roles
+            role_config = {
+                role: ModelConfig(provider, None)
+                for role in AgentRole
+            }
+        
+        # [v7.3] Build one LLMClient per unique (provider, model_name) pair
+        # This avoids creating duplicate clients for the same model
+        self._client_cache: Dict[str, UnifiedLLMClient] = {}
+        clients: Dict[AgentRole, UnifiedLLMClient] = {}
+        
+        for role, mc in role_config.items():
+            cache_key = f"{mc.provider}:{mc.model_name or 'default'}"
+            if cache_key not in self._client_cache:
+                self._client_cache[cache_key] = UnifiedLLMClient(
+                    provider=mc.provider,
+                    use_cache=use_cache,
+                    model_override=mc.model_name
+                )
+            clients[role] = self._client_cache[cache_key]
+        
+        # Store primary client for validation
+        self.client = clients[AgentRole.MATHEMATICIAN]  # Use mathematician for validation
+        
+        # Create solver with heterogeneous clients
+        self.solver = QualityEnhancedMultiAgentSolver(clients=clients)
 
     def _extract_gold_answer(self, text: Any) -> Optional[float]:
         text = str(text)
@@ -1632,7 +2311,13 @@ class QualityAwarePipeline:
                 "mas_ans": r["mas"]["answer"],
                 "mas_used_baseline_fallback": r["mas"].get("used_baseline_fallback", False),
                 "expected_snippet": str(r["expected"])[-30:],
+                # [v8.0] Verification metrics
+                "verification_passed": r.get("mas", {}).get("verification", {}).get("passed", True),
+                "verification_confidence": r.get("mas", {}).get("verification", {}).get("confidence", 1.0),
+                # [v8.0] Solver type (Programmer, SymPy, baseline fallback)
+                "solver_agent": r.get("agents", [{}])[0].agent if r.get("agents") else "unknown",
                 **sht_data[i],
+                **r.get("model_config", {}),
             } for i, r in enumerate(detailed)
         ])
         return df
@@ -1678,6 +2363,19 @@ class QualityAwarePipeline:
         print("\n" + "="*60)
         print("   PERFORMANCE REPORT (MAS + Structured Hypothesis Testing)")
         print("="*60)
+        
+        # [v7.3] Show model configuration
+        if self.results and "model_config" in self.results[0]:
+            mc = self.results[0]["model_config"]
+            is_homogeneous = len(set(mc.values())) == 1
+            if is_homogeneous:
+                print(f"Model Config: Homogeneous ({list(mc.values())[0]})")
+            else:
+                print("Model Config: HETEROGENEOUS")
+                for role_key, model_str in mc.items():
+                    print(f"  {role_key:<25} → {model_str}")
+            print("-" * 60)
+        
         print(f"Total Examples: {n}")
         print("-" * 60)
         print(f"{'Metric':<30} | {'Value':<10}")
@@ -1686,6 +2384,19 @@ class QualityAwarePipeline:
         print(f"{'MAS+SHT Accuracy':<30} | {mas_acc:.2%}")
         print(f"{'Improvement over Baseline':<30} | {(mas_acc - base_acc):+.2%}")
         print(f"{'MAS->Baseline Fallback':<30} | {fb_rate:.2%}")
+        print("-" * 60)
+        
+        # [v8.0] Verification and SymPy stats
+        verif_failed = sum(
+            1 for r in self.results
+            if not r.get("mas", {}).get("verification", {}).get("passed", True)
+        )
+        sympy_used = sum(
+            1 for r in self.results
+            if r.get("agents") and "SymPy" in str(r["agents"][0].agent)
+        )
+        print(f"{'Verification Failures':<30} | {verif_failed}/{n}")
+        print(f"{'SymPy Fallback Used':<30} | {sympy_used}/{n}")
         print("-" * 60)
         print(f"{'SHT Trigger Rate':<30} | {sht_trigger_rate:.2%} ({sht_triggered_total}/{n})")
         print(f"{'SHT Rescue (fixed wrong)':<30} | {rescue_count}")
@@ -1704,41 +2415,82 @@ class QualityAwarePipeline:
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("  Multi-Agent Math Solver - VERSION 7.3 (SambaNova Ready)")
-    print("  Architect-Engineer + Structured Hypothesis Testing (SHT)")
+    print("  Multi-Agent Math Solver - VERSION 9.0 (Critic-SHT)")
+    print("  Heterogeneous Models + Process Verification + SymPy Fallback")
+    print("  + Structured Hypothesis Testing (SHT)")
     print("=" * 70)
     print()
     
-    print("TOKEN BUDGET GUIDANCE:")
-    print("  Groq: 100K/day | Google: Variable | SambaNova: 250K+/day")
-    print("-" * 70)
+    print("TOKEN BUDGET (Groq Free Tier = 100K tokens/day):")
+    print("  10 problems + SHT  →  ~60K-90K tokens  (safe)")
+    print("  20 problems + SHT  →  ~90K-120K tokens  (may hit limit)")
+    print()
 
-    print("Select Provider:")
-    print("1) Groq")
-    print("2) Google (Gemini)")
-    print("3) SambaNova (High RPM / Llama 3.1 70B)")
+    print("Select Model Configuration:")
+    print("1) Homogeneous Groq      — all roles use LLaMA 3.3 70B")
+    print("2) Diverse Groq           — LLaMA 70B + Gemma 9B + Mixtral 8x7B")
+    print("3) Cross-Provider         — Groq (LLaMA) + Google (Gemini)")
+    print("4) Budget-Optimized       — LLaMA 8B for cheap roles, 70B for critical")
+    print("5) Homogeneous Google     — all roles use Gemini")
     
-    choice = input("Enter selection (1, 2, or 3): ").strip()
-    if choice == "2": prov = "google"
-    elif choice == "3": prov = "sambanova"
-    else: prov = "groq"
+    config_choice = input("Enter selection (1-5) [default=1]: ").strip()
     
-    num_problems = int(input("Number of problems [default=10]: ") or 10)
-    enable_sht = input("Enable SHT? (y/n) [default=y]: ").lower() != "n"
+    preset_map = {
+        "1": "homogeneous_groq",
+        "2": "diverse_groq",
+        "3": "cross_provider",
+        "4": "budget_optimized",
+        "5": "homogeneous_google",
+    }
+    preset_name = preset_map.get(config_choice, "homogeneous_groq")
     
-    pipeline = QualityAwarePipeline(provider=prov, use_cache=True)
-    pipeline.solver.enable_hypothesis_testing = enable_sht
+    print(f"\nSelected: {preset_name}")
+    selected_config = HETEROGENEOUS_PRESETS[preset_name]
+    print("Role assignments:")
+    for role, mc in selected_config.items():
+        print(f"  {role.value:<25} → {mc.provider}/{mc.model_name or 'default'}")
+    print()
     
-    print(f"\n🚀 Starting Pipeline with {prov.upper()}...")
-
-    df_results = pipeline.run(
-        datasets_list=["gsm8k_test"], # Μπορείτε να προσθέσετε περισσότερα εδώ
-        num_problems=num_problems,
+    # Number of problems
+    num_input = input("Number of problems [default=10]: ").strip()
+    num_problems = int(num_input) if num_input.isdigit() else 10
+    
+    # SHT toggle
+    sht_input = input("Enable SHT hypothesis testing? (y/n) [default=y]: ").strip().lower()
+    enable_sht = sht_input != "n"
+    
+    # Cache ON by default
+    pipeline = QualityAwarePipeline(
+        use_cache=True,
+        heterogeneous_preset=preset_name
     )
     
+    # Configure SHT
+    pipeline.solver.enable_hypothesis_testing = enable_sht
+    
+    estimated_tokens = num_problems * (9000 if enable_sht else 4500)
+    print(f"\nEstimated token usage: ~{estimated_tokens:,} tokens")
+    
+    # Check if cross-provider needs both keys
+    providers_needed = set(mc.provider for mc in selected_config.values())
+    if "groq" in providers_needed and not GROQ_API_KEY:
+        print("ERROR: This config requires GROQ_API_KEY in .env")
+        exit(1)
+    if "google" in providers_needed and not GOOGLE_API_KEY:
+        print("ERROR: This config requires GOOGLE_API_KEY in .env")
+        exit(1)
+    
+    print()
+
+    df_results = pipeline.run(
+        datasets_list=["gsm-plus", "gsm-symbolic-p2", "gsm-hard", "svamp", "gsm8k_test"],
+        num_problems=num_problems,
+        hardener="distractor",
+    )
     pipeline.report()
+    
     print(f"\n{token_budget.usage_report()}")
     
-    out_file = f"final_results_MAS_{prov}_n{num_problems}.csv"
+    out_file = f"final_results_v73_{preset_name}_n{num_problems}.csv"
     df_results.to_csv(out_file, index=False)
     print(f"Results saved to '{out_file}'.")
