@@ -1,0 +1,29 @@
+id,dataset,baseline_correct,mas_correct,baseline_ans,mas_ans,mas_used_baseline_fallback,expected_snippet,verification_passed,verification_confidence,solver_agent,sht_triggered,sht_triage_result,sht_winning_strategy,sht_num_candidates,sht_api_calls,model_baseline,model_mathematician,model_programmer,model_hypothesis_generator,model_judge
+gsm-hard_349,gsm-hard,False,True,5400.0,15400.0,False,15400.0,True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+svamp_test_79,svamp:test,False,True,31.0,1891.0,False,1891,True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm8k_test_690,gsm8k_test,False,False,120.0,120.0,False,"3360+2400=5760>>5760
+#### 5760",True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+svamp_test_170,svamp:test,False,True,221.0,17017.0,False,17017,True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm8k_test_1283,gsm8k_test,False,True,2.0,60.0,False," $<<80-20=60>>60 left.
+#### 60",True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-plus_4073,gsm-plus:digit expansion,False,True,300.0,400.0,False,400,True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+svamp_test_48,svamp:test,False,False,3.0,3.0,False,38608,True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-symbolic_p2_657,gsm-symbolic:p2,False,True,20.0,271.0,False," = 271 potted plants.
+#### 271",True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm8k_test_851,gsm8k_test,False,True,2.0,110.0,False,"/24=110>>110 per pair
+#### 110",True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+svamp_test_38,svamp:test,True,True,39,39.0,False,39,True,1.0,Programmer (optimized),False,confident_skip,primary_blueprint,2,3,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm8k_test_72,gsm8k_test,False,True,2.0,221.0,False," = $<<129+92=221>>221
+#### 221",True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-plus_7598,gsm-plus:distraction insertion,False,True,2.0,42.0,False,42,True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-plus_6904,gsm-plus:numerical substitution,True,True,130,130.0,False,130,True,1.0,Programmer (optimized),False,confident_skip,primary_blueprint,2,3,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-hard_524,gsm-hard,False,True,unknown,8738446.0,False,8738446.0,True,1.0,Programmer (optimized),True,unanimous,primary_blueprint,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-hard_678,gsm-hard,False,False,3052898.0,3052898.0,False,1526448.5,True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-symbolic_p2_66,gsm-symbolic:p2,False,False,22.0,22.0,False,"over 1/2 of the city.
+#### 160",True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-hard_243,gsm-hard,False,True,323736.4,161868.2,False,161868.2,True,1.0,Programmer (empty blueprint),True,majority,correction_of_missing_steps,4,6,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-symbolic_p2_999,gsm-symbolic:p2,False,False,30.0,30.0,False,"45 points in her quiz.
+#### 45",True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-symbolic_p2_917,gsm-symbolic:p2,False,False,2.0,2.0,False,"ays €260 - €32 = €228
+#### 228",True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-hard_1000,gsm-hard,False,True,5.0,5881075.0,False,5881075.0,True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b

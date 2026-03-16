@@ -1,0 +1,26 @@
+id,dataset,baseline_correct,mas_correct,baseline_ans,mas_ans,mas_used_baseline_fallback,expected_snippet,verification_passed,verification_confidence,solver_agent,sht_triggered,sht_triage_result,sht_winning_strategy,sht_num_candidates,sht_api_calls,model_baseline,model_mathematician,model_programmer,model_hypothesis_generator,model_judge
+gsm-hard_1014,gsm-hard,False,False,4.0,4.0,False,170.0,True,1.0,Programmer (failed),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-symbolic_p2_1802,gsm-symbolic:p2,False,False,1.0,1.0,False," is 1056.0 / 2 = 528
+
+#### 528",True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-symbolic_p2_402,gsm-symbolic:p2,False,False,2.0,2.0,False,"ked balls: 3 + 81 = 84
+#### 84",True,1.0,Programmer (failed),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+svamp_test_145,svamp:test,False,True,57.0,66.0,False,66,True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+svamp_test_94,svamp:test,False,False,14.0,14.0,False,2,True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm8k_test_249,gsm8k_test,False,False,46.0,46.0,False,",600 more calories.
+#### 5,600",True,1.0,Programmer (failed),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+svamp_test_203,svamp:test,False,True,92.0,36.0,False,36,True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-plus_1940,gsm-plus:reversing operation,False,False,180.0,180.0,False,6,True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-plus_3366,gsm-plus:distraction insertion,False,True,17.0,17000.0,False,17000,True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-plus_3147,gsm-plus:adding operation,False,True,90.0,18.75,False,18.75,True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-symbolic_p2_143,gsm-symbolic:p2,False,True,4.0,18.75,False,"% - 6.25% = 18.75%.
+#### 18.75",True,1.0,Programmer (optimized),True,judge,judge_selection,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-hard_1156,gsm-hard,False,False,180000.0,180000.0,False,-60505738.0,True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+svamp_test_107,svamp:test,False,False,4.0,4.0,False,30,True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm8k_test_1216,gsm8k_test,False,False,180.0,180.0,False,"<200-180=20>>20 people
+#### 20",True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-symbolic_p2_2308,gsm-symbolic:p2,False,True,750.0,8,False,"s: 6000/750 = 8 tickets
+#### 8",True,1.0,Programmer (optimized),True,judge,primary_blueprint,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm8k_test_876,gsm8k_test,False,False,1.0,1.0,False," <<26+15=41>>41 points
+#### 41",True,1.0,Programmer (empty blueprint),True,unanimous,zero_shot_baseline,2,4,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
+gsm-hard_730,gsm-hard,False,True,4.5,8.0,False,8.0,True,1.0,Programmer (optimized),True,judge,judge_selection,2,5,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b,groq/qwen/qwen3-32b
