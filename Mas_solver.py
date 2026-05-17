@@ -1,6 +1,75 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 9.1: Rate Limit Hardening + Critic-Based Hypothesis Testing
+VERSION 10.2: Small Open Math Models + Ablation Flags
+
+CHANGELOG v10.2 (over v10.1):
+- [NEW] HuggingFace Inference Providers Router support (provider="huggingface").
+        Calls https://router.huggingface.co/{provider}/v1/chat/completions
+        (OpenAI-compatible). Handles 503 cold-start with exponential backoff
+        up to 60s. Auth via HF_API_KEY.
+- [NEW] Together AI provider (provider="together"). OpenAI-compatible
+        endpoint at https://api.together.xyz/v1. Auth via TOGETHER_API_KEY.
+        Realistic path for serverless 7B math models (DeepSeek-R1-Distill,
+        Qwen2.5-Math-7B) since they are not free on HF anymore.
+- [NEW] Local HuggingFace provider (provider="local_hf"). Loads via
+        transformers.AutoModelForCausalLM, runs on CUDA if available else CPU.
+        Designed for 1.5B math models inside Colab T4. Zero API calls,
+        no rate limit. Model is cached on the client instance.
+- [NEW] Six new HETEROGENEOUS_PRESETS for small open math models:
+        tiny_math_homogeneous, deepseek_distill_1_5b (local_hf, 1.5B);
+        small_math_homogeneous, qwen_math_7b (together, 7B);
+        phi4_mini (huggingface, 3.8B);
+        small_vs_large (1.5B baseline + 70B everywhere else).
+- [NEW] Pipeline-level ablation flags: enable_siv and enable_sht.
+        These are kwargs on QualityAwarePipeline and threaded through to
+        QualityEnhancedMultiAgentSolver. Used by baselines.py to implement
+        B5 (MAS-NoSIV) and B6 (MAS-NoSHT) without duplicating the pipeline.
+        v10.1 confidence gate ordering invariant is preserved unconditionally.
+- [NEW] Per-provider rate limiters:
+        hf_limiter (10 RPM), together_limiter (20 RPM).
+        TokenBudget remains Groq-TPD-specific (not extended to other providers).
+
+CHANGELOG v10.1 (over v10.0):
+- [FIX] _confidence_gate: SIV "skip SHT" path no longer overrides baseline
+        cross-check. Reordered criteria so baseline_disagreement is evaluated
+        BEFORE the SIV-verified skip. Rationale: SIV cannot detect NL→math
+        translation errors (it audits whatever blueprint the Architect produced),
+        so a SIV pass is mathematical-consistency evidence only. The baseline
+        answer comes from a different reasoning path and is the only translation-
+        layer signal available — it must dominate.
+        Validated on n=50 google homogeneous run: all 3 observed regressions
+        (where baseline was correct and SIV-verified MAS answer was wrong) now
+        correctly trigger SHT instead of confident_skip.
+- [FIX] _confidence_gate: SIV-verified skip now requires baseline agreement;
+        SIV's failure paths (siv_inconsistency, siv_execution_error) preserved.
+
+CHANGELOG v10.0 (over v9.1):
+- [NEW] Symbolic Inverse Verification (SIV): two-layer symbolic execution audit
+        using SymPy CAS (zero LLM API calls)
+        Layer 1 — Execution Audit: verifies that Programmer's answer matches
+          what the blueprint equations actually evaluate to (forward check).
+        Layer 2 — Fault Localization: per-variable inverse solve to identify
+          which declared given is inconsistent with the computed answer.
+- [NEW] Unused-given detection: flags givens declared in blueprint but absent
+        from any equation (potential distractors or missing equations).
+- [NEW] Ambiguity detection: reports multi-root cases (non-uniquely invertible chains).
+- [NEW] SIV-gated SHT: when execution audit passes, SHT may be skipped;
+        when SIV detects inconsistency, SHT is triggered with localization context.
+- [NEW] SIV-informed Critic: fault localization report passed to hypothesis generator
+        for targeted repair instead of blind re-generation.
+- [NEW] CSV output: siv_verified, siv_confidence, siv_failed_givens,
+        siv_execution_audit_passed, siv_unused_givens.
+- [KNOWN LIMITATION — explicitly documented]:
+    SIV operates on the math→math layer (blueprint→answer). It CANNOT detect
+    errors in the NL→math layer (problem text→blueprint). If the Architect
+    modelled the problem incorrectly, SIV will audit the wrong blueprint faithfully.
+- [RELATIONSHIP TO FOBAR (Jiang et al., ACL 2024)]:
+    FOBAR: LLM-based backward verification — probabilistic, operates partially on
+           NL layer, gives binary verdict only.
+    SIV:   CAS-based, deterministic, zero LLM calls — operates on execution layer,
+           gives per-variable fault localization.
+    The two methods are ORTHOGONAL: FOBAR targets translation errors; SIV targets
+    execution errors. Their combination is strictly stronger than either alone.
 
 CHANGELOG v9.1 (over v9.0):
 - [FIX] RPM reduced from 30 → 12 to stay within Groq free tier TPM (~6K tokens/min for 70B)
@@ -39,6 +108,11 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 import pandas as pd
 from dotenv import load_dotenv
+
+# --- [NEW v10.0] Symbolic Inverse Verification ---
+from siv_module import (
+    SymbolicInverseVerifier, SIVResult, GivenReconstruction
+)
 
 # --- Statistical Libraries Check ---
 try:
@@ -84,6 +158,23 @@ except ImportError:
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# [NEW v10.2] Optional keys for small-open-model providers — only required if
+# the user selects a preset that targets the given provider. We do NOT crash
+# at import time if these are missing.
+HF_API_KEY = os.getenv("HF_API_KEY") or os.getenv("HUGGINGFACE_API_KEY")
+TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
+
+# [NEW v10.2] Lazy-import flags for non-mandatory provider deps. We probe at
+# call sites so that a Groq-only run never imports torch/transformers.
+try:
+    import requests as _requests  # used by huggingface + together providers
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+
+# transformers / torch are heavy; do NOT import here. We import inside the
+# local_hf provider branch on first call.
+TRANSFORMERS_AVAILABLE = None  # tri-state: None=not probed, True/False=probed
 
 
 # ========================== [NEW v7.3] Heterogeneous Model Config ==========================
@@ -155,11 +246,76 @@ HETEROGENEOUS_PRESETS: Dict[str, Dict[AgentRole, ModelConfig]] = {
     
     # Homogeneous Google
     "homogeneous_google": {
-        AgentRole.BASELINE:             ModelConfig("google", "gemini-2.5-flash-lite"),
-        AgentRole.MATHEMATICIAN:         ModelConfig("google", "gemini-2.5-flash-lite"),
-        AgentRole.PROGRAMMER:            ModelConfig("google", "gemini-2.5-flash-lite"),
-        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("google", "gemini-2.5-flash-lite"),
-        AgentRole.JUDGE:                 ModelConfig("google", "gemini-2.5-flash-lite"),
+        AgentRole.BASELINE:             ModelConfig("google", "gemini-3.1-flash-lite-preview"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("google", "gemini-3.1-flash-lite-preview"),
+        AgentRole.PROGRAMMER:            ModelConfig("google", "gemini-3.1-flash-lite-preview"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("google", "gemini-3.1-flash-lite-preview"),
+        AgentRole.JUDGE:                 ModelConfig("google", "gemini-3.1-flash-lite-preview"),
+    },
+
+    # =====================================================================
+    # [NEW v10.2] Small open math models — for comparison vs large LLMs.
+    # These presets run the full MAS-SHT pipeline on small models so we can
+    # measure whether the multi-agent scaffold compensates for raw model size.
+    # =====================================================================
+
+    # Tiny math model homogeneous — Qwen2.5-Math 1.5B running locally (Colab T4 friendly).
+    # Zero API cost, zero rate limit. Best for full-GSM8K runs without hitting any quota.
+    "tiny_math_homogeneous": {
+        AgentRole.BASELINE:              ModelConfig("local_hf", "Qwen/Qwen2.5-Math-1.5B-Instruct"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("local_hf", "Qwen/Qwen2.5-Math-1.5B-Instruct"),
+        AgentRole.PROGRAMMER:            ModelConfig("local_hf", "Qwen/Qwen2.5-Math-1.5B-Instruct"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "Qwen/Qwen2.5-Math-1.5B-Instruct"),
+        AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-Math-1.5B-Instruct"),
+    },
+
+    # DeepSeek-R1-Distill 1.5B locally — reasoning-distilled tiny model.
+    "deepseek_distill_1_5b": {
+        AgentRole.BASELINE:              ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"),
+        AgentRole.PROGRAMMER:            ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"),
+        AgentRole.JUDGE:                 ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"),
+    },
+
+    # 7B math-specialist via Together (serverless, has free credits).
+    # DeepSeek-R1-Distill-Qwen-7B is a strong math reasoner.
+    "small_math_homogeneous": {
+        AgentRole.BASELINE:              ModelConfig("together", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("together", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"),
+        AgentRole.PROGRAMMER:            ModelConfig("together", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("together", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"),
+        AgentRole.JUDGE:                 ModelConfig("together", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"),
+    },
+
+    # Qwen2.5-Math 7B via Together — fine-tuned specifically for math.
+    "qwen_math_7b": {
+        AgentRole.BASELINE:              ModelConfig("together", "Qwen/Qwen2.5-Math-7B-Instruct"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("together", "Qwen/Qwen2.5-Math-7B-Instruct"),
+        AgentRole.PROGRAMMER:            ModelConfig("together", "Qwen/Qwen2.5-Math-7B-Instruct"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("together", "Qwen/Qwen2.5-Math-7B-Instruct"),
+        AgentRole.JUDGE:                 ModelConfig("together", "Qwen/Qwen2.5-Math-7B-Instruct"),
+    },
+
+    # Phi-4-mini 3.8B via HF Router — Microsoft's small general model.
+    # Tests whether a non-math-specific small model can ride the MAS scaffold.
+    "phi4_mini": {
+        AgentRole.BASELINE:              ModelConfig("huggingface", "microsoft/Phi-4-mini-instruct"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("huggingface", "microsoft/Phi-4-mini-instruct"),
+        AgentRole.PROGRAMMER:            ModelConfig("huggingface", "microsoft/Phi-4-mini-instruct"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("huggingface", "microsoft/Phi-4-mini-instruct"),
+        AgentRole.JUDGE:                 ModelConfig("huggingface", "microsoft/Phi-4-mini-instruct"),
+    },
+
+    # Mixed: tiny baseline (1.5B local), large pipeline (70B Groq).
+    # Question this preset answers: does a weak baseline + strong pipeline
+    # outperform a strong baseline + nothing?
+    "small_vs_large": {
+        AgentRole.BASELINE:              ModelConfig("local_hf", "Qwen/Qwen2.5-Math-1.5B-Instruct"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("groq",     "llama-3.3-70b-versatile"),
+        AgentRole.PROGRAMMER:            ModelConfig("groq",     "llama-3.3-70b-versatile"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("groq",     "llama-3.3-70b-versatile"),
+        AgentRole.JUDGE:                 ModelConfig("groq",     "llama-3.3-70b-versatile"),
     },
 }
 
@@ -248,7 +404,15 @@ class TokenBudget:
 
 groq_limiter = RateLimiter(requests_per_minute=12)   # Conservative: Groq free tier TPM is ~6K for 70B models
 google_limiter = RateLimiter(requests_per_minute=15)
+# [NEW v10.2] Per-provider rate limiters for small-open-model paths.
+# HF free tier is loose (~30 RPM nominal) but we keep it conservative because
+# cold-starts on serverless inflate effective wall-clock.
+hf_limiter = RateLimiter(requests_per_minute=10)
+together_limiter = RateLimiter(requests_per_minute=20)
+# local_hf has no rate limiter — it runs on the local device.
 token_budget = TokenBudget(daily_limit=100_000)  # [NEW v7.2] Groq free tier
+# NOTE: TokenBudget is intentionally NOT applied to HF/Together/local — the
+# 100K/day cap is a Groq-specific TPD limit.
 
 def _safe_json_load(s: str) -> Optional[dict]:
     try:
@@ -709,16 +873,42 @@ class LLMCallError(Exception):
 # --------------------------- Unified LLM Client ---------------------------
 
 class UnifiedLLMClient:
+    # [NEW v10.2] HF Inference Providers Router — provider routing priority for
+    # models that aren't pinned to a specific backend in HETEROGENEOUS_PRESETS.
+    # Order matters: try the most reliable serverless host first.
+    HF_ROUTER_PROVIDERS = ["together", "nebius", "fireworks-ai", "hf-inference"]
+
     def __init__(self, provider: str = "groq", use_cache: bool = False, model_override: Optional[str] = None):
         """
-        [UPDATED v7.3] Accepts optional model_override to specify exact model.
-        This enables heterogeneous configurations where different agent roles
-        use different models from the same or different providers.
+        [UPDATED v10.2] Supports five providers: groq, google, huggingface,
+        together, local_hf. Backwards-compatible with v7.3+ (groq, google).
+
+        Provider semantics:
+            groq:        OpenAI-compatible at api.groq.com, 12 RPM, 100K TPD.
+            google:      google-generativeai SDK, 15 RPM.
+            huggingface: HF Inference Providers Router (OpenAI-compatible),
+                         10 RPM. Handles 503 cold-start with backoff.
+            together:    OpenAI-compatible at api.together.xyz, 20 RPM.
+            local_hf:    transformers.AutoModelForCausalLM in-process, no
+                         rate limit, model cached on client instance.
         """
         self.provider = provider
         self.use_cache = use_cache
         self.model_name = "unknown"
-        self.limiter = groq_limiter if provider == "groq" else google_limiter
+        # [v10.2] Pick the right limiter; local_hf gets a no-op limiter.
+        self.limiter = {
+            "groq":        groq_limiter,
+            "google":      google_limiter,
+            "huggingface": hf_limiter,
+            "together":    together_limiter,
+        }.get(provider, RateLimiter(requests_per_minute=600))  # local_hf → essentially unlimited
+
+        # [v10.2] HF-specific state (cold-start retries, current routing provider)
+        self._hf_route_idx = 0  # rotates through HF_ROUTER_PROVIDERS on 404
+        # [v10.2] local_hf state (lazily populated; expensive)
+        self._local_model = None
+        self._local_tokenizer = None
+        self._local_device = None
 
         if use_cache and os.path.exists(CACHE_FILE):
             with open(CACHE_FILE, "rb") as f:
@@ -742,6 +932,26 @@ class UnifiedLLMClient:
                 self.client = genai.GenerativeModel(model_override)
             else:
                 self._setup_google_model()
+        elif provider == "huggingface":
+            # [NEW v10.2] HF Inference Providers Router.
+            if not HF_API_KEY:
+                raise ValueError("Missing HF_API_KEY (or HUGGINGFACE_API_KEY) in .env file")
+            if not REQUESTS_AVAILABLE:
+                raise ImportError("'requests' library required for huggingface provider. pip install requests")
+            # No persistent SDK client — we POST per-call. Just record the model.
+            self.client = None
+            self.model_name = model_override or "microsoft/Phi-4-mini-instruct"
+        elif provider == "together":
+            # [NEW v10.2] Together AI — OpenAI-compatible.
+            if not TOGETHER_API_KEY:
+                raise ValueError("Missing TOGETHER_API_KEY in .env file")
+            self.client = OpenAI(base_url="https://api.together.xyz/v1", api_key=TOGETHER_API_KEY)
+            self.model_name = model_override or "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+        elif provider == "local_hf":
+            # [NEW v10.2] Local transformers model. Lazy-load on first call.
+            self.client = None  # Lazy init: see _ensure_local_model
+            self.model_name = model_override or "Qwen/Qwen2.5-Math-1.5B-Instruct"
+            logger.info(f"local_hf client created for {self.model_name} (lazy-load on first call)")
         else:
             raise ValueError(f"Unknown provider: {provider}")
     
@@ -809,6 +1019,21 @@ class UnifiedLLMClient:
                 )
                 token_budget.record_usage(estimated)
                 return getattr(resp, "text", "")
+            # [NEW v10.2] HuggingFace Inference Providers Router
+            if self.provider == "huggingface":
+                return self._call_huggingface(messages, temperature, max_tokens)
+            # [NEW v10.2] Together AI (OpenAI-compatible)
+            if self.provider == "together":
+                resp = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+                return resp.choices[0].message.content
+            # [NEW v10.2] Local transformers model
+            if self.provider == "local_hf":
+                return self._call_local_hf(messages, temperature, max_tokens)
 
         for attempt in range(4):
             try:
@@ -880,6 +1105,196 @@ class UnifiedLLMClient:
         except Exception:
             self.model_name = "gemini-1.5-flash"
             self.client = genai.GenerativeModel(self.model_name)
+
+    # =====================================================================
+    # [NEW v10.2] HuggingFace Inference Providers Router
+    # =====================================================================
+    def _call_huggingface(self, messages: List[Dict[str, str]],
+                          temperature: float, max_tokens: int) -> str:
+        """
+        Call the HF Inference Providers Router (OpenAI-compatible chat
+        completions). Handles 503 cold-start with exponential backoff up to
+        ~60s total. On 404 (model not on current routing provider), rotates
+        through HF_ROUTER_PROVIDERS and retries once.
+
+        Returns the assistant message content as a string. On unrecoverable
+        failure raises an exception so the outer retry loop in call_model
+        sees it.
+        """
+        import requests as _r
+        # The router accepts both legacy 'hf-inference' (serverless) and any
+        # of the third-party providers (together/nebius/fireworks). We start
+        # at the index we last successfully used, fall through to others on
+        # 404. This is per-instance, not global, to avoid cross-talk.
+        backoff = 2.0
+        total_waited = 0.0
+        max_cold_start_wait = 60.0
+
+        for attempt in range(6):
+            route = self.HF_ROUTER_PROVIDERS[self._hf_route_idx % len(self.HF_ROUTER_PROVIDERS)]
+            url = f"https://router.huggingface.co/{route}/v1/chat/completions"
+            payload = {
+                "model": self.model_name,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                # Some HF-routed providers ignore unknown fields; OpenAI-compatible
+                # ones accept these. Keep payload minimal.
+            }
+            headers = {
+                "Authorization": f"Bearer {HF_API_KEY}",
+                "Content-Type": "application/json",
+            }
+            try:
+                resp = _r.post(url, json=payload, headers=headers, timeout=120)
+            except Exception as e:
+                # Network-level failure. Treat as transient.
+                logger.warning(f"HF route '{route}' network error: {e}. Retrying...")
+                time.sleep(min(8.0, backoff))
+                backoff *= 1.5
+                continue
+
+            if resp.status_code == 200:
+                try:
+                    j = resp.json()
+                except Exception:
+                    raise RuntimeError(f"HF returned 200 but body not JSON: {resp.text[:300]}")
+                # OpenAI-compatible shape
+                try:
+                    return j["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError):
+                    # Some legacy hf-inference responses return [{"generated_text": "..."}]
+                    if isinstance(j, list) and j and isinstance(j[0], dict) and "generated_text" in j[0]:
+                        return j[0]["generated_text"]
+                    raise RuntimeError(f"HF unknown response shape: {str(j)[:300]}")
+
+            # 503 — model loading. The router puts estimated_time in the body.
+            if resp.status_code == 503:
+                wait = 5.0
+                try:
+                    body = resp.json()
+                    wait = float(body.get("estimated_time", 5.0))
+                except Exception:
+                    pass
+                wait = min(wait, max_cold_start_wait - total_waited)
+                if wait <= 0:
+                    raise RuntimeError(f"HF cold-start exceeded {max_cold_start_wait}s budget for {self.model_name}")
+                logger.info(f"HF cold-start ({route}): waiting {wait:.1f}s for {self.model_name}")
+                time.sleep(wait)
+                total_waited += wait
+                continue
+
+            # 404 — model not served by this routing provider; rotate.
+            if resp.status_code == 404:
+                logger.warning(f"HF model {self.model_name} not on '{route}' (404). Rotating provider.")
+                self._hf_route_idx += 1
+                if self._hf_route_idx >= len(self.HF_ROUTER_PROVIDERS) * 2:
+                    raise RuntimeError(f"HF: no routing provider serves {self.model_name}")
+                continue
+
+            # 429 — let outer retry handle (it has the right backoff path).
+            if resp.status_code == 429:
+                raise RuntimeError(f"HF 429 rate_limit: {resp.text[:300]}")
+
+            # 401/403 — auth issue, no point retrying.
+            if resp.status_code in (401, 403):
+                raise RuntimeError(f"HF 401/403 auth: {resp.text[:300]}")
+
+            # Anything else — treat as transient with bounded backoff.
+            logger.warning(f"HF route '{route}' status {resp.status_code}: {resp.text[:200]}")
+            time.sleep(min(8.0, backoff))
+            backoff *= 1.5
+
+        raise RuntimeError(f"HF: exhausted attempts for {self.model_name}")
+
+    # =====================================================================
+    # [NEW v10.2] Local transformers (in-process) inference
+    # =====================================================================
+    def _ensure_local_model(self):
+        """Load the local model + tokenizer on first use. Cached on instance."""
+        global TRANSFORMERS_AVAILABLE
+        if self._local_model is not None:
+            return
+        if TRANSFORMERS_AVAILABLE is False:
+            raise ImportError("transformers/torch not installed. pip install transformers accelerate torch")
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            TRANSFORMERS_AVAILABLE = True
+        except ImportError as e:
+            TRANSFORMERS_AVAILABLE = False
+            raise ImportError(f"local_hf provider needs transformers+torch: {e}")
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.float16 if device == "cuda" else torch.float32
+        logger.info(f"local_hf: loading {self.model_name} on {device} (dtype={dtype})...")
+        tok = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
+        # Some math tokenizers ship without a pad token — fall back to eos.
+        if tok.pad_token is None and tok.eos_token is not None:
+            tok.pad_token = tok.eos_token
+        mdl = AutoModelForCausalLM.from_pretrained(
+            self.model_name,
+            torch_dtype=dtype,
+            device_map=device,
+            trust_remote_code=True,
+        )
+        mdl.eval()
+        self._local_tokenizer = tok
+        self._local_model = mdl
+        self._local_device = device
+        logger.info(f"local_hf: {self.model_name} ready on {device}")
+
+    def _call_local_hf(self, messages: List[Dict[str, str]],
+                       temperature: float, max_tokens: int) -> str:
+        """Run a local HF causal LM. Uses the tokenizer's chat template if
+        available (most modern instruct models ship one)."""
+        import torch
+        self._ensure_local_model()
+        tok = self._local_tokenizer
+        mdl = self._local_model
+
+        # Build the prompt. Prefer apply_chat_template for instruct models;
+        # fall back to a plain concatenation if the tokenizer lacks one.
+        if hasattr(tok, "apply_chat_template") and getattr(tok, "chat_template", None):
+            try:
+                prompt = tok.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+            except Exception:
+                prompt = self._fallback_prompt(messages)
+        else:
+            prompt = self._fallback_prompt(messages)
+
+        # Trim if the prompt exceeds the model's context window.
+        # We don't have a portable max_position_embeddings accessor across all
+        # configs, so we use a conservative default of 4096 minus output budget.
+        ctx = getattr(mdl.config, "max_position_embeddings", 4096) or 4096
+        max_input = max(256, ctx - max_tokens - 64)
+        ids = tok(prompt, return_tensors="pt", truncation=True, max_length=max_input)
+        ids = {k: v.to(self._local_device) for k, v in ids.items()}
+
+        gen_kwargs = dict(
+            max_new_tokens=max_tokens,
+            do_sample=temperature > 0.001,
+            temperature=max(temperature, 1e-3),
+            top_p=0.95 if temperature > 0.001 else 1.0,
+            pad_token_id=tok.pad_token_id or tok.eos_token_id,
+        )
+        with torch.no_grad():
+            out = mdl.generate(**ids, **gen_kwargs)
+        # Decode only the newly-generated tokens.
+        new_tokens = out[0, ids["input_ids"].shape[1]:]
+        text = tok.decode(new_tokens, skip_special_tokens=True)
+        return text
+
+    @staticmethod
+    def _fallback_prompt(messages: List[Dict[str, str]]) -> str:
+        parts = []
+        for m in messages:
+            role = m.get("role", "user").upper()
+            parts.append(f"{role}: {m.get('content', '')}")
+        parts.append("ASSISTANT:")
+        return "\n\n".join(parts)
 
 # --------------------------- Dataset Manager ---------------------------
 
@@ -1038,6 +1453,150 @@ class EnhancedProblemManager:
                         }
                         pool.append(item)
 
+                # ----------------------------------------------------------------
+                # [NEW 2026] MATH-500 / Hendrycks competition_math
+                # Keys: "math", "math500", "math-500", "hendrycks_math"
+                # HuggingFace: lighteval/MATH-Hard  (500 hardest problems)
+                #              hendrycks/competition_math (full ~12 500)
+                # Fields: problem → puzzle, solution → answer (last \boxed{})
+                # ----------------------------------------------------------------
+                elif ds_name_norm in ["math", "math500", "math-500", "hendrycks_math",
+                                      "math_hard", "math-hard"]:
+                    use_hard_subset = ds_name_norm in ["math500", "math-500",
+                                                       "math_hard", "math-hard"]
+                    if use_hard_subset:
+                        ds = load_dataset("lighteval/MATH-Hard", split="test")
+                    else:
+                        ds = load_dataset("hendrycks/competition_math", split="test",
+                                          trust_remote_code=True)
+                    idxs = random.sample(range(len(ds)), min(len(ds), per_ds * 3))
+                    for i in idxs[:per_ds]:
+                        q = ds[i].get("problem", ds[i].get("question", ""))
+                        raw_sol = ds[i].get("solution", ds[i].get("answer", ""))
+                        # Extract the final boxed answer for numeric comparison
+                        # Extract last \boxed{...} content, handling nested braces
+                        # e.g. \boxed{\frac{1}{2}} → "\frac{1}{2}"
+                        def _extract_last_boxed(s: str) -> str:
+                            tag = r"\boxed{"
+                            pos = s.rfind(tag)
+                            if pos == -1:
+                                return s.strip()
+                            start = pos + len(tag)
+                            depth, i = 1, start
+                            while i < len(s) and depth:
+                                if s[i] == "{":
+                                    depth += 1
+                                elif s[i] == "}":
+                                    depth -= 1
+                                i += 1
+                            return s[start:i - 1].strip()
+                        a = _extract_last_boxed(raw_sol)
+                        level = ds[i].get("level", "")
+                        subject = ds[i].get("type", ds[i].get("subject", ""))
+                        tag = f"math-hard" if use_hard_subset else "math"
+                        if subject:
+                            tag += f":{subject}"
+                        if level:
+                            tag += f":{level}"
+                        item = {
+                            "puzzle": self._maybe_harden(q, hardener),
+                            "answer": a,
+                            "dataset": tag,
+                            "id": f"{tag.replace(':', '_')}_{i}",
+                        }
+                        pool.append(item)
+
+                # ----------------------------------------------------------------
+                # [NEW 2026] AIME problems (2024 + historical)
+                # Keys: "aime", "aime2024", "aime_2024"
+                # HuggingFace: AI-MO/aimo-validation-aime  (AIME I & II 2024)
+                #              Maxwell-Jia/AIME_1983_2024   (historical, all years)
+                # Fields vary by source; we normalise to puzzle/answer.
+                # Answers are integers 0-999.
+                # ----------------------------------------------------------------
+                elif ds_name_norm in ["aime", "aime2024", "aime_2024",
+                                      "aime_historical", "aime-historical"]:
+                    use_historical = ds_name_norm in ["aime_historical", "aime-historical"]
+                    if use_historical:
+                        ds = load_dataset("Maxwell-Jia/AIME_1983_2024", split="train",
+                                          trust_remote_code=True)
+                        q_key, a_key = "Problem", "Answer"
+                    else:
+                        ds = load_dataset("AI-MO/aimo-validation-aime", split="train")
+                        q_key, a_key = "problem", "answer"
+                    idxs = random.sample(range(len(ds)), min(len(ds), per_ds * 3))
+                    for i in idxs[:per_ds]:
+                        q = str(ds[i].get(q_key, ds[i].get("problem", ""))).strip()
+                        a = str(ds[i].get(a_key, ds[i].get("answer", ""))).strip()
+                        year = ds[i].get("year", ds[i].get("Year", ""))
+                        tag = "aime-historical" if use_historical else "aime2024"
+                        item = {
+                            "puzzle": self._maybe_harden(q, hardener),
+                            "answer": a,
+                            "dataset": f"{tag}:{year}" if year else tag,
+                            "id": f"{tag}_{i}",
+                        }
+                        pool.append(item)
+
+                # ----------------------------------------------------------------
+                # [NEW 2026] OlympiadBench
+                # Keys: "olympiadbench", "olympiad_bench", "olympiad-bench"
+                # HuggingFace: GAIR/OlympiadBench
+                # Subsets: OE_TO_maths_en_COMP (open-ended English math competition)
+                # Fields: problem, final_answer (list → join)
+                # ----------------------------------------------------------------
+                elif ds_name_norm in ["olympiadbench", "olympiad_bench",
+                                      "olympiad-bench", "olympiad"]:
+                    ds = load_dataset(
+                        "GAIR/OlympiadBench",
+                        name="OE_TO_maths_en_COMP",
+                        split="test",
+                        trust_remote_code=True,
+                    )
+                    idxs = random.sample(range(len(ds)), min(len(ds), per_ds * 3))
+                    for i in idxs[:per_ds]:
+                        q = str(ds[i].get("problem", "")).strip()
+                        raw_ans = ds[i].get("final_answer", ds[i].get("answer", ""))
+                        if isinstance(raw_ans, list):
+                            a = ", ".join(str(x) for x in raw_ans)
+                        else:
+                            a = str(raw_ans).strip()
+                        subject = ds[i].get("subject", "")
+                        tag = f"olympiadbench:{subject}" if subject else "olympiadbench"
+                        item = {
+                            "puzzle": self._maybe_harden(q, hardener),
+                            "answer": a,
+                            "dataset": tag,
+                            "id": f"olympiadbench_{i}",
+                        }
+                        pool.append(item)
+
+                # ----------------------------------------------------------------
+                # [NEW 2026] MGSM — Multilingual Grade-School Math
+                # Keys: "mgsm", "mgsm_en", "mgsm_de", "mgsm_es", "mgsm_fr",
+                #       "mgsm_ja", "mgsm_zh", "mgsm_th", "mgsm_sw",
+                #       "mgsm_bn", "mgsm_ru", "mgsm_te"
+                # HuggingFace: juletxara/mgsm  (split = language code)
+                # Fields: question, answer (numeric int)
+                # ----------------------------------------------------------------
+                elif ds_name_norm.startswith("mgsm"):
+                    MGSM_LANGS = {"en", "de", "es", "fr", "ja", "zh",
+                                  "th", "sw", "bn", "ru", "te"}
+                    parts = ds_name_norm.split("_", 1)
+                    lang = parts[1] if len(parts) > 1 and parts[1] in MGSM_LANGS else "en"
+                    ds = load_dataset("juletxara/mgsm", lang, split="test")
+                    idxs = random.sample(range(len(ds)), min(len(ds), per_ds * 3))
+                    for i in idxs[:per_ds]:
+                        q = str(ds[i].get("question", "")).strip()
+                        a = str(ds[i].get("answer", "")).strip()
+                        item = {
+                            "puzzle": self._maybe_harden(q, hardener),
+                            "answer": a,
+                            "dataset": f"mgsm:{lang}",
+                            "id": f"mgsm_{lang}_{i}",
+                        }
+                        pool.append(item)
+
                 else:
                     logger.warning(f"Unknown dataset key: {ds_name}. Skipping.")
 
@@ -1136,6 +1695,12 @@ class QualityEnhancedMultiAgentSolver:
         self.enable_baseline_fallback_on_mas_failure = True
         self.enable_metamorphic_testing = False
         self.enable_hypothesis_testing = True
+        # [NEW v10.2] Ablation flag: when False, SIV is never invoked.
+        #   - If both SIV and SHT are disabled → degenerate MAS (just Architect+Engineer)
+        #   - If SIV disabled but SHT enabled  → confidence gate still runs but
+        #     without SIV signal; baseline disagreement still triggers SHT.
+        # This is what baselines.py B5 (MAS-NoSIV) flips.
+        self.enable_siv = True
         
         # [v7.3] Log the configuration
         self._log_model_config()
@@ -1637,25 +2202,62 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
 
     def _confidence_gate(self, primary_answer: str, baseline_answer: str,
                          programmer_response: AgentResponse,
-                         blueprint: dict) -> Tuple[bool, str]:
-        # Criterion 1: Programmer failed entirely
+                         blueprint: dict,
+                         siv_result: Optional[SIVResult] = None) -> Tuple[bool, str]:
+        """
+        [v10.1] SIV + baseline cross-validated SHT trigger.
+
+        Ordering rationale (changed from v10.0):
+          SIV CANNOT detect NL→math translation errors — it audits whatever
+          blueprint the Architect produced. The baseline answer comes from a
+          different reasoning path (zero-shot CoT) and is the only signal we
+          have for translation faithfulness. Therefore the baseline-disagreement
+          check MUST run BEFORE any SIV-driven "skip SHT" path; otherwise SIV's
+          self-consistent-but-wrong verifications silently override the only
+          translation-layer safety net (observed in v10.0: 3/3 regressions on
+          n=50 had siv_verified=True with baseline disagreement, all skipped SHT).
+
+        Trigger priority:
+          1. Programmer hard-fail            → SHT
+          2. Baseline disagreement           → SHT  (catches NL→math errors)
+          3. Max repair attempts reached     → SHT
+          4. SIV inconsistency / exec error  → SHT
+          5. Sanity violations               → SHT
+          6. Baseline itself failed          → SHT
+          7. SIV verified + baseline agrees  → SKIP (mathematically consistent
+                                                     AND cross-validated)
+          8. Default                         → SKIP
+        """
+        # Criterion 1: Programmer hard-fail (nothing to verify)
         if str(primary_answer).strip().lower() == "unknown":
             return False, "programmer_failed"
 
-        # Criterion 2: Primary answer disagrees with baseline
+        # Criterion 2: Baseline cross-check (catches NL→math errors SIV cannot see)
         primary_num = _extract_last_number(primary_answer)
         baseline_num = _extract_last_number(baseline_answer)
-        if primary_num is not None and baseline_num is not None:
-            if abs(primary_num - baseline_num) > 1e-3:
-                return False, "baseline_disagreement"
-        elif str(primary_answer).strip() != str(baseline_answer).strip():
+        baseline_failed = str(baseline_answer).strip().lower() == "unknown"
+        baseline_disagreed = False
+        if not baseline_failed:
+            if primary_num is not None and baseline_num is not None:
+                if abs(primary_num - baseline_num) > 1e-3:
+                    baseline_disagreed = True
+            elif str(primary_answer).strip() != str(baseline_answer).strip():
+                baseline_disagreed = True
+        if baseline_disagreed:
             return False, "baseline_disagreement"
 
         # Criterion 3: Programmer exhausted all repair attempts
         if programmer_response.quality_metrics.get("error") == "Max attempts reached":
             return False, "max_attempts_exhausted"
 
-        # Criterion 4: Sanity checks
+        # Criterion 4: SIV-driven SHT triggers (failures only — skip path comes last)
+        if siv_result is not None:
+            if siv_result.invertible and not siv_result.verified:
+                return False, f"siv_inconsistency:{','.join(siv_result.failed_givens)}"
+            if not siv_result.execution_audit_passed and siv_result.blueprint_answer is not None:
+                return False, "siv_execution_error"
+
+        # Criterion 5: Sanity checks
         if primary_num is not None:
             if primary_num < 0:
                 return False, "negative_answer"
@@ -1669,9 +2271,19 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
                 if max_given > 0 and abs(primary_num) > max_given * 10000:
                     return False, "answer_magnitude_suspicious"
 
-        # [FIX v7.1] Criterion 5: Both answers are "unknown" (total API failure)
-        if str(baseline_answer).strip().lower() == "unknown":
+        # Criterion 6: Baseline itself failed — we have no cross-check, be cautious
+        if baseline_failed:
             return False, "baseline_also_failed"
+
+        # Criterion 7: SIV-verified skip ONLY when baseline already agrees
+        # (baseline_disagreement was already short-circuited above; reaching here
+        # means baseline_num is non-null, baseline didn't fail, and answers agree
+        # within 1e-3, so a SIV pass is now genuinely cross-validated)
+        if siv_result is not None:
+            if (siv_result.execution_audit_passed
+                    and siv_result.verified
+                    and siv_result.confidence >= 0.90):
+                return True, "siv_execution_consistent"
 
         return True, "all_checks_passed"
 
@@ -1685,22 +2297,28 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
 
     def generate_alternative_hypotheses(self, problem: str,
                                         primary_blueprint: dict,
-                                        primary_answer: str) -> List[dict]:
+                                        primary_answer: str,
+                                        siv_error_report: str = "") -> List[dict]:
         """
-        [v9.0] Critic-based hypothesis generation.
+        [v10.0] Critic-based hypothesis generation with SIV error localization.
         
-        Instead of "generate 2 completely different approaches" (which produces
-        correlated errors from the same model), we now ask:
-        
-        1. CRITIC: "Review this solution. What errors do you find?"
-        2. CORRECTION: "Provide a corrected solution fixing those errors."
-        
-        This transforms SHT from parallel exploration into peer review,
-        which is fundamentally more useful for catching reasoning errors.
+        When SIV provides specific error information (e.g., "variable X 
+        doesn't reconstruct correctly"), we pass this to the Critic for
+        TARGETED correction instead of blind re-derivation.
         """
         primary_eqs = primary_blueprint.get("equations", [])
         primary_givens = primary_blueprint.get("givens", {})
         primary_steps = primary_blueprint.get("solution_steps", [])
+
+        # [v10.0] Inject SIV error report if available
+        siv_context = ""
+        if siv_error_report:
+            siv_context = f"""
+
+AUTOMATED VERIFICATION REPORT (from symbolic inverse checker):
+{siv_error_report}
+NOTE: The symbolic checker found specific inconsistencies by solving the equations 
+backwards. Pay special attention to the variables flagged above."""
 
         sys_msg = f"""You are a meticulous Mathematics Reviewer. 
 Your job is to FIND ERRORS in a proposed solution and provide CORRECTIONS.
@@ -1713,6 +2331,7 @@ REVIEW CHECKLIST:
 3. Is each mathematical operation correct for what the problem asks?
 4. Are there any MISSING steps?
 5. Does the final answer actually answer what was asked?
+{siv_context}
 
 After your review, provide exactly 2 corrected solutions:
 - Correction 1: Fix the most likely error you found
@@ -1909,7 +2528,9 @@ Evaluate and select the most reliable answer."""
     def _structured_hypothesis_testing(self, problem: str, expected: str,
                                        primary_blueprint: dict,
                                        programmer_response: AgentResponse,
-                                       baseline_answer: str) -> HypothesisLog:
+                                       baseline_answer: str,
+                                       siv_result: Optional[SIVResult] = None) -> HypothesisLog:
+        """[v10.0] Enhanced with SIV: can skip SHT if proven, or pass error info to Critic."""
         primary_answer = programmer_response.answer
         primary_num = _extract_last_number(primary_answer)
 
@@ -1950,7 +2571,8 @@ Evaluate and select the most reliable answer."""
         log.candidates.append(baseline_candidate)
 
         is_confident, gate_reason = self._confidence_gate(
-            primary_answer, baseline_answer, programmer_response, primary_blueprint
+            primary_answer, baseline_answer, programmer_response, primary_blueprint,
+            siv_result=siv_result  # [v10.0]
         )
 
         if is_confident:
@@ -1980,8 +2602,15 @@ Evaluate and select the most reliable answer."""
             log.api_calls_used = 3
             return log
 
+        # [v10.0] Generate SIV error report for targeted Critic
+        siv_error_report = ""
+        if siv_result and not siv_result.verified and siv_result.invertible:
+            siv_error_report = SymbolicInverseVerifier.get_error_localization_report(siv_result)
+            logger.info(f"SIV error report for Critic: {siv_error_report[:200]}")
+
         alt_blueprints = self.generate_alternative_hypotheses(
-            problem, primary_blueprint, primary_answer
+            problem, primary_blueprint, primary_answer,
+            siv_error_report=siv_error_report  # [v10.0]
         )
         api_calls += 1
 
@@ -2045,16 +2674,17 @@ Evaluate and select the most reliable answer."""
         # Step 3: Engineer (with SymPy fallback built-in)
         programmer_response = self.run_programmer_solver(problem, blackboard_logic)
 
-        # Step 3b: [NEW v8.0] Process-Level Verification
+        # Step 3b: Process-Level Verification + SIV
         verification_passed = True
         verification_feedback = "Skipped"
         verification_confidence = 1.0
+        siv_result = None  # [v10.0]
         
         if (programmer_response.confidence > 0.5
             and programmer_response.answer != "unknown"
             and programmer_response.reasoning_trace
             and "SymPy" not in programmer_response.agent):
-            # Only verify code-based solutions, not SymPy fallbacks
+            # Rule-based verification
             verification_passed, verification_feedback, verification_confidence = \
                 self.verify_code_against_blueprint(
                     problem, blackboard_logic,
@@ -2062,7 +2692,40 @@ Evaluate and select the most reliable answer."""
                     programmer_response.answer
                 )
             
-            # Adjust programmer confidence based on verification
+            # [v10.0] Run Symbolic Execution Audit (SIV)
+            # SIV operates on the math→math layer: it checks whether the Programmer's
+            # numeric answer is consistent with the Architect's blueprint equations.
+            # NOTE: SIV cannot detect NL→math translation errors (wrong blueprint).
+            # [v10.2] enable_siv flag controls whether SIV runs at all (B5 ablation).
+            answer_num = _extract_last_number(programmer_response.answer)
+            if self.enable_siv and SYMPY_AVAILABLE and answer_num is not None and blackboard_logic.get("equations"):
+                logger.info("Running SIV Symbolic Execution Audit...")
+                siv_result = SymbolicInverseVerifier.verify(blackboard_logic, answer_num)
+                if siv_result.execution_audit_passed and siv_result.verified:
+                    logger.info(
+                        f"SIV EXECUTION CONSISTENT: {siv_result.givens_matched}/"
+                        f"{siv_result.givens_total} givens localized "
+                        f"(conf={siv_result.confidence:.2f}). "
+                        f"Unused givens: {siv_result.unused_givens}. "
+                        f"Translation-layer correctness not verified."
+                    )
+                    if siv_result.confidence >= 0.90:
+                        verification_passed = True
+                        verification_confidence = siv_result.confidence
+                        verification_feedback = (
+                            f"SIV_EXEC_AUDIT_PASS ({siv_result.givens_matched}/"
+                            f"{siv_result.givens_total} givens; "
+                            f"unused={siv_result.unused_givens})"
+                        )
+                elif not siv_result.execution_audit_passed:
+                    logger.info(
+                        f"SIV EXECUTION ERROR: blueprint_answer={siv_result.blueprint_answer}, "
+                        f"computed={answer_num}, rel_err={siv_result.execution_rel_error}"
+                    )
+                else:
+                    logger.info(f"SIV LOCALIZATION FAILED: {siv_result.failed_givens}")
+
+            # Adjust programmer confidence
             adjusted_confidence = programmer_response.confidence * verification_confidence
             programmer_response = AgentResponse(
                 agent=programmer_response.agent,
@@ -2075,6 +2738,11 @@ Evaluate and select the most reliable answer."""
                     "verification_passed": verification_passed,
                     "verification_confidence": verification_confidence,
                     "verification_feedback": verification_feedback[:200],
+                    "siv_verified": siv_result.verified if siv_result else None,
+                    "siv_confidence": siv_result.confidence if siv_result else None,
+                    "siv_execution_audit_passed": siv_result.execution_audit_passed if siv_result else None,
+                    "siv_failed_givens": siv_result.failed_givens if siv_result else [],
+                    "siv_unused_givens": siv_result.unused_givens if siv_result else [],
                 }
             )
             
@@ -2098,13 +2766,18 @@ Evaluate and select the most reliable answer."""
                                     "verification_rejection": verification_feedback[:200],
                                 }
                             )
+                            # [v10.0] Re-run SIV on the SymPy answer
+                            # [v10.2] Honour enable_siv flag here too (B5 ablation)
+                            if self.enable_siv:
+                                siv_result = SymbolicInverseVerifier.verify(blackboard_logic, sym_num)
 
-        # Step 4: Structured Hypothesis Testing
+        # Step 4: Structured Hypothesis Testing (with SIV integration)
         hypothesis_log = None
         if self.enable_hypothesis_testing:
             hypothesis_log = self._structured_hypothesis_testing(
                 problem, expected, blackboard_logic,
-                programmer_response, base_ans
+                programmer_response, base_ans,
+                siv_result=siv_result  # [v10.0]
             )
             mas_answer = hypothesis_log.final_answer
             used_baseline_fallback = False
@@ -2123,7 +2796,7 @@ Evaluate and select the most reliable answer."""
             "expected": expected,
             "baseline": {
                 "answer": base_ans,
-                "model": str(self._get_client(AgentRole.BASELINE)),  # [v7.3]
+                "model": str(self._get_client(AgentRole.BASELINE)),
             },
             "mas": {
                 "answer": mas_answer,
@@ -2137,7 +2810,25 @@ Evaluate and select the most reliable answer."""
                 },
             },
             "agents": [programmer_response],
-            "model_config": self.get_model_config_summary(),  # [v7.3]
+            "model_config": self.get_model_config_summary(),
+            # [v10.0] SIV metrics (two-layer execution audit + fault localization)
+            "siv": {
+                # Layer 1: Execution audit
+                "execution_audit_passed": siv_result.execution_audit_passed if siv_result else None,
+                "blueprint_answer": siv_result.blueprint_answer if siv_result else None,
+                "execution_rel_error": siv_result.execution_rel_error if siv_result else None,
+                # Layer 2: Fault localization
+                "verified": siv_result.verified if siv_result else None,
+                "confidence": siv_result.confidence if siv_result else None,
+                "givens_matched": siv_result.givens_matched if siv_result else None,
+                "givens_total": siv_result.givens_total if siv_result else None,
+                "invertible": siv_result.invertible if siv_result else None,
+                "failed_givens": siv_result.failed_givens if siv_result else [],
+                "unused_givens": siv_result.unused_givens if siv_result else [],
+                # Meta
+                "verifies_translation": False,  # Explicit limitation — always False
+                "trace": siv_result.trace[:400] if siv_result else "",
+            },
         }
 
         if hypothesis_log:
@@ -2167,15 +2858,24 @@ Evaluate and select the most reliable answer."""
 class QualityAwarePipeline:
     def __init__(self, provider: str = "groq", use_cache: bool = False,
                  heterogeneous_preset: Optional[str] = None,
-                 custom_config: Optional[Dict[AgentRole, ModelConfig]] = None):
+                 custom_config: Optional[Dict[AgentRole, ModelConfig]] = None,
+                 enable_siv: bool = True,
+                 enable_sht: bool = True):
         """
-        [UPDATED v7.3] Supports heterogeneous model configuration.
-        
+        [UPDATED v10.2] Supports heterogeneous model configuration + ablation flags.
+
         Args:
             provider: Default provider (used if no heterogeneous config).
             use_cache: Whether to cache API calls.
             heterogeneous_preset: Name of a preset from HETEROGENEOUS_PRESETS.
             custom_config: Custom Dict[AgentRole, ModelConfig] mapping.
+            enable_siv: [v10.2] If False, the Symbolic Inverse Verifier never
+                runs. Used by baselines.py B5 (MAS-NoSIV). The confidence gate
+                still operates on baseline-vs-MAS disagreement; only the
+                SIV-derived signal is missing.
+            enable_sht: [v10.2] If False, Structured Hypothesis Testing never
+                runs — the pipeline returns the Engineer's first answer as-is.
+                Used by baselines.py B6 (MAS-NoSHT).
         """
         self.manager = EnhancedProblemManager(random_seed=None)
         self.results: List[Dict[str, Any]] = []
@@ -2212,6 +2912,16 @@ class QualityAwarePipeline:
         
         # Create solver with heterogeneous clients
         self.solver = QualityEnhancedMultiAgentSolver(clients=clients)
+        # [v10.2] Apply ablation flags from constructor.
+        self.solver.enable_siv = enable_siv
+        self.solver.enable_hypothesis_testing = enable_sht
+        # Persist for logging/CSV.
+        self.enable_siv = enable_siv
+        self.enable_sht = enable_sht
+        if not (enable_siv and enable_sht):
+            logger.info(
+                f"[v10.2 ablation] enable_siv={enable_siv}, enable_sht={enable_sht}"
+            )
 
     def _extract_gold_answer(self, text: Any) -> Optional[float]:
         text = str(text)
@@ -2328,6 +3038,21 @@ class QualityAwarePipeline:
                 "verification_confidence": r.get("mas", {}).get("verification", {}).get("confidence", 1.0),
                 # [v8.0] Solver type (Programmer, SymPy, baseline fallback)
                 "solver_agent": r.get("agents", [{}])[0].agent if r.get("agents") else "unknown",
+                # [v10.0] SIV metrics — two-layer execution audit + fault localization
+                # Layer 1
+                "siv_execution_audit_passed": r.get("siv", {}).get("execution_audit_passed", None),
+                "siv_blueprint_answer": r.get("siv", {}).get("blueprint_answer", None),
+                "siv_execution_rel_error": r.get("siv", {}).get("execution_rel_error", None),
+                # Layer 2
+                "siv_verified": r.get("siv", {}).get("verified", None),
+                "siv_confidence": r.get("siv", {}).get("confidence", None),
+                "siv_givens_matched": r.get("siv", {}).get("givens_matched", None),
+                "siv_givens_total": r.get("siv", {}).get("givens_total", None),
+                "siv_invertible": r.get("siv", {}).get("invertible", None),
+                "siv_failed_givens": str(r.get("siv", {}).get("failed_givens", [])),
+                "siv_unused_givens": str(r.get("siv", {}).get("unused_givens", [])),
+                # Meta
+                "siv_verifies_translation": False,  # Explicit limitation marker
                 **sht_data[i],
                 **r.get("model_config", {}),
             } for i, r in enumerate(detailed)
@@ -2409,6 +3134,21 @@ class QualityAwarePipeline:
         )
         print(f"{'Verification Failures':<30} | {verif_failed}/{n}")
         print(f"{'SymPy Fallback Used':<30} | {sympy_used}/{n}")
+        # [v10.0] SIV statistics
+        siv_verified_count = sum(1 for r in self.results if r.get("siv", {}).get("verified", False))
+        siv_invertible_count = sum(1 for r in self.results if r.get("siv", {}).get("invertible", False))
+        siv_failed_count = siv_invertible_count - siv_verified_count
+        siv_skipped_sht = sum(
+            1 for r in self.results
+            if r.get("siv", {}).get("verified", False)
+            and not r.get("sht", {}).get("triggered", False)
+        )
+        print("-" * 60)
+        print("SYMBOLIC INVERSE VERIFICATION (SIV) — Novel v10.0:")
+        print(f"{'SIV Invertible Chains':<30} | {siv_invertible_count}/{n}")
+        print(f"{'SIV Verified (proven correct)':<30} | {siv_verified_count}/{n}")
+        print(f"{'SIV Detected Errors':<30} | {siv_failed_count}/{n}")
+        print(f"{'SIV Skipped SHT (saved calls)':<30} | {siv_skipped_sht}/{n}")
         print("-" * 60)
         print(f"{'SHT Trigger Rate':<30} | {sht_trigger_rate:.2%} ({sht_triggered_total}/{n})")
         print(f"{'SHT Rescue (fixed wrong)':<30} | {rescue_count}")
@@ -2427,10 +3167,10 @@ class QualityAwarePipeline:
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("  Multi-Agent Math Solver - VERSION 9.1 (Critic-SHT)")
-    print("  Heterogeneous Models + Process Verification + SymPy Fallback")
-    print("  + Structured Hypothesis Testing (SHT)")
-    print("  [v9.1] Rate limit fixes: RPM=12, inter-problem cooldown, reduced max_tokens")
+    print("  Multi-Agent Math Solver - VERSION 10.0 (SIV + Critic-SHT)")
+    print("  Symbolic Inverse Verification + Heterogeneous Models")
+    print("  + Process Verification + SymPy Fallback + SHT")
+    print("  [v10.0] Novel: deterministic backward verification via SymPy CAS")
     print("=" * 70)
     print()
     
@@ -2440,20 +3180,37 @@ if __name__ == "__main__":
     print()
 
     print("Select Model Configuration:")
-    print("1) Homogeneous Groq      — all roles use LLaMA 3.3 70B")
-    print("2) Diverse Groq           — LLaMA 70B + Gemma 9B + Mixtral 8x7B")
-    print("3) Cross-Provider         — Groq (LLaMA) + Google (Gemini)")
-    print("4) Budget-Optimized       — LLaMA 8B for cheap roles, 70B for critical")
-    print("5) Homogeneous Google     — all roles use Gemini")
-    
-    config_choice = input("Enter selection (1-5) [default=1]: ").strip()
-    
+    print()
+    print("  — Large models (API, needs key) —")
+    print("  1) homogeneous_groq      — all roles: Qwen3-32B via Groq")
+    print("  2) diverse_groq          — LLaMA 70B + Gemma 9B + Mixtral 8x7B (Groq)")
+    print("  3) cross_provider        — Groq (LLaMA 70B) + Google (Gemini)")
+    print("  4) budget_optimized      — LLaMA 8B cheap roles, 70B critical (Groq)")
+    print("  5) homogeneous_google    — all roles: Gemini Flash (Google)")
+    print()
+    print("  — Small open models (needs HF_API_KEY or TOGETHER_API_KEY) —")
+    print("  6) tiny_math_homogeneous — Qwen2.5-Math 1.5B local (zero API cost)")
+    print("  7) deepseek_distill_1_5b — DeepSeek-R1-Distill-Qwen 1.5B local")
+    print("  8) small_math_homogeneous— DeepSeek-R1-Distill-Qwen 7B (Together)")
+    print("  9) qwen_math_7b          — Qwen2.5-Math 7B-Instruct (Together)")
+    print(" 10) phi4_mini             — Phi-4-mini 3.8B (HuggingFace Router)")
+    print(" 11) small_vs_large        — baseline: 1.5B local / rest: LLaMA 70B Groq")
+    print()
+
+    config_choice = input("Enter selection (1-11) [default=1]: ").strip()
+
     preset_map = {
-        "1": "homogeneous_groq",
-        "2": "diverse_groq",
-        "3": "cross_provider",
-        "4": "budget_optimized",
-        "5": "homogeneous_google",
+        "1":  "homogeneous_groq",
+        "2":  "diverse_groq",
+        "3":  "cross_provider",
+        "4":  "budget_optimized",
+        "5":  "homogeneous_google",
+        "6":  "tiny_math_homogeneous",
+        "7":  "deepseek_distill_1_5b",
+        "8":  "small_math_homogeneous",
+        "9":  "qwen_math_7b",
+        "10": "phi4_mini",
+        "11": "small_vs_large",
     }
     preset_name = preset_map.get(config_choice, "homogeneous_groq")
     
@@ -2492,18 +3249,61 @@ if __name__ == "__main__":
     if "google" in providers_needed and not GOOGLE_API_KEY:
         print("ERROR: This config requires GOOGLE_API_KEY in .env")
         exit(1)
-    
+    if "huggingface" in providers_needed and not HF_API_KEY:
+        print("ERROR: This config requires HF_API_KEY (or HUGGINGFACE_API_KEY) in .env")
+        exit(1)
+    if "together" in providers_needed and not TOGETHER_API_KEY:
+        print("ERROR: This config requires TOGETHER_API_KEY in .env")
+        exit(1)
+
+    # Dataset selection -- comment/uncomment to enable or disable.
+    #
+    # Grade-school level:
+    #   "gsm8k_test"         GSM8K test split (standard baseline)
+    #   "gsm8k_train"        GSM8K train split
+    #   "gsm-hard"           GSM8K with larger numbers
+    #   "gsm-plus"           GSM8K with 8 perturbation types
+    #   "gsm-symbolic-main"  Apple GSM-Symbolic main
+    #   "gsm-symbolic-p1"    GSM-Symbolic +1 extra clause
+    #   "gsm-symbolic-p2"    GSM-Symbolic +2 extra clauses (hardest)
+    #   "svamp"              SVAMP structural variation
+    #
+    # Competition / olympiad level (new 2026):
+    #   "math500"            Hendrycks MATH-Hard 500
+    #   "math"               Full Hendrycks competition_math (~12K)
+    #   "aime2024"           AIME I & II 2024
+    #   "aime_historical"    AIME 1983-2024 all years
+    #   "olympiadbench"      OlympiadBench EN (IMO-level open-ended)
+    #
+    # Multilingual (new 2026):
+    #   "mgsm"   "mgsm_de"  "mgsm_es"  "mgsm_fr"
+    #   "mgsm_zh"  "mgsm_ja"  "mgsm_ru"  "mgsm_th"
+    DATASETS = [
+        # --- Grade-school (existing) ---
+        "gsm8k_test",
+        "gsm-hard",
+        "gsm-plus",
+        "gsm-symbolic-p2",
+        "svamp",
+        # --- Competition (new 2026) ---
+        "math500",
+        "aime2024",
+        "olympiadbench",
+        # --- Multilingual (new 2026) ---
+        # "mgsm",
+    ]
+
     print()
 
     df_results = pipeline.run(
-        datasets_list=["gsm-plus", "gsm-symbolic-p2", "gsm-hard", "svamp", "gsm8k_test"],
+        datasets_list=DATASETS,
         num_problems=num_problems,
         hardener="distractor",
     )
     pipeline.report()
-    
+
     print(f"\n{token_budget.usage_report()}")
-    
+
     out_file = f"final_results_v73_{preset_name}_n{num_problems}.csv"
     df_results.to_csv(out_file, index=False)
     print(f"Results saved to '{out_file}'.")

@@ -1,17 +1,84 @@
-# Python virtual environment
+# =============================================================
+# MAS-SHT Thesis -- .gitignore
+# =============================================================
+
+# ----- API keys & secrets (NEVER push these) -----
+.env
+.env.*
+*.env
+secrets.json
+secrets.toml
+
+# ----- Python virtual environment -----
 venv/
 .venv/
 env/
-.env/
+ENV/
 
-# Python bytecode
+# ----- Python bytecode & cache -----
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
 
-# IDE folders
+# ----- Pytest cache -----
+.pytest_cache/
+pytest-cache-files-*/
+.cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ----- MAS-SHT runtime artifacts -----
+# LLM call cache (can be 1GB+, reproducible)
+*.pkl
+call_cache*.pkl
+
+# Experiment results (generated, not source)
+*.csv
+results/
+checkpoints/
+artifacts/
+
+# HuggingFace model weights (downloaded at runtime, huge)
+.cache/huggingface/
+models--*/
+*.safetensors
+*.bin
+*.pt
+*.onnx
+
+# ----- Jupyter / Colab -----
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# ----- IDE & editor -----
 .vscode/
 .idea/
+*.sublime-project
+*.sublime-workspace
+.cursor/
 
-# Large data or OS files
+# ----- AI tools (local session files) -----
+.claude/
+.qodo/
+
+# ----- OS junk -----
 .DS_Store
+Thumbs.db
+desktop.ini
+*~
+
+# ----- Microsoft Office temp files -----
+~$*.docx
+~$*.xlsx
+~$*.pptx
+
+# ----- Logs -----
 *.log
+logs/
