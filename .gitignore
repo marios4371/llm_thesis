@@ -82,3 +82,15 @@ desktop.ini
 # ----- Logs -----
 *.log
 logs/
+
+# ----- What SHOULD be committed -----
+# Mas_solver.py          core pipeline
+# siv_module.py          SIV module (novel contribution)
+# baselines.py           baseline systems
+# evaluation_metrics.py  metrics & plots
+# analyze_results.py     analysis helpers
+# test_*.py              test suite
+# MAS_SHT_Experiments.ipynb  Colab harness
+# paper_mas_sht.tex      LaTeX paper
+# *.md                   documentation
+# MAS_SHT_v10.2_Documentation.docx  (optional, large)
