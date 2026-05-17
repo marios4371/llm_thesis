@@ -2841,6 +2841,7 @@ Evaluate and select the most reliable answer."""
                 "answer": mas_answer,
                 "logic_trace": json.dumps(blackboard_logic, ensure_ascii=False)[:500],
                 "used_baseline_fallback": used_baseline_fallback,
+                "local_hf_fallback": bool(blackboard_logic.get("_local_hf_fallback", False)),  # [v10.2]
                 "programmer_metrics": programmer_response.quality_metrics,
                 "verification": {
                     "passed": verification_passed,
