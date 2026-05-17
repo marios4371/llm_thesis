@@ -1851,7 +1851,8 @@ Output:
             msgs, temperature=self.math_temp, max_tokens=600
         )
         blueprint = _extract_blueprint_json(str(res))
-        
+
+        res2 = None  # [v10.2] kept for CoT fallback scoping below
         # [v9.0] If blueprint is empty (JSON parse failed), retry with simpler prompt
         if not blueprint.get("equations") and not blueprint.get("givens"):
             logger.info("Blueprint empty — retrying Mathematician with simplified prompt")
@@ -1861,7 +1862,7 @@ Problem: {problem}
 
 Reply with ONLY this JSON (no other text):
 {{"givens": {{"name": number}}, "equations": ["answer = ..."], "unknown": "what to find", "solution_steps": ["Step 1: ..."], "expected_answer": "number", "distractor_check": "None"}}"""
-            
+
             res2 = self._get_client(AgentRole.MATHEMATICIAN).call_model(
                 [{"role": "user", "content": retry_msg}],
                 temperature=0.0, max_tokens=600
@@ -1870,7 +1871,45 @@ Reply with ONLY this JSON (no other text):
             if blueprint2.get("equations") or blueprint2.get("givens"):
                 logger.info("Retry succeeded — got valid blueprint")
                 blueprint = blueprint2
-        
+
+        # [v10.2] local_hf CoT fallback ----------------------------------------
+        # Small local models (1.5B) produce chain-of-thought math text instead of
+        # JSON. Both attempts above will have failed. Rather than returning an empty
+        # blueprint (which causes programmer_failed → SHT cascade on every problem),
+        # we extract the final numeric answer from the raw CoT output and build a
+        # minimal passthrough blueprint: answer = givens['answer'].
+        #
+        # Trade-off (documented for thesis): this bypasses the Architect–Engineer
+        # decomposition — the 1.5B model acts as a single-agent solver. The pipeline
+        # scaffolding (SHT, SIV, confidence gate) still runs, but SIV will trivially
+        # verify a tautological equation. The flag _local_hf_fallback=True is stored
+        # in the blueprint so downstream logging can distinguish this path.
+        if not blueprint.get("equations") and not blueprint.get("givens"):
+            math_client = self._get_client(AgentRole.MATHEMATICIAN)
+            if getattr(math_client, "provider", "") == "local_hf":
+                raw_cot = str(res2 if res2 is not None else res)
+                extracted = _extract_last_number(raw_cot)
+                if extracted is not None:
+                    logger.info(
+                        f"local_hf CoT fallback: extracted answer={extracted} "
+                        f"from {len(raw_cot)}-char reasoning text"
+                    )
+                    blueprint = {
+                        "unknown": "the answer",
+                        "givens": {"answer": extracted},
+                        "solution_steps": [f"[CoT] {raw_cot[:400]}"],
+                        "equations": ["answer = givens['answer']"],
+                        "expected_answer": str(extracted),
+                        "distractor_check": "",
+                        "metamorphic_tests": [],
+                        "_local_hf_fallback": True,
+                    }
+                else:
+                    logger.warning(
+                        "local_hf CoT fallback: no numeric answer found in CoT text"
+                        " — blueprint stays empty, programmer_failed expected"
+                    )
+
         return blueprint
 
     # -------------------------------------------------------------------------
