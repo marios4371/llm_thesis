@@ -304,6 +304,28 @@ HETEROGENEOUS_PRESETS: Dict[str, Dict[AgentRole, ModelConfig]] = {
         AgentRole.JUDGE:                 ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", load_4bit=True),
     },
 
+
+    # [v10.3] Qwen2.5-Math 7B local — 4-bit NF4 on T4 GPU (~4 GB VRAM).
+    # Reliably produces JSON blueprints (unlike 1.5B). Expected to show real MAS benefit.
+    "qwen_math_7b_local": {
+        AgentRole.BASELINE:              ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct",          load_4bit=True),
+        AgentRole.MATHEMATICIAN:         ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct",          load_4bit=True),
+        AgentRole.PROGRAMMER:            ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct",          load_4bit=True),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct",          load_4bit=True),
+        AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct",          load_4bit=True),
+    },
+
+    # [v10.3] DeepSeek-R1-Distill 7B local — 4-bit NF4 on T4 GPU (~4 GB VRAM).
+    # Reasoning-chain distilled from R1 (671B). Tests whether reasoning-focused 7B
+    # benefits from MAS decomposition.
+    "deepseek_7b_local": {
+        AgentRole.BASELINE:              ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", load_4bit=True),
+        AgentRole.MATHEMATICIAN:         ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", load_4bit=True),
+        AgentRole.PROGRAMMER:            ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", load_4bit=True),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", load_4bit=True),
+        AgentRole.JUDGE:                 ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", load_4bit=True),
+    },
+
     # 7B math-specialist via Together (serverless, has free credits).
     # DeepSeek-R1-Distill-Qwen-7B is a strong math reasoner.
     "small_math_homogeneous": {
@@ -923,6 +945,7 @@ class UnifiedLLMClient:
         self.provider = provider
         self.use_cache = use_cache
         self.model_name = "unknown"
+        self.load_4bit = load_4bit  # [v10.3]
         self.load_4bit = load_4bit  # [v10.3] 4-bit NF4 quantization for local_hf 7B models
         # [v10.2] Pick the right limiter; local_hf gets a no-op limiter.
         self.limiter = {
@@ -1254,64 +1277,61 @@ class UnifiedLLMClient:
             TRANSFORMERS_AVAILABLE = False
             raise ImportError(f"local_hf provider needs transformers+torch: {e}")
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = torch.float16 if device == "cuda" else torch.float32
+        use_cuda = torch.cuda.is_available()
+        dtype    = torch.float16 if use_cuda else torch.float32
         quant_tag = " [4-bit NF4]" if self.load_4bit else ""
-        logger.info(f"local_hf: loading {self.model_name} on {device} (dtype={dtype}){quant_tag}...")
+        logger.info(
+            f"local_hf: loading {self.model_name} "
+            f"({'cuda' if use_cuda else 'cpu'}, dtype={dtype}){quant_tag}..."
+        )
+
         tok = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
-        # Some math tokenizers ship without a pad token — fall back to eos.
         if tok.pad_token is None and tok.eos_token is not None:
             tok.pad_token = tok.eos_token
 
-        # [v10.3] attn_implementation="eager" disables FlashAttention2 / SDPA optimised
-        # kernels that require GPU compute capability >= 8.0 (A100).
-        # Kaggle T4 is compute capability 7.5 → FA2 raises cudaErrorNoKernelImageForDevice.
-        # "eager" forces the vanilla torch attention path, which works on all GPUs.
-        _attn_impl = "eager"
+        # [v10.3] KEY FIX for Kaggle cudaErrorNoKernelImageForDevice
+        # Root cause: accelerate's device_map dispatch hooks invoke SM-specific CUDA
+        # kernels during forward() that are not compiled for T4 (SM7.5) or P100 (SM6.0).
+        # Fix: load to CPU, then .to("cuda") manually — uses only universal cublas.
+        # attn_implementation="eager" additionally avoids FlashAttention2 (SM>=8.0 only).
+        _lkw = dict(trust_remote_code=True, attn_implementation="eager")
 
-        # [v10.3] 4-bit NF4 quantization for 7B models on 16 GB T4 GPU.
-        # BitsAndBytes reduces VRAM from ~14 GB (fp16) to ~4 GB (4-bit),
-        # at a small accuracy cost (~1-2 pp on math benchmarks).
-        if self.load_4bit and device == "cuda":
+        if self.load_4bit and use_cuda:
+            # 4-bit (BitsAndBytes) requires device_map="auto" — no workaround exists.
+            # attn_implementation="eager" still prevents the FA2 kernel mismatch.
             try:
                 from transformers import BitsAndBytesConfig
-                bnb_config = BitsAndBytesConfig(
+                bnb_cfg = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_quant_type="nf4",
                     bnb_4bit_compute_dtype=torch.float16,
-                    bnb_4bit_use_double_quant=True,  # nested quantization → less VRAM
+                    bnb_4bit_use_double_quant=True,
                 )
                 mdl = AutoModelForCausalLM.from_pretrained(
-                    self.model_name,
-                    quantization_config=bnb_config,
-                    device_map="auto",
-                    trust_remote_code=True,
-                    attn_implementation=_attn_impl,  # [v10.3] T4-safe attention
+                    self.model_name, quantization_config=bnb_cfg,
+                    device_map="auto", **_lkw,
                 )
                 logger.info(f"local_hf: {self.model_name} loaded in 4-bit NF4 on cuda")
             except ImportError:
-                logger.warning("bitsandbytes not installed — falling back to fp16. "
-                               "Install with: pip install bitsandbytes")
+                logger.warning("bitsandbytes not installed — falling back to fp16.")
                 mdl = AutoModelForCausalLM.from_pretrained(
-                    self.model_name,
-                    torch_dtype=dtype,
-                    device_map="auto",
-                    trust_remote_code=True,
-                    attn_implementation=_attn_impl,  # [v10.3] T4-safe attention
-                )
+                    self.model_name, torch_dtype=dtype, **_lkw,
+                ).to("cuda")
         else:
+            # Standard path: CPU load → manual .to("cuda").
+            # Avoids accelerate hooks entirely for single-GPU setups.
             mdl = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                torch_dtype=dtype,
-                device_map=device,
-                trust_remote_code=True,
-                attn_implementation=_attn_impl,  # [v10.3] T4-safe attention
+                self.model_name, torch_dtype=dtype, **_lkw,
             )
+            if use_cuda:
+                mdl = mdl.to("cuda")
+
         mdl.eval()
         self._local_tokenizer = tok
-        self._local_model = mdl
-        self._local_device = device
-        logger.info(f"local_hf: {self.model_name} ready on {device}")
+        self._local_model     = mdl
+        # Resolve actual device from params (correct for both plain and 4-bit).
+        self._local_device    = next(mdl.parameters()).device
+        logger.info(f"local_hf: {self.model_name} ready on {self._local_device}")
 
     def _call_local_hf(self, messages: List[Dict[str, str]],
                        temperature: float, max_tokens: int) -> str:
@@ -1340,7 +1360,8 @@ class UnifiedLLMClient:
         ctx = getattr(mdl.config, "max_position_embeddings", 4096) or 4096
         max_input = max(256, ctx - max_tokens - 64)
         ids = tok(prompt, return_tensors="pt", truncation=True, max_length=max_input)
-        ids = {k: v.to(self._local_device) for k, v in ids.items()}
+        actual_device = next(mdl.parameters()).device
+        ids = {k: v.to(actual_device) for k, v in ids.items()}
 
         gen_kwargs = dict(
             max_new_tokens=max_tokens,
@@ -1350,7 +1371,24 @@ class UnifiedLLMClient:
             pad_token_id=tok.pad_token_id or tok.eos_token_id,
         )
         with torch.no_grad():
-            out = mdl.generate(**ids, **gen_kwargs)
+            try:
+                out = mdl.generate(**ids, **gen_kwargs)
+            except Exception as cuda_err:
+                # [v10.3] CPU fallback: if CUDA generate fails (kernel arch mismatch
+                # on Kaggle P100/T4), retry on CPU. Slower but always correct.
+                if actual_device.type != "cpu":
+                    logger.warning(
+                        f"CUDA generate failed ({type(cuda_err).__name__}: "
+                        f"{str(cuda_err)[:100]}). Retrying on CPU..."
+                    )
+                    ids_cpu = {k: v.to("cpu") for k, v in ids.items()}
+                    out = mdl.to("cpu").generate(**ids_cpu, **gen_kwargs)
+                    try:
+                        mdl.to(actual_device)  # move back for next call
+                    except Exception:
+                        pass
+                else:
+                    raise
         # Decode only the newly-generated tokens.
         new_tokens = out[0, ids["input_ids"].shape[1]:]
         text = tok.decode(new_tokens, skip_special_tokens=True)
@@ -3325,6 +3363,8 @@ if __name__ == "__main__":
         "9":  "qwen_math_7b",
         "10": "phi4_mini",
         "11": "small_vs_large",
+        "12": "qwen_math_7b_local",
+        "13": "deepseek_7b_local",
     }
     preset_name = preset_map.get(config_choice, "homogeneous_groq")
     
