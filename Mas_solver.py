@@ -1363,30 +1363,41 @@ class UnifiedLLMClient:
         actual_device = next(mdl.parameters()).device
         ids = {k: v.to(actual_device) for k, v in ids.items()}
 
+        # [v10.3] Greedy decoding only — avoids fp16 probability tensor
+        # overflow (inf/nan) that causes CUDA device-side assert on sampling.
+        # Greedy is standard for math problem solving (want most-likely token).
         gen_kwargs = dict(
             max_new_tokens=max_tokens,
-            do_sample=temperature > 0.001,
-            temperature=max(temperature, 1e-3),
-            top_p=0.95 if temperature > 0.001 else 1.0,
+            do_sample=False,                         # greedy — no temperature division
             pad_token_id=tok.pad_token_id or tok.eos_token_id,
         )
         with torch.no_grad():
             try:
                 out = mdl.generate(**ids, **gen_kwargs)
             except Exception as cuda_err:
-                # [v10.3] CPU fallback: if CUDA generate fails (kernel arch mismatch
-                # on Kaggle P100/T4), retry on CPU. Slower but always correct.
+                # [v10.3] CPU fallback for CUDA failures (kernel mismatch or
+                # corrupted context after device-side assert).
+                # After a CUDA assert the context is poisoned — do NOT try to
+                # move model back to GPU, just stay on CPU for this session.
                 if actual_device.type != "cpu":
                     logger.warning(
                         f"CUDA generate failed ({type(cuda_err).__name__}: "
-                        f"{str(cuda_err)[:100]}). Retrying on CPU..."
+                        f"{str(cuda_err)[:80]}). Switching to CPU permanently."
                     )
                     ids_cpu = {k: v.to("cpu") for k, v in ids.items()}
-                    out = mdl.to("cpu").generate(**ids_cpu, **gen_kwargs)
                     try:
-                        mdl.to(actual_device)  # move back for next call
+                        mdl_cpu = mdl.to("cpu")
                     except Exception:
-                        pass
+                        # CUDA context corrupted — reload model on CPU
+                        from transformers import AutoModelForCausalLM as _AMCL
+                        logger.warning("Reloading model on CPU (CUDA context corrupted).")
+                        mdl_cpu = _AMCL.from_pretrained(
+                            self.model_name, torch_dtype=torch.float32,
+                            trust_remote_code=True, attn_implementation="eager",
+                        )
+                    self._local_model  = mdl_cpu
+                    self._local_device = torch.device("cpu")
+                    out = mdl_cpu.generate(**ids_cpu, **gen_kwargs)
                 else:
                     raise
         # Decode only the newly-generated tokens.
