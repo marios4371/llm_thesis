@@ -1263,6 +1263,12 @@ class UnifiedLLMClient:
         if tok.pad_token is None and tok.eos_token is not None:
             tok.pad_token = tok.eos_token
 
+        # [v10.3] attn_implementation="eager" disables FlashAttention2 / SDPA optimised
+        # kernels that require GPU compute capability >= 8.0 (A100).
+        # Kaggle T4 is compute capability 7.5 → FA2 raises cudaErrorNoKernelImageForDevice.
+        # "eager" forces the vanilla torch attention path, which works on all GPUs.
+        _attn_impl = "eager"
+
         # [v10.3] 4-bit NF4 quantization for 7B models on 16 GB T4 GPU.
         # BitsAndBytes reduces VRAM from ~14 GB (fp16) to ~4 GB (4-bit),
         # at a small accuracy cost (~1-2 pp on math benchmarks).
@@ -1278,8 +1284,9 @@ class UnifiedLLMClient:
                 mdl = AutoModelForCausalLM.from_pretrained(
                     self.model_name,
                     quantization_config=bnb_config,
-                    device_map="auto",          # fills all available GPUs
+                    device_map="auto",
                     trust_remote_code=True,
+                    attn_implementation=_attn_impl,  # [v10.3] T4-safe attention
                 )
                 logger.info(f"local_hf: {self.model_name} loaded in 4-bit NF4 on cuda")
             except ImportError:
@@ -1290,6 +1297,7 @@ class UnifiedLLMClient:
                     torch_dtype=dtype,
                     device_map="auto",
                     trust_remote_code=True,
+                    attn_implementation=_attn_impl,  # [v10.3] T4-safe attention
                 )
         else:
             mdl = AutoModelForCausalLM.from_pretrained(
@@ -1297,6 +1305,7 @@ class UnifiedLLMClient:
                 torch_dtype=dtype,
                 device_map=device,
                 trust_remote_code=True,
+                attn_implementation=_attn_impl,  # [v10.3] T4-safe attention
             )
         mdl.eval()
         self._local_tokenizer = tok
