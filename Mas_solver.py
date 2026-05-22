@@ -194,13 +194,16 @@ class AgentRole(Enum):
 class ModelConfig:
     """
     Configuration for a single model endpoint.
-    
-    provider: "groq" or "google"
-    model_name: specific model string (e.g., "llama-3.3-70b-versatile", "gemma2-9b-it")
-                If None, uses the provider's default.
+
+    provider:   "groq" | "google" | "huggingface" | "together" | "local_hf"
+    model_name: specific model string; None = provider default.
+    load_4bit:  [v10.3] local_hf only. Load model in 4-bit (BitsAndBytes NF4)
+                so that 7B models fit on a 16 GB T4 GPU (~4 GB VRAM).
+                Ignored for all non-local_hf providers.
     """
     provider: str = "groq"
     model_name: Optional[str] = None  # None = use provider default
+    load_4bit: bool = False            # [v10.3] 4-bit quant for local_hf 7B models
 
 
 # Pre-defined heterogeneous configurations
@@ -276,6 +279,29 @@ HETEROGENEOUS_PRESETS: Dict[str, Dict[AgentRole, ModelConfig]] = {
         AgentRole.PROGRAMMER:            ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"),
         AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"),
         AgentRole.JUDGE:                 ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"),
+    },
+
+    # [v10.3] Qwen2.5-Math 7B — math-specialist, loaded in 4-bit NF4 on T4 GPU.
+    # ~4 GB VRAM footprint. Significantly better instruction-following than 1.5B:
+    # can produce reliable JSON blueprints without the CoT-fallback workaround.
+    # Expected to show the MAS architecture benefit that 1.5B models cannot.
+    "qwen_math_7b_local": {
+        AgentRole.BASELINE:              ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct",          load_4bit=True),
+        AgentRole.MATHEMATICIAN:         ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct",          load_4bit=True),
+        AgentRole.PROGRAMMER:            ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct",          load_4bit=True),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct",          load_4bit=True),
+        AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct",          load_4bit=True),
+    },
+
+    # [v10.3] DeepSeek-R1-Distill 7B — reasoning-chain distilled from R1 (671B).
+    # Loaded in 4-bit NF4 on T4 GPU (~4 GB VRAM). Strong chain-of-thought reasoning.
+    # Tests whether a reasoning-focused 7B model benefits from MAS decomposition.
+    "deepseek_7b_local": {
+        AgentRole.BASELINE:              ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", load_4bit=True),
+        AgentRole.MATHEMATICIAN:         ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", load_4bit=True),
+        AgentRole.PROGRAMMER:            ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", load_4bit=True),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", load_4bit=True),
+        AgentRole.JUDGE:                 ModelConfig("local_hf", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", load_4bit=True),
     },
 
     # 7B math-specialist via Together (serverless, has free credits).
@@ -878,10 +904,12 @@ class UnifiedLLMClient:
     # Order matters: try the most reliable serverless host first.
     HF_ROUTER_PROVIDERS = ["together", "nebius", "fireworks-ai", "hf-inference"]
 
-    def __init__(self, provider: str = "groq", use_cache: bool = False, model_override: Optional[str] = None):
+    def __init__(self, provider: str = "groq", use_cache: bool = False,
+                 model_override: Optional[str] = None, load_4bit: bool = False):
         """
-        [UPDATED v10.2] Supports five providers: groq, google, huggingface,
+        [UPDATED v10.3] Supports five providers: groq, google, huggingface,
         together, local_hf. Backwards-compatible with v7.3+ (groq, google).
+        load_4bit: [v10.3] local_hf only — loads model in 4-bit NF4 via BitsAndBytes.
 
         Provider semantics:
             groq:        OpenAI-compatible at api.groq.com, 12 RPM, 100K TPD.
@@ -895,6 +923,7 @@ class UnifiedLLMClient:
         self.provider = provider
         self.use_cache = use_cache
         self.model_name = "unknown"
+        self.load_4bit = load_4bit  # [v10.3] 4-bit NF4 quantization for local_hf 7B models
         # [v10.2] Pick the right limiter; local_hf gets a no-op limiter.
         self.limiter = {
             "groq":        groq_limiter,
@@ -1227,17 +1256,48 @@ class UnifiedLLMClient:
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype = torch.float16 if device == "cuda" else torch.float32
-        logger.info(f"local_hf: loading {self.model_name} on {device} (dtype={dtype})...")
+        quant_tag = " [4-bit NF4]" if self.load_4bit else ""
+        logger.info(f"local_hf: loading {self.model_name} on {device} (dtype={dtype}){quant_tag}...")
         tok = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
         # Some math tokenizers ship without a pad token — fall back to eos.
         if tok.pad_token is None and tok.eos_token is not None:
             tok.pad_token = tok.eos_token
-        mdl = AutoModelForCausalLM.from_pretrained(
-            self.model_name,
-            torch_dtype=dtype,
-            device_map=device,
-            trust_remote_code=True,
-        )
+
+        # [v10.3] 4-bit NF4 quantization for 7B models on 16 GB T4 GPU.
+        # BitsAndBytes reduces VRAM from ~14 GB (fp16) to ~4 GB (4-bit),
+        # at a small accuracy cost (~1-2 pp on math benchmarks).
+        if self.load_4bit and device == "cuda":
+            try:
+                from transformers import BitsAndBytesConfig
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_use_double_quant=True,  # nested quantization → less VRAM
+                )
+                mdl = AutoModelForCausalLM.from_pretrained(
+                    self.model_name,
+                    quantization_config=bnb_config,
+                    device_map="auto",          # fills all available GPUs
+                    trust_remote_code=True,
+                )
+                logger.info(f"local_hf: {self.model_name} loaded in 4-bit NF4 on cuda")
+            except ImportError:
+                logger.warning("bitsandbytes not installed — falling back to fp16. "
+                               "Install with: pip install bitsandbytes")
+                mdl = AutoModelForCausalLM.from_pretrained(
+                    self.model_name,
+                    torch_dtype=dtype,
+                    device_map="auto",
+                    trust_remote_code=True,
+                )
+        else:
+            mdl = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                torch_dtype=dtype,
+                device_map=device,
+                trust_remote_code=True,
+            )
         mdl.eval()
         self._local_tokenizer = tok
         self._local_model = mdl
@@ -2938,12 +2998,15 @@ class QualityAwarePipeline:
         clients: Dict[AgentRole, UnifiedLLMClient] = {}
         
         for role, mc in role_config.items():
-            cache_key = f"{mc.provider}:{mc.model_name or 'default'}"
+            # [v10.3] Include load_4bit in cache key so 4-bit and fp16 variants
+            # of the same model don't share a single client instance.
+            cache_key = f"{mc.provider}:{mc.model_name or 'default'}:4bit={getattr(mc, 'load_4bit', False)}"
             if cache_key not in self._client_cache:
                 self._client_cache[cache_key] = UnifiedLLMClient(
                     provider=mc.provider,
                     use_cache=use_cache,
-                    model_override=mc.model_name
+                    model_override=mc.model_name,
+                    load_4bit=getattr(mc, 'load_4bit', False),  # [v10.3]
                 )
             clients[role] = self._client_cache[cache_key]
         
@@ -3229,15 +3292,17 @@ if __name__ == "__main__":
     print("  5) homogeneous_google    — all roles: Gemini Flash (Google)")
     print()
     print("  — Small open models (needs HF_API_KEY or TOGETHER_API_KEY) —")
-    print("  6) tiny_math_homogeneous — Qwen2.5-Math 1.5B local (zero API cost)")
-    print("  7) deepseek_distill_1_5b — DeepSeek-R1-Distill-Qwen 1.5B local")
-    print("  8) small_math_homogeneous— DeepSeek-R1-Distill-Qwen 7B (Together)")
-    print("  9) qwen_math_7b          — Qwen2.5-Math 7B-Instruct (Together)")
-    print(" 10) phi4_mini             — Phi-4-mini 3.8B (HuggingFace Router)")
-    print(" 11) small_vs_large        — baseline: 1.5B local / rest: LLaMA 70B Groq")
+    print("  6) tiny_math_homogeneous  -- Qwen2.5-Math 1.5B local (zero API cost)")
+    print("  7) deepseek_distill_1_5b  -- DeepSeek-R1-Distill-Qwen 1.5B local")
+    print("  8) small_math_homogeneous -- DeepSeek-R1-Distill-Qwen 7B (Together)")
+    print("  9) qwen_math_7b           -- Qwen2.5-Math 7B-Instruct (Together)")
+    print(" 10) phi4_mini              -- Phi-4-mini 3.8B (HuggingFace Router)")
+    print(" 11) small_vs_large         -- baseline: 1.5B local / rest: LLaMA 70B Groq")
+    print(" 12) qwen_math_7b_local     -- Qwen2.5-Math 7B local 4-bit (T4 friendly)")
+    print(" 13) deepseek_7b_local      -- DeepSeek-R1-Distill 7B local 4-bit (T4 friendly)")
     print()
 
-    config_choice = input("Enter selection (1-11) [default=1]: ").strip()
+    config_choice = input("Enter selection (1-13) [default=1]: ").strip()
 
     preset_map = {
         "1":  "homogeneous_groq",
@@ -3331,6 +3396,95 @@ if __name__ == "__main__":
         "olympiadbench",
         # --- Multilingual (new 2026) ---
         # "mgsm",
+    ]
+
+    print()
+
+    df_results = pipeline.run(
+        datasets_list=DATASETS,
+        num_problems=num_problems,
+        hardener="distractor",
+    )
+    pipeline.report()
+
+    print(f"\n{token_budget.usage_report()}")
+
+    out_file = f"final_results_v73_{preset_name}_n{num_problems}.csv"
+    df_results.to_csv(out_file, index=False)
+    print(f"Results saved to '{out_file}'.")
+
+    print()
+
+    config_choice = input("Enter selection (1-13) [default=1]: ").strip()
+
+    preset_map = {
+        "1":  "homogeneous_groq",
+        "2":  "diverse_groq",
+        "3":  "cross_provider",
+        "4":  "budget_optimized",
+        "5":  "homogeneous_google",
+        "6":  "tiny_math_homogeneous",
+        "7":  "deepseek_distill_1_5b",
+        "8":  "small_math_homogeneous",
+        "9":  "qwen_math_7b",
+        "10": "phi4_mini",
+        "11": "small_vs_large",
+        "12": "qwen_math_7b_local",   # [v10.3] 7B 4-bit local
+        "13": "deepseek_7b_local",    # [v10.3] 7B 4-bit local
+    }
+    preset_name = preset_map.get(config_choice, "homogeneous_groq")
+    
+    print(f"\nSelected: {preset_name}")
+    selected_config = HETEROGENEOUS_PRESETS[preset_name]
+    print("Role assignments:")
+    for role, mc in selected_config.items():
+        print(f"  {role.value:<25} → {mc.provider}/{mc.model_name or 'default'}")
+    print()
+    
+    # Number of problems
+    num_input = input("Number of problems [default=10]: ").strip()
+    num_problems = int(num_input) if num_input.isdigit() else 10
+    
+    # SHT toggle
+    sht_input = input("Enable SHT hypothesis testing? (y/n) [default=y]: ").strip().lower()
+    enable_sht = sht_input != "n"
+    
+    # Cache ON by default
+    pipeline = QualityAwarePipeline(
+        use_cache=True,
+        heterogeneous_preset=preset_name
+    )
+    
+    # Configure SHT
+    pipeline.solver.enable_hypothesis_testing = enable_sht
+    
+    estimated_tokens = num_problems * (9000 if enable_sht else 4500)
+    print(f"\nEstimated token usage: ~{estimated_tokens:,} tokens")
+    
+    # Check if cross-provider needs both keys
+    providers_needed = set(mc.provider for mc in selected_config.values())
+    if "groq" in providers_needed and not GROQ_API_KEY:
+        print("ERROR: This config requires GROQ_API_KEY in .env")
+        exit(1)
+    if "google" in providers_needed and not GOOGLE_API_KEY:
+        print("ERROR: This config requires GOOGLE_API_KEY in .env")
+        exit(1)
+    if "huggingface" in providers_needed and not HF_API_KEY:
+        print("ERROR: This config requires HF_API_KEY (or HUGGINGFACE_API_KEY) in .env")
+        exit(1)
+    if "together" in providers_needed and not TOGETHER_API_KEY:
+        print("ERROR: This config requires TOGETHER_API_KEY in .env")
+        exit(1)
+
+    DATASETS = [
+        "gsm8k_test",
+        "gsm-hard",
+        "gsm-plus",
+        "gsm-symbolic-p2",
+        "svamp",
+        "math500",
+        "aime2024",
+        "olympiadbench",
     ]
 
     print()
