@@ -90,10 +90,22 @@ def _estimate_tokens(prompt: str, max_tokens: int) -> int:
 
 
 def _parse_numeric(text: str) -> Optional[float]:
-    """Extract the last number; honours error responses."""
+    """Extract the last number; honours error responses.
+    [v10.3] Priority: \\boxed{N} (Qwen/DeepSeek output format),
+    then last number in text.
+    """
     if _is_error_response(text):
         return None
-    return _extract_last_number(text)
+    s = str(text)
+    # Priority 1: \boxed{N} — format used by Qwen2.5-Math and DeepSeek-R1
+    m = re.search(r'\\\\boxed\{(-?\d+(?:[.,]\d+)*)\}', s)
+    if m:
+        try:
+            return float(m.group(1).replace(',', ''))
+        except ValueError:
+            pass
+    # Priority 2: last number in text
+    return _extract_last_number(s)
 
 
 # =====================================================================
@@ -107,8 +119,11 @@ DIRECT_PROMPT = (
 
 
 def direct_answer(client: UnifiedLLMClient, problem: str,
-                  max_tokens: int = 64) -> BaselineResult:
-    """B1 — single LLM call, zero reasoning, terse answer-only prompt."""
+                  max_tokens: int = 512) -> BaselineResult:
+    """B1 — single LLM call, zero reasoning, terse answer-only prompt.
+    [v10.3] Default raised 64→512: local HF models need more tokens to reason
+    before outputting a number even on zero-shot prompts.
+    """
     t0 = time.time()
     prompt = DIRECT_PROMPT.format(problem=problem)
     msgs = [{"role": "user", "content": prompt}]
@@ -153,7 +168,7 @@ def chain_of_thought(client: UnifiedLLMClient, problem: str,
     msgs = [{"role": "user", "content": prompt}]
     raw = client.call_model(msgs, temperature=temperature, max_tokens=max_tokens)
     elapsed = time.time() - t0
-    raw_str = str(raw)[:2000]
+    raw_str = str(raw)[:4000]  # [v10.3] raised 2000→4000 so \\boxed{} at end of output isn't clipped
 
     if _is_error_response(raw):
         return BaselineResult(
