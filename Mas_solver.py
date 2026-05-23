@@ -1296,42 +1296,68 @@ class UnifiedLLMClient:
         # attn_implementation="eager" additionally avoids FlashAttention2 (SM>=8.0 only).
         _lkw = dict(trust_remote_code=True, attn_implementation="eager")
 
-        if self.load_4bit and use_cuda:
-            # 4-bit (BitsAndBytes) requires device_map="auto" — no workaround exists.
-            # attn_implementation="eager" still prevents the FA2 kernel mismatch.
-            try:
-                from transformers import BitsAndBytesConfig
-                bnb_cfg = BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_quant_type="nf4",
-                    bnb_4bit_compute_dtype=torch.float16,
-                    bnb_4bit_use_double_quant=True,
-                )
-                mdl = AutoModelForCausalLM.from_pretrained(
-                    self.model_name, quantization_config=bnb_cfg,
-                    device_map="auto", **_lkw,
-                )
-                logger.info(f"local_hf: {self.model_name} loaded in 4-bit NF4 on cuda")
-            except ImportError:
-                logger.warning("bitsandbytes not installed — falling back to fp16.")
+        # [v10.3 FIX] Wrap the entire model-load block in a try/except so that
+        # any failure (OOM, CUDA error, bnb error) cleans up partial VRAM
+        # allocations before the exception propagates to call_model's retry loop.
+        # Without this, each failed from_pretrained leaves weight shards in VRAM;
+        # four retries × partial-7B = VRAM full of unreachable fragments → OOM spiral.
+        import gc as _gc
+        mdl = None
+        try:
+            if self.load_4bit and use_cuda:
+                # 4-bit (BitsAndBytes) requires device_map="auto" — no workaround exists.
+                # attn_implementation="eager" still prevents the FA2 kernel mismatch.
+                try:
+                    from transformers import BitsAndBytesConfig
+                    bnb_cfg = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.float16,
+                        bnb_4bit_use_double_quant=True,
+                    )
+                    mdl = AutoModelForCausalLM.from_pretrained(
+                        self.model_name, quantization_config=bnb_cfg,
+                        device_map="auto", **_lkw,
+                    )
+                    logger.info(f"local_hf: {self.model_name} loaded in 4-bit NF4 on cuda")
+                except ImportError:
+                    logger.warning("bitsandbytes not installed — falling back to fp16.")
+                    mdl = AutoModelForCausalLM.from_pretrained(
+                        self.model_name, torch_dtype=dtype, **_lkw,
+                    ).to("cuda")
+            else:
+                # Standard path: CPU load → manual .to("cuda").
+                # Avoids accelerate hooks entirely for single-GPU setups.
                 mdl = AutoModelForCausalLM.from_pretrained(
                     self.model_name, torch_dtype=dtype, **_lkw,
-                ).to("cuda")
-        else:
-            # Standard path: CPU load → manual .to("cuda").
-            # Avoids accelerate hooks entirely for single-GPU setups.
-            mdl = AutoModelForCausalLM.from_pretrained(
-                self.model_name, torch_dtype=dtype, **_lkw,
-            )
-            if use_cuda:
-                mdl = mdl.to("cuda")
+                )
+                if use_cuda:
+                    mdl = mdl.to("cuda")
 
-        mdl.eval()
-        self._local_tokenizer = tok
-        self._local_model     = mdl
-        # Resolve actual device from params (correct for both plain and 4-bit).
-        self._local_device    = next(mdl.parameters()).device
-        logger.info(f"local_hf: {self.model_name} ready on {self._local_device}")
+            mdl.eval()
+            self._local_tokenizer = tok
+            self._local_model     = mdl
+            # Resolve actual device from params (correct for both plain and 4-bit).
+            self._local_device    = next(mdl.parameters()).device
+            logger.info(f"local_hf: {self.model_name} ready on {self._local_device}")
+
+        except Exception as _load_err:
+            # VRAM cleanup — prevent fragment accumulation across retries.
+            logger.warning(
+                f"local_hf: load FAILED ({type(_load_err).__name__}: "
+                f"{str(_load_err)[:120]}). Purging VRAM before retry."
+            )
+            try:
+                del mdl
+            except Exception:
+                pass
+            mdl = None
+            self._local_model = None
+            _gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            raise  # propagate to call_model's retry loop
 
     def _call_local_hf(self, messages: List[Dict[str, str]],
                        temperature: float, max_tokens: int) -> str:
@@ -1864,13 +1890,23 @@ class QualityEnhancedMultiAgentSolver:
             return "unknown", None
         
         text = str(text)
-        
+
         # Strategy 1: ANSWER: [[...]] tag
         match = re.search(r'ANSWER:\s*\[\[([^\]]+)\]\]', text, re.IGNORECASE)
         if match:
             val = match.group(1).strip()
             return val, val
-        
+
+        # Strategy 1b: \boxed{N} — output format of Qwen2.5-Math / DeepSeek-R1
+        # [v10.3] Parse the LAST \boxed{} in case there are intermediate ones.
+        boxed_matches = re.findall(r'\\boxed\{(-?\d+(?:[.,]\d+)*)\}', text)
+        if boxed_matches:
+            try:
+                val = float(boxed_matches[-1].replace(',', ''))
+                return str(val), val
+            except ValueError:
+                pass
+
         # Strategy 2: Extract last number
         num = _extract_last_number(text)
         if num is not None:
