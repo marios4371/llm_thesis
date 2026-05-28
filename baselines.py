@@ -271,28 +271,50 @@ def self_consistency(client: UnifiedLLMClient, problem: str,
 # Mirrors the prompt used inside QualityEnhancedMultiAgentSolver.solve() — the
 # point of B4 is to measure that exact prompt in isolation, NOT a different
 # direct/CoT prompt. If the pipeline's baseline prompt changes upstream,
-# update this string in lock-step.
-BASELINE_PIPELINE_PROMPT = (
-    "{problem}\n\nSolve this step-by-step. End with: ANSWER: [[numeric_value]]"
+# update this in lock-step.
+#
+# [v10.4] System+user split + 1024 max_tokens, mirroring the in-pipeline
+# baseline prompt redesign. The old single-message prompt with 500 tokens
+# was truncating CoT mid-stream on hard problems.
+BASELINE_PIPELINE_SYS = (
+    "You are a careful problem solver. "
+    "Work through the problem step by step, showing arithmetic. "
+    "On the LAST line, output EXACTLY one line of the form: "
+    "ANSWER: [[<single numeric value, no units, no commas>]]"
+)
+BASELINE_PIPELINE_USER = (
+    "{problem}\n\n"
+    "Solve step by step. Do not skip arithmetic. "
+    "End with the ANSWER line as instructed."
 )
 
 
 def baseline_only(client: UnifiedLLMClient, problem: str,
-                  max_tokens: int = 500) -> BaselineResult:
+                  max_tokens: int = 1024) -> BaselineResult:
     """B4 — re-runs the pipeline's BASELINE agent prompt as a standalone
     system, so we can see how much of MAS-SHT's gain comes from prompt
-    engineering alone vs the multi-agent scaffold."""
+    engineering alone vs the multi-agent scaffold.
+
+    [v10.4] max_tokens default raised 500→1024 to match the in-pipeline
+    baseline. Keep the parameter overridable so the experiment runner can
+    still bound cost for very large model sweeps.
+    """
     t0 = time.time()
-    prompt = BASELINE_PIPELINE_PROMPT.format(problem=problem)
-    msgs = [{"role": "user", "content": prompt}]
+    user = BASELINE_PIPELINE_USER.format(problem=problem)
+    msgs = [
+        {"role": "system", "content": BASELINE_PIPELINE_SYS},
+        {"role": "user",   "content": user},
+    ]
     raw = client.call_model(msgs, temperature=0.1, max_tokens=max_tokens)
     elapsed = time.time() - t0
-    raw_str = str(raw)[:2000]
+    raw_str = str(raw)[:3000]   # [v10.4] +1000 chars so the ANSWER tag at end is preserved
+
+    full_prompt_for_estimate = BASELINE_PIPELINE_SYS + "\n" + user
 
     if _is_error_response(raw):
         return BaselineResult(
             answer=None, raw=raw_str, num_llm_calls=1,
-            tokens_estimated=_estimate_tokens(prompt, max_tokens),
+            tokens_estimated=_estimate_tokens(full_prompt_for_estimate, max_tokens),
             time_s=elapsed, error_type="api_error",
         )
 
@@ -306,9 +328,197 @@ def baseline_only(client: UnifiedLLMClient, problem: str,
 
     return BaselineResult(
         answer=ans, raw=raw_str, num_llm_calls=1,
-        tokens_estimated=_estimate_tokens(prompt, max_tokens),
+        tokens_estimated=_estimate_tokens(full_prompt_for_estimate, max_tokens),
         time_s=elapsed,
         error_type="" if ans is not None else "no_number_in_output",
+    )
+
+
+# =====================================================================
+# B_pal — Program-Aided Language Model (Gao et al., ICML 2023)
+# =====================================================================
+#
+# PAL is the canonical "ask the LLM to write a Python program that computes
+# the answer, then execute the program" baseline. It is the closest non-MAS
+# comparator to MAS-SHT's Architect+Engineer pipeline, so it is REQUIRED in
+# any honest comparison: a positive MAS-SHT vs PAL delta is the only way to
+# show that the multi-agent scaffold adds value on top of code execution.
+#
+# Implementation notes:
+#   * One LLM call. No blueprint, no critic, no SymPy fallback.
+#   * Code sandbox reuses Mas_solver.PythonExecutor → same forbidden-token
+#     set, same answer/result variable resolution. This keeps the harness
+#     identical to MAS-SHT and isolates the multi-agent contribution.
+#   * If extraction fails, fall back to last-number from the raw text (some
+#     models inline the result instead of using a code block on easy
+#     problems — counting that as a failure would unfairly hurt PAL).
+#   * No code repair loop (single-shot) — adding repair would conflate PAL
+#     with MAS-SHT's repair mechanism.
+
+PAL_SYSTEM = (
+    "You are an expert Python programmer. To answer the math problem you will "
+    "write a self-contained Python program that prints the final numeric answer. "
+    "Use clear variable names, no external libraries beyond Python's math module. "
+    "Do not print anything except the final answer.\n\n"
+    "OUTPUT FORMAT: a single ```python ... ``` code block, then on a new line "
+    "write: ANSWER: [[<numeric>]] using the value printed by your program."
+)
+PAL_USER = (
+    "Problem:\n{problem}\n\n"
+    "Write a Python program that computes the answer and prints it."
+)
+
+
+def pal(client: UnifiedLLMClient, problem: str,
+        max_tokens: int = 800) -> BaselineResult:
+    """Program-Aided Language model baseline (Gao et al., ICML 2023).
+    Single LLM call → Python program → sandboxed execution → numeric answer.
+
+    Returns BaselineResult with:
+        error_type='code_extraction_failed' if no ```python block found
+        error_type='code_execution_failed'  if sandbox rejected/raised
+        error_type='no_number_in_output'    if neither code nor raw text yielded a number
+        error_type=''                       on success
+    """
+    # Lazy import — PythonExecutor lives in the main solver. Doing this at
+    # call time (not module top) avoids a circular import: Mas_solver imports
+    # nothing from baselines, and baselines only needs the executor for PAL.
+    from Mas_solver import PythonExecutor, _extract_code_from_response
+
+    t0 = time.time()
+    user = PAL_USER.format(problem=problem)
+    msgs = [
+        {"role": "system", "content": PAL_SYSTEM},
+        {"role": "user",   "content": user},
+    ]
+    raw = client.call_model(msgs, temperature=0.0, max_tokens=max_tokens)
+    elapsed = time.time() - t0
+    raw_str = str(raw)[:3000]
+    full_prompt = PAL_SYSTEM + "\n" + user
+
+    if _is_error_response(raw):
+        return BaselineResult(
+            answer=None, raw=raw_str, num_llm_calls=1,
+            tokens_estimated=_estimate_tokens(full_prompt, max_tokens),
+            time_s=elapsed, error_type="api_error",
+        )
+
+    code = _extract_code_from_response(raw_str)
+    code_ans, code_err = None, ""
+    if code:
+        ok, output = PythonExecutor.execute(code)
+        if ok:
+            code_ans = _parse_numeric(output)
+            if code_ans is None:
+                code_err = "code_no_number_in_output"
+        else:
+            code_err = f"code_execution_failed:{output[:120]}"
+
+    # Prefer code answer; if the program failed, fall back to the inline
+    # ANSWER tag or last-number-in-text. This avoids penalising PAL when the
+    # model wrote a correct equation inline on a 1-step problem.
+    ans = code_ans
+    if ans is None:
+        m = re.search(r"ANSWER:\s*\[\[([^\]]+)\]\]", raw_str, re.IGNORECASE)
+        if m:
+            ans = _parse_numeric(m.group(1))
+    if ans is None:
+        ans = _parse_numeric(raw_str)
+
+    if ans is None:
+        if not code:
+            err = "code_extraction_failed"
+        elif code_err:
+            err = code_err
+        else:
+            err = "no_number_in_output"
+    else:
+        err = ""
+
+    return BaselineResult(
+        answer=ans, raw=raw_str, num_llm_calls=1,
+        tokens_estimated=_estimate_tokens(full_prompt, max_tokens),
+        time_s=elapsed,
+        error_type=err,
+        meta={
+            "code_present":   code is not None,
+            "code_succeeded": code_ans is not None,
+        },
+    )
+
+
+# =====================================================================
+# B_pot — Program-of-Thought (Chen et al., TMLR 2023)
+# =====================================================================
+#
+# PoT differs from PAL in that the model is asked to INTERLEAVE natural-
+# language reasoning with code, then the code is what produces the answer.
+# In practice on grade-school math the two converge; we keep them separate
+# so reviewers see a one-to-one mapping against the cited literature.
+
+POT_SYSTEM = (
+    "You are an expert at solving math problems using Python. "
+    "First reason through the problem in 2-3 sentences. "
+    "Then write a Python program that computes the answer and prints it.\n\n"
+    "OUTPUT FORMAT:\n"
+    "Reasoning: <brief 2-3 sentence reasoning>\n"
+    "```python\n# code that prints the answer\n```\n"
+    "ANSWER: [[<numeric>]]"
+)
+
+
+def pot(client: UnifiedLLMClient, problem: str,
+        max_tokens: int = 1024) -> BaselineResult:
+    """Program-of-Thought baseline (Chen et al., TMLR 2023).
+    NL reasoning + Python code in a single call.
+    """
+    from Mas_solver import PythonExecutor, _extract_code_from_response
+
+    t0 = time.time()
+    user = PAL_USER.format(problem=problem)
+    msgs = [
+        {"role": "system", "content": POT_SYSTEM},
+        {"role": "user",   "content": user},
+    ]
+    raw = client.call_model(msgs, temperature=0.0, max_tokens=max_tokens)
+    elapsed = time.time() - t0
+    raw_str = str(raw)[:3500]
+    full_prompt = POT_SYSTEM + "\n" + user
+
+    if _is_error_response(raw):
+        return BaselineResult(
+            answer=None, raw=raw_str, num_llm_calls=1,
+            tokens_estimated=_estimate_tokens(full_prompt, max_tokens),
+            time_s=elapsed, error_type="api_error",
+        )
+
+    code = _extract_code_from_response(raw_str)
+    code_ans = None
+    code_err = ""
+    if code:
+        ok, output = PythonExecutor.execute(code)
+        if ok:
+            code_ans = _parse_numeric(output)
+        else:
+            code_err = f"code_execution_failed:{output[:120]}"
+
+    ans = code_ans
+    if ans is None:
+        m = re.search(r"ANSWER:\s*\[\[([^\]]+)\]\]", raw_str, re.IGNORECASE)
+        if m:
+            ans = _parse_numeric(m.group(1))
+    if ans is None:
+        ans = _parse_numeric(raw_str)
+
+    err = "" if ans is not None else (code_err or "no_number_in_output")
+    return BaselineResult(
+        answer=ans, raw=raw_str, num_llm_calls=1,
+        tokens_estimated=_estimate_tokens(full_prompt, max_tokens),
+        time_s=elapsed, error_type=err,
+        meta={
+            "code_present":   code is not None,
+            "code_succeeded": code_ans is not None,
+        },
     )
 
 
@@ -319,9 +529,15 @@ def baseline_only(client: UnifiedLLMClient, problem: str,
 # Maps baseline_id → callable(client, problem) -> BaselineResult.
 # B5/B6/B7 are pipeline-based and constructed in the runner with different
 # enable_siv/enable_sht flags — they don't fit this signature.
+#
+# [v10.4] PAL and PoT added as strong code-execution baselines — these are
+# the most direct competitors to MAS-SHT's Architect+Engineer scaffold and
+# are MANDATORY in any honest comparison.
 BASELINE_REGISTRY = {
     "b1_direct":          direct_answer,
     "b2_cot":             chain_of_thought,
     "b3_sc5":             lambda c, p: self_consistency(c, p, n=5),
     "b4_baseline_only":   baseline_only,
+    "b_pal":              pal,
+    "b_pot":              pot,
 }

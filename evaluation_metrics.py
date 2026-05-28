@@ -64,6 +64,133 @@ def _safe_mean(s: pd.Series) -> float:
     return float(s.mean()) if len(s) else 0.0
 
 
+# =====================================================================
+# Confidence intervals for proportions (accuracy)
+# =====================================================================
+#
+# Two complementary methods:
+#   wilson_ci      — closed-form, used for the headline accuracy CIs in the
+#                    summary table. Asymptotically valid down to n≈30 and
+#                    well-behaved at p near 0 or 1 (unlike the normal-approx
+#                    Wald interval). Matches what NLP venues report as
+#                    "95% CI" for accuracy.
+#   bootstrap_ci   — non-parametric resampling, used when we need CIs on
+#                    derived statistics (delta, error reduction) where the
+#                    closed form does not generalise. Also exposed for
+#                    accuracy so callers can sanity-check Wilson.
+#
+# Both default to alpha=0.05 (95% CI).
+
+def wilson_ci(correct: int, n: int, alpha: float = 0.05) -> Tuple[float, float, float]:
+    """Wilson score interval for a proportion.
+
+    Returns (point_estimate, lower, upper). Falls back to (0, 0, 0) when n=0.
+    """
+    if n <= 0:
+        return 0.0, 0.0, 0.0
+    p = correct / n
+    # z for two-sided 1-alpha. For alpha=0.05 → z≈1.959964.
+    # Avoid scipy dep for this single value; use erf-based inverse normal.
+    z = _z_for_alpha(alpha)
+    denom = 1.0 + (z * z) / n
+    centre = (p + (z * z) / (2.0 * n)) / denom
+    half = (z * math.sqrt((p * (1.0 - p) + (z * z) / (4.0 * n)) / n)) / denom
+    return p, max(0.0, centre - half), min(1.0, centre + half)
+
+
+def _z_for_alpha(alpha: float) -> float:
+    """Two-sided z critical value via the inverse-normal approximation.
+    Accurate to ~6 decimals for the alphas we care about (0.01, 0.05, 0.10).
+    Avoids a scipy dependency for this hot path."""
+    # Beasley-Springer-Moro is overkill here; hardcode the common ones
+    # and fall back to a Newton step on math.erf for the rest.
+    table = {0.10: 1.6448536269514722,
+             0.05: 1.959963984540054,
+             0.01: 2.5758293035489004}
+    if alpha in table:
+        return table[alpha]
+    # Newton from a normal-approx start
+    p = 1.0 - alpha / 2.0
+    x = 0.0
+    for _ in range(50):
+        # CDF Φ(x) = 0.5 * (1 + erf(x / sqrt(2)))
+        cdf = 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+        pdf = math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+        if pdf < 1e-12:
+            break
+        x += (p - cdf) / pdf
+    return x
+
+
+def bootstrap_ci(values: np.ndarray, alpha: float = 0.05,
+                 n_boot: int = 2000,
+                 seed: int = 0,
+                 stat=np.mean) -> Tuple[float, float, float]:
+    """Non-parametric percentile bootstrap CI for an arbitrary statistic.
+
+    Args:
+        values: 1-D array of per-problem observations (0/1 for accuracy,
+                real-valued for time/cost).
+        alpha:  two-sided coverage level (0.05 → 95% CI).
+        n_boot: number of resamples (2000 is enough for the second-decimal
+                stability we need; 10000 if you want sub-percent stability).
+        seed:   PRNG seed for reproducibility.
+        stat:   any function array → scalar. Default is mean (accuracy).
+    Returns:
+        (point_estimate, lower, upper). All NaN if values is empty.
+    """
+    values = np.asarray(values).astype(float)
+    values = values[~np.isnan(values)]
+    if values.size == 0:
+        return float("nan"), float("nan"), float("nan")
+    point = float(stat(values))
+    rng = np.random.default_rng(seed)
+    n = values.size
+    samples = np.empty(n_boot)
+    # Vectorised resample: draws an (n_boot, n) index matrix in one shot.
+    idx = rng.integers(0, n, size=(n_boot, n))
+    for i in range(n_boot):
+        samples[i] = stat(values[idx[i]])
+    lo = float(np.quantile(samples, alpha / 2.0))
+    hi = float(np.quantile(samples, 1.0 - alpha / 2.0))
+    return point, lo, hi
+
+
+def paired_delta_bootstrap_ci(values_a: np.ndarray, values_b: np.ndarray,
+                              alpha: float = 0.05, n_boot: int = 2000,
+                              seed: int = 0) -> Tuple[float, float, float]:
+    """Bootstrap CI for the paired difference mean(a) - mean(b).
+
+    Uses paired resampling (same indices drawn for both vectors) to preserve
+    the within-problem correlation — this is the right thing for "system A vs
+    system B on the same problem set". Reporting an unpaired CI here would
+    overestimate the variance.
+
+    Args:
+        values_a, values_b: equal-length per-problem observations.
+        alpha: two-sided coverage (0.05 → 95% CI on the delta).
+        n_boot, seed: as in bootstrap_ci.
+    Returns:
+        (delta_point, delta_lower, delta_upper). NaN if vectors empty or
+        of unequal length.
+    """
+    a = np.asarray(values_a).astype(float)
+    b = np.asarray(values_b).astype(float)
+    if a.size == 0 or a.size != b.size:
+        return float("nan"), float("nan"), float("nan")
+    point = float(a.mean() - b.mean())
+    rng = np.random.default_rng(seed)
+    n = a.size
+    deltas = np.empty(n_boot)
+    idx = rng.integers(0, n, size=(n_boot, n))
+    for i in range(n_boot):
+        sel = idx[i]
+        deltas[i] = a[sel].mean() - b[sel].mean()
+    lo = float(np.quantile(deltas, alpha / 2.0))
+    hi = float(np.quantile(deltas, 1.0 - alpha / 2.0))
+    return point, lo, hi
+
+
 def _intersect_problem_ids(results_dict: Dict[str, pd.DataFrame]) -> List[str]:
     """Compute the intersection of problem_id across all systems. This is
     the apples-to-apples problem set used for every cross-system metric."""
@@ -99,7 +226,10 @@ def _restrict_to_ids(df: pd.DataFrame, ids: List[str]) -> pd.DataFrame:
 # =====================================================================
 
 def compute_all_metrics(results_dict: Dict[str, pd.DataFrame],
-                        reference_system: str = "mas_sht_full") -> pd.DataFrame:
+                        reference_system: str = "mas_sht_full",
+                        ci_alpha: float = 0.05,
+                        bootstrap_n: int = 2000,
+                        bootstrap_seed: int = 0) -> pd.DataFrame:
     """
     Compute per-system metrics over the apples-to-apples problem intersection.
 
@@ -111,25 +241,33 @@ def compute_all_metrics(results_dict: Dict[str, pd.DataFrame],
             "candidate" — Δ_accuracy and error_reduction are computed
             relative to each OTHER system as the baseline (so for the
             reference row those columns are 0/NaN).
+        ci_alpha: two-sided coverage for the CIs (0.05 → 95% CI).
+        bootstrap_n: bootstrap resamples for the paired-delta CI.
+        bootstrap_seed: PRNG seed for the bootstrap; fixed for reproducibility.
 
     Returns:
         DataFrame with one row per system, columns:
             system, n_total, n_paired, accuracy,
-            delta_vs_ref, error_reduction_vs_ref,
+            accuracy_ci_lo, accuracy_ci_hi,   # [v10.4] Wilson 95% CI
+            delta_vs_ref, delta_ci_lo, delta_ci_hi,  # [v10.4] paired bootstrap CI
+            error_reduction_vs_ref,
             avg_llm_calls, avg_tokens, avg_time_s,
             accuracy_per_call,
             siv_trigger_rate, siv_skip_rate,
             sht_trigger_rate, acc_when_sht_triggered, acc_when_sht_skipped
     """
+    cols = [
+        "system", "n_total", "n_paired", "accuracy",
+        "accuracy_ci_lo", "accuracy_ci_hi",
+        "delta_vs_ref", "delta_ci_lo", "delta_ci_hi",
+        "error_reduction_vs_ref",
+        "avg_llm_calls", "avg_tokens", "avg_time_s",
+        "accuracy_per_call",
+        "siv_trigger_rate", "siv_skip_rate",
+        "sht_trigger_rate", "acc_when_sht_triggered", "acc_when_sht_skipped",
+    ]
     if not results_dict:
-        return pd.DataFrame(columns=[
-            "system", "n_total", "n_paired", "accuracy",
-            "delta_vs_ref", "error_reduction_vs_ref",
-            "avg_llm_calls", "avg_tokens", "avg_time_s",
-            "accuracy_per_call",
-            "siv_trigger_rate", "siv_skip_rate",
-            "sht_trigger_rate", "acc_when_sht_triggered", "acc_when_sht_skipped",
-        ])
+        return pd.DataFrame(columns=cols)
 
     common = _intersect_problem_ids(results_dict)
     if not common:
@@ -137,12 +275,18 @@ def compute_all_metrics(results_dict: Dict[str, pd.DataFrame],
 
     rows = []
     ref_acc: Optional[float] = None
+    ref_correct_vec: Optional[np.ndarray] = None
 
-    # First pass: compute reference accuracy on the shared set.
+    # First pass: compute reference accuracy AND the per-problem correctness
+    # vector (needed for paired-delta bootstrap below).
     if reference_system in results_dict and common:
         ref_df = _restrict_to_ids(results_dict[reference_system], common)
         if len(ref_df):
             ref_acc = _safe_mean(ref_df["correct"])
+            ref_correct_vec = (
+                pd.to_numeric(ref_df["correct"], errors="coerce")
+                  .fillna(0).astype(int).to_numpy()
+            )
 
     for system, df in results_dict.items():
         n_total = len(df)
@@ -150,9 +294,29 @@ def compute_all_metrics(results_dict: Dict[str, pd.DataFrame],
         n_paired = len(sub)
         acc = _safe_mean(sub["correct"]) if n_paired else 0.0
 
-        delta = (acc - ref_acc) if (ref_acc is not None and system != reference_system) else 0.0
-        # Error reduction: (acc - ref) / (1 - ref) — positive means MAS-SHT
-        # closes (1 - ref) of the gap that ref left open. NaN when ref==1.0.
+        # [v10.4] Wilson 95% CI for headline accuracy.
+        n_correct = int(pd.to_numeric(sub["correct"], errors="coerce")
+                            .fillna(0).astype(int).sum()) if n_paired else 0
+        _, acc_lo, acc_hi = wilson_ci(n_correct, n_paired, alpha=ci_alpha)
+
+        # Paired delta vs reference (point + bootstrap CI).
+        # We compare per-problem correctness vectors; this captures the
+        # within-problem correlation that an unpaired bound would miss.
+        delta = 0.0
+        delta_lo, delta_hi = float("nan"), float("nan")
+        if ref_acc is not None and system != reference_system and ref_correct_vec is not None:
+            sys_corr_vec = (
+                pd.to_numeric(sub["correct"], errors="coerce")
+                  .fillna(0).astype(int).to_numpy()
+            )
+            if sys_corr_vec.shape == ref_correct_vec.shape:
+                # delta = system − reference (positive = system beats reference)
+                delta, delta_lo, delta_hi = paired_delta_bootstrap_ci(
+                    sys_corr_vec, ref_correct_vec,
+                    alpha=ci_alpha, n_boot=bootstrap_n, seed=bootstrap_seed,
+                )
+
+        # Error reduction: (acc - ref) / (1 - ref).
         if ref_acc is not None and system != reference_system and ref_acc < 1.0:
             err_red = (acc - ref_acc) / (1.0 - ref_acc)
         else:
@@ -191,7 +355,11 @@ def compute_all_metrics(results_dict: Dict[str, pd.DataFrame],
             "n_total": n_total,
             "n_paired": n_paired,
             "accuracy": acc,
+            "accuracy_ci_lo": acc_lo,
+            "accuracy_ci_hi": acc_hi,
             "delta_vs_ref": delta,
+            "delta_ci_lo": delta_lo,
+            "delta_ci_hi": delta_hi,
             "error_reduction_vs_ref": err_red,
             "avg_llm_calls": avg_calls,
             "avg_tokens": avg_toks,

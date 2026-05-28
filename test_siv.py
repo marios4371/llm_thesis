@@ -4,7 +4,14 @@ Verifies the core novel contribution works correctly.
 """
 
 import sys
-sys.path.insert(0, '/home/claude')
+# [v10.4] Make stdout UTF-8 capable so the ✓/✗/→ glyphs in trace output
+# don't crash the test runner on Windows (cp1253 default).
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+# Project-root import (siv_module is in the repo root)
+sys.path.insert(0, '.')
 from siv_module import SymbolicInverseVerifier, SIVResult
 
 def test_1_simple_correct():

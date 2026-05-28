@@ -22,6 +22,7 @@ import baselines
 from baselines import (
     BaselineResult, direct_answer, chain_of_thought,
     self_consistency, baseline_only, BASELINE_REGISTRY,
+    pal, pot,
 )
 
 
@@ -125,8 +126,50 @@ class TestBaselineOnly(unittest.TestCase):
 
 class TestRegistry(unittest.TestCase):
     def test_registry_keys_match_known_ids(self):
+        # [v10.4] PAL + PoT added.
         self.assertEqual(set(BASELINE_REGISTRY.keys()),
-                         {"b1_direct", "b2_cot", "b3_sc5", "b4_baseline_only"})
+                         {"b1_direct", "b2_cot", "b3_sc5", "b4_baseline_only",
+                          "b_pal", "b_pot"})
+
+
+class TestPAL(unittest.TestCase):
+    """PAL must execute the generated code and prefer its output over the
+    inline ANSWER tag — that's the whole point of the baseline."""
+
+    def test_code_execution_wins(self):
+        # Model emits a code block AND an ANSWER tag with a different value.
+        # PAL should trust the code execution (42), not the tag (999).
+        c = StubClient(["```python\nprint(6 * 7)\n```\nANSWER: [[999]]"])
+        r = pal(c, "?")
+        self.assertEqual(r.answer, 42.0)
+        self.assertTrue(r.meta["code_succeeded"])
+
+    def test_falls_back_to_tag_on_code_failure(self):
+        c = StubClient(["```python\nundefined_var\n```\nANSWER: [[42]]"])
+        r = pal(c, "?")
+        self.assertEqual(r.answer, 42.0)
+        self.assertFalse(r.meta["code_succeeded"])
+
+    def test_no_code_block(self):
+        c = StubClient(["The answer is 42."])
+        r = pal(c, "?")
+        self.assertEqual(r.answer, 42.0)
+        self.assertFalse(r.meta["code_present"])
+
+    def test_api_error(self):
+        c = StubClient(["ERROR_AUTH_401: bad key"])
+        r = pal(c, "?")
+        self.assertIsNone(r.answer)
+        self.assertEqual(r.error_type, "api_error")
+
+
+class TestPoT(unittest.TestCase):
+    def test_reasoning_plus_code(self):
+        c = StubClient([
+            "Reasoning: multiply.\n```python\nprint(6*7)\n```\nANSWER: [[42]]"
+        ])
+        r = pot(c, "?")
+        self.assertEqual(r.answer, 42.0)
 
 
 if __name__ == "__main__":

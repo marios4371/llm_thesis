@@ -365,6 +365,43 @@ HETEROGENEOUS_PRESETS: Dict[str, Dict[AgentRole, ModelConfig]] = {
         AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("groq",     "llama-3.3-70b-versatile"),
         AgentRole.JUDGE:                 ModelConfig("groq",     "llama-3.3-70b-versatile"),
     },
+
+    # =====================================================================
+    # [NEW v10.4] STRONG MODEL FAMILIES — for honest cross-family comparison.
+    # The v9.1 paper run used ONLY Qwen3-32B; to make any claim about MAS-SHT
+    # generalising across architectures, we need at least 2 more families.
+    # Pick whichever preset matches the API keys you have.
+    # =====================================================================
+
+    # Llama 3.3 70B via Groq — different family than Qwen, similar size class.
+    # Use this as a second main-experiment preset alongside homogeneous_groq.
+    "homogeneous_llama70b_groq": {
+        AgentRole.BASELINE:              ModelConfig("groq", "llama-3.3-70b-versatile"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("groq", "llama-3.3-70b-versatile"),
+        AgentRole.PROGRAMMER:            ModelConfig("groq", "llama-3.3-70b-versatile"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("groq", "llama-3.3-70b-versatile"),
+        AgentRole.JUDGE:                 ModelConfig("groq", "llama-3.3-70b-versatile"),
+    },
+
+    # DeepSeek-Math via Together — strong open math specialist, NOT used in v9.1.
+    # Gives an architecturally-diverse second data point on hard benchmarks.
+    "homogeneous_deepseek_math": {
+        AgentRole.BASELINE:              ModelConfig("together", "deepseek-ai/deepseek-math-7b-rl"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("together", "deepseek-ai/deepseek-math-7b-rl"),
+        AgentRole.PROGRAMMER:            ModelConfig("together", "deepseek-ai/deepseek-math-7b-rl"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("together", "deepseek-ai/deepseek-math-7b-rl"),
+        AgentRole.JUDGE:                 ModelConfig("together", "deepseek-ai/deepseek-math-7b-rl"),
+    },
+
+    # Qwen2.5-Math 72B — top-of-line open math model. Use only if you have
+    # the Together credit budget; one full run is ~50-100 USD on full GSM8K.
+    "homogeneous_qwen_math_72b": {
+        AgentRole.BASELINE:              ModelConfig("together", "Qwen/Qwen2.5-Math-72B-Instruct"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("together", "Qwen/Qwen2.5-Math-72B-Instruct"),
+        AgentRole.PROGRAMMER:            ModelConfig("together", "Qwen/Qwen2.5-Math-72B-Instruct"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("together", "Qwen/Qwen2.5-Math-72B-Instruct"),
+        AgentRole.JUDGE:                 ModelConfig("together", "Qwen/Qwen2.5-Math-72B-Instruct"),
+    },
 }
 
 
@@ -1447,10 +1484,58 @@ class EnhancedProblemManager:
         random.seed(random_seed)
 
     def _maybe_harden(self, problem: str, hardener: Optional[str]) -> str:
-        if not hardener:
+        """
+        [v10.4] Hardening modes:
+          None / "" / "off"     → no perturbation.
+          "distractor"          → SILENT distractors (default since v10.4). Adds
+                                  1–3 unrelated factual sentences embedded in the
+                                  problem text without any "ignore this" markers.
+                                  Tests whether the solver actually reasons about
+                                  relevance vs. surface-cueing on the word "ignore".
+          "distractor_labeled"  → legacy v10.3 behaviour: distractors are tagged
+                                  ("Unrelated note: …", "Extra context (ignore): …").
+                                  Kept ONLY for reproducing the v10.3 paper run; not
+                                  recommended for new experiments.
+        Implementation note: silent distractors are syntactically valid English
+        sentences that introduce names/quantities the solver could plausibly mistake
+        for problem data, without any meta-marker betraying their status.
+        """
+        if not hardener or hardener == "off":
             return problem
 
         if hardener == "distractor":
+            # ── SILENT distractors (default) ───────────────────────────────
+            # Each template introduces a number that LOOKS like it could matter
+            # but does not appear in the solution path. The framing is neutral
+            # narrative — no "ignore", "unrelated", "irrelevant", "extra context".
+            names = ["Alex", "Maria", "Nikos", "Elena", "Chris", "Sofia",
+                     "Jordan", "Priya", "Aiko", "Mateo"]
+            items = ["stickers", "marbles", "notebooks", "coins", "candies",
+                     "tickets", "stamps", "buttons", "ribbons", "magnets"]
+            locations = ["the next town", "a nearby school", "the warehouse",
+                         "the depot", "another district"]
+            n1 = random.randint(7, 99)
+            n2 = random.randint(10, 250)
+            n3 = random.randint(2, 60)
+            n4 = random.randint(3, 80)
+            who1 = random.choice(names)
+            who2 = random.choice([n for n in names if n != who1])
+            it1 = random.choice(items)
+            it2 = random.choice([i for i in items if i != it1])
+            loc = random.choice(locations)
+
+            silent_distractors = [
+                f"{who1} had collected {n1} {it1} the previous summer.",
+                f"In {loc}, a similar store reported sales of {n2} units last month.",
+                f"The temperature that day was {n3} degrees.",
+                f"{who2} had {n4} {it2} stored in the attic.",
+            ]
+            random.shuffle(silent_distractors)
+            k = random.choice([1, 2, 3])
+            return problem.strip() + " " + " ".join(silent_distractors[:k])
+
+        if hardener == "distractor_labeled":
+            # ── Legacy labeled distractors (v10.3 behaviour) ───────────────
             names = ["Alex", "Maria", "Nikos", "Elena", "Chris", "Sofia"]
             items = ["stickers", "marbles", "notebooks", "coins", "candies", "tickets"]
             n1 = random.randint(7, 99)
@@ -2853,11 +2938,35 @@ Evaluate and select the most reliable answer."""
 
     def solve(self, problem: str, expected: str) -> Dict[str, Any]:
         # Step 1: Baseline
-        baseline_prompt = f"{problem}\n\nSolve this step-by-step. End with: ANSWER: [[numeric_value]]"
+        # [v10.4] Baseline prompt redesign:
+        #   - System role spells out the CoT contract so the model doesn't
+        #     waste output budget restating it.
+        #   - max_tokens raised 500→1024. Hard / GSM-Symbolic-P2 problems
+        #     routinely need 700-900 tokens of reasoning before the final
+        #     number; the old 500-token cap was truncating CoT mid-stream,
+        #     which is what produced the implausible 5.4% baseline number
+        #     in the v9.1 paper run.
+        #   - "Show your reasoning, then on the LAST line write …" makes the
+        #     ANSWER tag positionally deterministic so the extractor wins on
+        #     truncated outputs too.
+        baseline_sys = (
+            "You are a careful problem solver. "
+            "Work through the problem step by step, showing arithmetic. "
+            "On the LAST line, output EXACTLY one line of the form: "
+            "ANSWER: [[<single numeric value, no units, no commas>]]"
+        )
+        baseline_user = (
+            f"{problem}\n\n"
+            "Solve step by step. Do not skip arithmetic. "
+            "End with the ANSWER line as instructed."
+        )
         base_raw = self._get_client(AgentRole.BASELINE).call_model(
-            [{"role": "user", "content": baseline_prompt}],
+            [
+                {"role": "system", "content": baseline_sys},
+                {"role": "user",   "content": baseline_user},
+            ],
             temperature=0.1,
-            max_tokens=500
+            max_tokens=1024,
         )
         base_ans, _ = self.extract_answer(base_raw)
 
@@ -3054,13 +3163,18 @@ class QualityAwarePipeline:
                  heterogeneous_preset: Optional[str] = None,
                  custom_config: Optional[Dict[AgentRole, ModelConfig]] = None,
                  enable_siv: bool = True,
-                 enable_sht: bool = True):
+                 enable_sht: bool = True,
+                 evaluation_mode: bool = False,
+                 dataset_seed: Optional[int] = None):
         """
-        [UPDATED v10.2] Supports heterogeneous model configuration + ablation flags.
+        [UPDATED v10.4] Supports heterogeneous model configuration + ablation flags
+        + evaluation_mode safety net.
 
         Args:
             provider: Default provider (used if no heterogeneous config).
-            use_cache: Whether to cache API calls.
+            use_cache: Whether to cache API calls. SHOULD BE False during evaluation
+                (cache hits make per-problem outputs depend on prior call order,
+                violating apples-to-apples comparison across systems).
             heterogeneous_preset: Name of a preset from HETEROGENEOUS_PRESETS.
             custom_config: Custom Dict[AgentRole, ModelConfig] mapping.
             enable_siv: [v10.2] If False, the Symbolic Inverse Verifier never
@@ -3070,8 +3184,31 @@ class QualityAwarePipeline:
             enable_sht: [v10.2] If False, Structured Hypothesis Testing never
                 runs — the pipeline returns the Engineer's first answer as-is.
                 Used by baselines.py B6 (MAS-NoSHT).
+            evaluation_mode: [v10.4] If True:
+                - Forces use_cache=False (with a loud warning if caller passed True),
+                  so reported accuracy/cost numbers reflect the model, not the cache.
+                - Logs the active config block at INFO so it lands in run logs.
+                Set this for any reported / publishable run.
+            dataset_seed: [v10.4] Seed for the problem sampler AND the distractor
+                injector. Pass an int (e.g., 42) for reproducibility; pass a list
+                of seeds to the experiment runner to do multi-seed evaluation
+                (required for any error-bar story on accuracy deltas).
+                None → non-deterministic (fine for debugging, NOT for reports).
         """
-        self.manager = EnhancedProblemManager(random_seed=None)
+        # [v10.4] Evaluation safety net — refuse to silently cache.
+        if evaluation_mode and use_cache:
+            logger.warning(
+                "evaluation_mode=True + use_cache=True is unsafe for reported "
+                "results (cache hits make outputs depend on prior call order). "
+                "Forcing use_cache=False."
+            )
+            use_cache = False
+        self.evaluation_mode = evaluation_mode
+        self.dataset_seed = dataset_seed
+        # [v10.4] Pass the seed into the sampler. EnhancedProblemManager seeds
+        # the module-global random state at construction; the distractor
+        # injector and dataset sampler both draw from it.
+        self.manager = EnhancedProblemManager(random_seed=dataset_seed)
         self.results: List[Dict[str, Any]] = []
         
         # Determine model configuration
@@ -3429,15 +3566,22 @@ if __name__ == "__main__":
     # SHT toggle
     sht_input = input("Enable SHT hypothesis testing? (y/n) [default=y]: ").strip().lower()
     enable_sht = sht_input != "n"
-    
-    # Cache ON by default
+
+    # [v10.4] Evaluation-mode prompt: opt-in to the cache only for dev/debug.
+    eval_input = input(
+        "Evaluation mode (disables cache for clean numbers)? (y/n) [default=y]: "
+    ).strip().lower()
+    evaluation_mode = eval_input != "n"
+    if not evaluation_mode:
+        print("WARNING: dev mode — response cache is ON. Numbers reported "
+              "from this run are NOT publication-safe.")
+
     pipeline = QualityAwarePipeline(
-        use_cache=True,
-        heterogeneous_preset=preset_name
+        use_cache=not evaluation_mode,          # cache only when explicitly opted out of eval
+        heterogeneous_preset=preset_name,
+        evaluation_mode=evaluation_mode,
+        enable_sht=enable_sht,
     )
-    
-    # Configure SHT
-    pipeline.solver.enable_hypothesis_testing = enable_sht
     
     estimated_tokens = num_problems * (9000 if enable_sht else 4500)
     print(f"\nEstimated token usage: ~{estimated_tokens:,} tokens")
@@ -3492,95 +3636,6 @@ if __name__ == "__main__":
         "olympiadbench",
         # --- Multilingual (new 2026) ---
         # "mgsm",
-    ]
-
-    print()
-
-    df_results = pipeline.run(
-        datasets_list=DATASETS,
-        num_problems=num_problems,
-        hardener="distractor",
-    )
-    pipeline.report()
-
-    print(f"\n{token_budget.usage_report()}")
-
-    out_file = f"final_results_v73_{preset_name}_n{num_problems}.csv"
-    df_results.to_csv(out_file, index=False)
-    print(f"Results saved to '{out_file}'.")
-
-    print()
-
-    config_choice = input("Enter selection (1-13) [default=1]: ").strip()
-
-    preset_map = {
-        "1":  "homogeneous_groq",
-        "2":  "diverse_groq",
-        "3":  "cross_provider",
-        "4":  "budget_optimized",
-        "5":  "homogeneous_google",
-        "6":  "tiny_math_homogeneous",
-        "7":  "deepseek_distill_1_5b",
-        "8":  "small_math_homogeneous",
-        "9":  "qwen_math_7b",
-        "10": "phi4_mini",
-        "11": "small_vs_large",
-        "12": "qwen_math_7b_local",   # [v10.3] 7B 4-bit local
-        "13": "deepseek_7b_local",    # [v10.3] 7B 4-bit local
-    }
-    preset_name = preset_map.get(config_choice, "homogeneous_groq")
-    
-    print(f"\nSelected: {preset_name}")
-    selected_config = HETEROGENEOUS_PRESETS[preset_name]
-    print("Role assignments:")
-    for role, mc in selected_config.items():
-        print(f"  {role.value:<25} → {mc.provider}/{mc.model_name or 'default'}")
-    print()
-    
-    # Number of problems
-    num_input = input("Number of problems [default=10]: ").strip()
-    num_problems = int(num_input) if num_input.isdigit() else 10
-    
-    # SHT toggle
-    sht_input = input("Enable SHT hypothesis testing? (y/n) [default=y]: ").strip().lower()
-    enable_sht = sht_input != "n"
-    
-    # Cache ON by default
-    pipeline = QualityAwarePipeline(
-        use_cache=True,
-        heterogeneous_preset=preset_name
-    )
-    
-    # Configure SHT
-    pipeline.solver.enable_hypothesis_testing = enable_sht
-    
-    estimated_tokens = num_problems * (9000 if enable_sht else 4500)
-    print(f"\nEstimated token usage: ~{estimated_tokens:,} tokens")
-    
-    # Check if cross-provider needs both keys
-    providers_needed = set(mc.provider for mc in selected_config.values())
-    if "groq" in providers_needed and not GROQ_API_KEY:
-        print("ERROR: This config requires GROQ_API_KEY in .env")
-        exit(1)
-    if "google" in providers_needed and not GOOGLE_API_KEY:
-        print("ERROR: This config requires GOOGLE_API_KEY in .env")
-        exit(1)
-    if "huggingface" in providers_needed and not HF_API_KEY:
-        print("ERROR: This config requires HF_API_KEY (or HUGGINGFACE_API_KEY) in .env")
-        exit(1)
-    if "together" in providers_needed and not TOGETHER_API_KEY:
-        print("ERROR: This config requires TOGETHER_API_KEY in .env")
-        exit(1)
-
-    DATASETS = [
-        "gsm8k_test",
-        "gsm-hard",
-        "gsm-plus",
-        "gsm-symbolic-p2",
-        "svamp",
-        "math500",
-        "aime2024",
-        "olympiadbench",
     ]
 
     print()

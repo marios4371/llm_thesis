@@ -17,6 +17,12 @@ Run:
 
 import sys
 
+# [v10.4] UTF-8 stdout for the ✓/✗/→ glyphs in trace output.
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
 # Make siv_module importable from the project root.
 sys.path.insert(0, '.')
 

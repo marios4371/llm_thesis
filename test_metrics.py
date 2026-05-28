@@ -13,7 +13,9 @@ import pandas as pd
 from evaluation_metrics import (
     compute_all_metrics, run_mcnemar_tests,
     _intersect_problem_ids, _restrict_to_ids,
+    wilson_ci, bootstrap_ci, paired_delta_bootstrap_ci,
 )
+import numpy as np
 
 
 def _make_df(rows):
@@ -105,9 +107,80 @@ class TestComputeAllMetrics(unittest.TestCase):
     def test_empty_dataframe_no_crash(self):
         m = compute_all_metrics({}, reference_system="mas_sht_full")
         self.assertEqual(len(m), 0)
-        # Schema preserved.
+        # Schema preserved (incl. v10.4 CI columns).
         self.assertIn("system", m.columns)
         self.assertIn("accuracy", m.columns)
+        self.assertIn("accuracy_ci_lo", m.columns)
+        self.assertIn("accuracy_ci_hi", m.columns)
+        self.assertIn("delta_ci_lo", m.columns)
+        self.assertIn("delta_ci_hi", m.columns)
+
+    def test_ci_columns_are_populated(self):
+        m = compute_all_metrics(self.results, reference_system="mas_sht_full")
+        m = m.set_index("system")
+        # CI for accuracy must straddle the point estimate.
+        for sys_name in ["mas_sht_full", "b1_direct", "b2_cot"]:
+            row = m.loc[sys_name]
+            self.assertLessEqual(row["accuracy_ci_lo"], row["accuracy"])
+            self.assertGreaterEqual(row["accuracy_ci_hi"], row["accuracy"])
+        # Reference row has no paired-delta CI (NaN by design).
+        self.assertTrue(math.isnan(m.loc["mas_sht_full", "delta_ci_lo"]))
+        # Non-ref rows have finite delta CIs that bracket the point delta.
+        for sys_name in ["b1_direct", "b2_cot"]:
+            row = m.loc[sys_name]
+            self.assertFalse(math.isnan(row["delta_ci_lo"]))
+            self.assertLessEqual(row["delta_ci_lo"], row["delta_vs_ref"] + 1e-9)
+            self.assertGreaterEqual(row["delta_ci_hi"], row["delta_vs_ref"] - 1e-9)
+
+
+class TestConfidenceIntervals(unittest.TestCase):
+    def test_wilson_n_zero(self):
+        self.assertEqual(wilson_ci(0, 0), (0.0, 0.0, 0.0))
+
+    def test_wilson_brackets_point(self):
+        # For p=0.5, n=100, 95% CI should be roughly [0.40, 0.60].
+        p, lo, hi = wilson_ci(50, 100, alpha=0.05)
+        self.assertAlmostEqual(p, 0.5, places=6)
+        self.assertGreater(lo, 0.39)
+        self.assertLess(hi, 0.61)
+        self.assertLessEqual(lo, p)
+        self.assertGreaterEqual(hi, p)
+
+    def test_wilson_extremes(self):
+        # All correct: lower bound should still be > 0.95 for n=100.
+        _, lo, hi = wilson_ci(100, 100, alpha=0.05)
+        self.assertGreater(lo, 0.95)
+        self.assertAlmostEqual(hi, 1.0, places=6)
+        # None correct: upper bound should still be < 0.05 for n=100.
+        _, lo, hi = wilson_ci(0, 100, alpha=0.05)
+        self.assertAlmostEqual(lo, 0.0, places=6)
+        self.assertLess(hi, 0.05)
+
+    def test_bootstrap_empty(self):
+        p, lo, hi = bootstrap_ci(np.array([]), n_boot=100)
+        self.assertTrue(math.isnan(p))
+
+    def test_bootstrap_brackets_point(self):
+        arr = np.array([1] * 50 + [0] * 50)
+        p, lo, hi = bootstrap_ci(arr, n_boot=1000, seed=42)
+        self.assertAlmostEqual(p, 0.5, places=6)
+        self.assertLessEqual(lo, p)
+        self.assertGreaterEqual(hi, p)
+
+    def test_paired_delta_unequal_lengths(self):
+        a = np.array([1, 1, 0])
+        b = np.array([0, 1])  # length mismatch → NaN
+        d, lo, hi = paired_delta_bootstrap_ci(a, b)
+        self.assertTrue(math.isnan(d))
+
+    def test_paired_delta_brackets_point(self):
+        # a is uniformly better than b by 0.3 → CI should bracket 0.3.
+        a = np.array([1] * 80 + [0] * 20)
+        b = np.array([1] * 50 + [0] * 50)
+        d, lo, hi = paired_delta_bootstrap_ci(a, b, n_boot=1000, seed=42)
+        self.assertAlmostEqual(d, 0.3, places=6)
+        self.assertLessEqual(lo, d)
+        self.assertGreaterEqual(hi, d)
 
 
 class TestMcNemar(unittest.TestCase):
