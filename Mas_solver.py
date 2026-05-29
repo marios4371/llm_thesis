@@ -1826,6 +1826,189 @@ class EnhancedProblemManager:
                         }
                         pool.append(item)
 
+                # ----------------------------------------------------------------
+                # [2025] AIME 2025 / 2026 — MathArena (uncontaminated)
+                # Keys: "aime_2025", "aime2025", "aime_2026", "aime2026"
+                # HuggingFace: MathArena/aime_2025  |  MathArena/aime_2026
+                # Fields: problem (str), answer (int)  — integers 0-999
+                # Difficulty: ~AIME level, frontier models 70-97 %
+                # ----------------------------------------------------------------
+                elif ds_name_norm in ["aime_2025", "aime2025",
+                                      "aime_2026", "aime2026",
+                                      "aime_2025_i", "aime_2025_ii",
+                                      "aime_2026_i", "aime_2026_ii"]:
+                    year_map = {
+                        "aime_2025": "MathArena/aime_2025",
+                        "aime2025":  "MathArena/aime_2025",
+                        "aime_2026": "MathArena/aime_2026",
+                        "aime2026":  "MathArena/aime_2026",
+                        "aime_2025_i":  "MathArena/aime_2025_I",
+                        "aime_2025_ii": "MathArena/aime_2025_II",
+                        "aime_2026_i":  "MathArena/aime_2026_I",
+                        "aime_2026_ii": "MathArena/aime_2026_II",
+                    }
+                    hf_path = year_map.get(ds_name_norm, "MathArena/aime_2025")
+                    ds = load_dataset(hf_path, split="train")
+                    idxs = list(range(len(ds)))  # small dataset — use all
+                    for i in idxs[:per_ds]:
+                        q = str(ds[i].get("problem", "")).strip()
+                        a = str(ds[i].get("answer", "")).strip()
+                        tag = hf_path.replace("MathArena/", "").lower()
+                        item = {
+                            "puzzle": self._maybe_harden(q, hardener),
+                            "answer": a,
+                            "dataset": tag,
+                            "id": f"{tag}_{i}",
+                        }
+                        pool.append(item)
+
+                # ----------------------------------------------------------------
+                # [2025] HMMT Feb/Nov 2025 + Feb 2026 — MathArena
+                # Keys: "hmmt_feb_2025", "hmmt_nov_2025", "hmmt_feb_2026",
+                #       "hmmt_2025", "hmmt_2026"
+                # HuggingFace: MathArena/hmmt_{feb|nov}_{year}
+                # Fields: problem (str), answer (str, can be expression)
+                # Difficulty: harder than AIME; best models ~87 %
+                # ----------------------------------------------------------------
+                elif ds_name_norm.startswith("hmmt"):
+                    hmmt_map = {
+                        "hmmt_feb_2025": "MathArena/hmmt_feb_2025",
+                        "hmmt_nov_2025": "MathArena/hmmt_nov_2025",
+                        "hmmt_feb_2026": "MathArena/hmmt_feb_2026",
+                        "hmmt_2025":     "MathArena/hmmt_nov_2025",
+                        "hmmt_2026":     "MathArena/hmmt_feb_2026",
+                    }
+                    hf_path = hmmt_map.get(ds_name_norm, "MathArena/hmmt_feb_2026")
+                    ds = load_dataset(hf_path, split="train")
+                    idxs = list(range(len(ds)))
+                    for i in idxs[:per_ds]:
+                        q = str(ds[i].get("problem", "")).strip()
+                        a = str(ds[i].get("answer", "")).strip()
+                        tag = hf_path.replace("MathArena/", "").lower()
+                        item = {
+                            "puzzle": self._maybe_harden(q, hardener),
+                            "answer": a,
+                            "dataset": tag,
+                            "id": f"{tag}_{i}",
+                        }
+                        pool.append(item)
+
+                # ----------------------------------------------------------------
+                # [2025] OlymMATH — RUC-AIBOX (Olympiad-level, bilingual)
+                # Keys: "olymmath", "olymmath_hard", "olymmath_easy",
+                #       "olymmath_en_hard", "olymmath_en_easy"
+                # HuggingFace: RUC-AIBOX/OlymMATH  (configs: EN-HARD, EN-EASY, ZH-*)
+                # Fields: problem, answer, subject, difficulty
+                # Difficulty: HARD → frontier models ~58 %; EASY → AIME level
+                # ----------------------------------------------------------------
+                elif ds_name_norm.startswith("olymmath"):
+                    if "easy" in ds_name_norm:
+                        cfg = "EN-EASY"
+                    else:
+                        cfg = "EN-HARD"   # default to harder split
+                    ds = load_dataset("RUC-AIBOX/OlymMATH",
+                                      name=cfg, split="test",
+                                      trust_remote_code=True)
+                    idxs = random.sample(range(len(ds)), min(len(ds), per_ds * 3))
+                    for i in idxs[:per_ds]:
+                        q = str(ds[i].get("problem", "")).strip()
+                        a = str(ds[i].get("answer", "")).strip()
+                        subj = ds[i].get("subject", "")
+                        tag = f"olymmath-{cfg.lower()}"
+                        if subj:
+                            tag += f":{subj}"
+                        item = {
+                            "puzzle": self._maybe_harden(q, hardener),
+                            "answer": a,
+                            "dataset": tag,
+                            "id": f"olymmath_{cfg.lower()}_{i}",
+                        }
+                        pool.append(item)
+
+                # ----------------------------------------------------------------
+                # [2025] AMO-Bench — Meituan LongCat (original, contamination-free)
+                # Keys: "amo_bench", "amo-bench", "amobench"
+                # HuggingFace: meituan-longcat/AMO-Bench
+                # Fields: problem, answer, category
+                # Difficulty: IMO-level, hand-crafted; best model ~63 %
+                # ----------------------------------------------------------------
+                elif ds_name_norm in ["amo_bench", "amo-bench", "amobench"]:
+                    ds = load_dataset("meituan-longcat/AMO-Bench", split="train",
+                                      trust_remote_code=True)
+                    idxs = list(range(len(ds)))  # only 50 problems
+                    for i in idxs[:per_ds]:
+                        q = str(ds[i].get("problem", "")).strip()
+                        a = str(ds[i].get("answer", "")).strip()
+                        cat = ds[i].get("category", "")
+                        tag = f"amo-bench:{cat}" if cat else "amo-bench"
+                        item = {
+                            "puzzle": self._maybe_harden(q, hardener),
+                            "answer": a,
+                            "dataset": tag,
+                            "id": f"amo_bench_{i}",
+                        }
+                        pool.append(item)
+
+                # ----------------------------------------------------------------
+                # [2025] Omni-MATH — KbsdJames (large olympiad collection)
+                # Keys: "omni_math", "omnimath", "omni-math"
+                # HuggingFace: KbsdJames/Omni-MATH  (train split, 4 428 problems)
+                # Fields: problem, answer, domain (33 sub-domains), difficulty
+                # Difficulty: olympiad-level; o1-mini ~60 %
+                # ----------------------------------------------------------------
+                elif ds_name_norm in ["omni_math", "omnimath", "omni-math"]:
+                    ds = load_dataset("KbsdJames/Omni-MATH", split="train",
+                                      trust_remote_code=True)
+                    idxs = random.sample(range(len(ds)), min(len(ds), per_ds * 3))
+                    for i in idxs[:per_ds]:
+                        q = str(ds[i].get("problem", "")).strip()
+                        a = str(ds[i].get("answer", "")).strip()
+                        domain = ds[i].get("domain", "")
+                        diff   = ds[i].get("difficulty", "")
+                        tag = "omni-math"
+                        if domain:
+                            tag += f":{domain.split('/')[0].strip()}"
+                        item = {
+                            "puzzle": self._maybe_harden(q, hardener),
+                            "answer": a,
+                            "dataset": tag,
+                            "id": f"omni_math_{i}",
+                        }
+                        pool.append(item)
+
+                # ----------------------------------------------------------------
+                # [2025] LiveMathBench — OpenCompass (anti-contamination)
+                # Keys: "livemathbench", "live_math", "livemath"
+                # HuggingFace: opencompass/LiveMathBench
+                # Configs: v202412_CNMO_en | v202412_AMC_en | v202505_*
+                # Fields: problem, answer, subject, competition
+                # Difficulty: competition-level, updated post training cutoff
+                # ----------------------------------------------------------------
+                elif ds_name_norm in ["livemathbench", "live_math", "livemath",
+                                      "livemathbench_amc", "livemathbench_cnmo"]:
+                    if "amc" in ds_name_norm:
+                        cfg = "v202412_AMC_en"
+                    elif "cnmo" in ds_name_norm:
+                        cfg = "v202412_CNMO_en"
+                    else:
+                        cfg = "v202505_CNMO_en"   # most recent by default
+                    ds = load_dataset("opencompass/LiveMathBench",
+                                      name=cfg, split="test",
+                                      trust_remote_code=True)
+                    idxs = list(range(len(ds)))
+                    for i in idxs[:per_ds]:
+                        q = str(ds[i].get("problem", "")).strip()
+                        a = str(ds[i].get("answer", "")).strip()
+                        comp = ds[i].get("competition", cfg)
+                        tag = f"livemathbench:{comp}"
+                        item = {
+                            "puzzle": self._maybe_harden(q, hardener),
+                            "answer": a,
+                            "dataset": tag,
+                            "id": f"livemathbench_{cfg}_{i}",
+                        }
+                        pool.append(item)
+
                 else:
                     logger.warning(f"Unknown dataset key: {ds_name}. Skipping.")
 
@@ -3616,9 +3799,27 @@ if __name__ == "__main__":
     # Competition / olympiad level (new 2026):
     #   "math500"            Hendrycks MATH-Hard 500
     #   "math"               Full Hendrycks competition_math (~12K)
-    #   "aime2024"           AIME I & II 2024
+    #   "aime2024"           AIME I & II 2024 (AI-MO/aimo-validation-aime)
     #   "aime_historical"    AIME 1983-2024 all years
     #   "olympiadbench"      OlympiadBench EN (IMO-level open-ended)
+    #
+    # Uncontaminated 2025/2026 benchmarks:
+    #   "aime_2025"          AIME 2025 combined   (MathArena, 30 problems, int answers)
+    #   "aime_2025_i"        AIME 2025 I only     (MathArena, 15 problems)
+    #   "aime_2025_ii"       AIME 2025 II only    (MathArena, 15 problems)
+    #   "aime_2026"          AIME 2026 combined   (MathArena, 30 problems, freshest)
+    #   "aime_2026_i"        AIME 2026 I only     (MathArena, 15 problems)
+    #   "aime_2026_ii"       AIME 2026 II only    (MathArena, 15 problems)
+    #   "hmmt_feb_2025"      HMMT Feb 2025        (MathArena, ~35 problems)
+    #   "hmmt_nov_2025"      HMMT Nov 2025        (MathArena, ~35 problems)
+    #   "hmmt_feb_2026"      HMMT Feb 2026        (MathArena, ~35 problems, freshest)
+    #   "hmmt_2025"          alias → hmmt_nov_2025
+    #   "hmmt_2026"          alias → hmmt_feb_2026
+    #   "olymmath_hard"      OlymMATH EN-HARD     (RUC-AIBOX, frontier ~58%)
+    #   "olymmath_easy"      OlymMATH EN-EASY     (RUC-AIBOX, AIME level)
+    #   "amo_bench"          AMO-Bench            (Meituan, 50 original IMO problems, ~63%)
+    #   "omni_math"          Omni-MATH            (KbsdJames, 4 428 olympiad problems)
+    #   "livemathbench"      LiveMathBench        (OpenCompass, anti-contamination, updated monthly)
     #
     # Multilingual (new 2026):
     #   "mgsm"   "mgsm_de"  "mgsm_es"  "mgsm_fr"
@@ -3630,10 +3831,17 @@ if __name__ == "__main__":
         "gsm-plus",
         "gsm-symbolic-p2",
         "svamp",
-        # --- Competition (new 2026) ---
+        # --- Competition / olympiad (existing) ---
         "math500",
         "aime2024",
         "olympiadbench",
+        # --- Uncontaminated 2025/2026 (new) ---
+        # "aime_2026",          # AIME 2026  — freshest, integer answers
+        # "hmmt_feb_2026",      # HMMT Feb 2026 — harder than AIME
+        # "olymmath_hard",      # OlymMATH EN-HARD — frontier ~58 %
+        # "amo_bench",          # AMO-Bench — 50 original IMO problems
+        # "omni_math",          # Omni-MATH — 4 428 olympiad problems
+        # "livemathbench",      # LiveMathBench — anti-contamination, monthly updates
         # --- Multilingual (new 2026) ---
         # "mgsm",
     ]
