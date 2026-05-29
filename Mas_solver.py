@@ -1902,13 +1902,13 @@ class EnhancedProblemManager:
                 # Difficulty: HARD → frontier models ~58 %; EASY → AIME level
                 # ----------------------------------------------------------------
                 elif ds_name_norm.startswith("olymmath"):
+                    # NOTE: HF config names are lowercase: en-hard / en-easy / zh-hard / zh-easy
                     if "easy" in ds_name_norm:
-                        cfg = "EN-EASY"
+                        cfg = "en-easy"
                     else:
-                        cfg = "EN-HARD"   # default to harder split
+                        cfg = "en-hard"   # default to harder split
                     ds = load_dataset("RUC-AIBOX/OlymMATH",
-                                      name=cfg, split="test",
-                                      trust_remote_code=True)
+                                      name=cfg, split="test")
                     idxs = random.sample(range(len(ds)), min(len(ds), per_ds * 3))
                     for i in idxs[:per_ds]:
                         q = str(ds[i].get("problem", "")).strip()
