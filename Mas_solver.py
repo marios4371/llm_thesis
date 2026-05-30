@@ -1354,7 +1354,7 @@ class UnifiedLLMClient:
                     )
                     mdl = AutoModelForCausalLM.from_pretrained(
                         self.model_name, quantization_config=bnb_cfg,
-                        device_map="auto", **_lkw,
+                        device_map="auto", low_cpu_mem_usage=True, **_lkw,
                     )
                     logger.info(f"local_hf: {self.model_name} loaded in 4-bit NF4 on cuda")
                 except ImportError:
