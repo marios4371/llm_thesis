@@ -1584,7 +1584,9 @@ class EnhancedProblemManager:
                     idxs = random.sample(range(len(ds)), min(len(ds), per_ds * 3))
                     for i in idxs[:per_ds]:
                         q = ds[i].get("question", "")
-                        a = ds[i].get("answer", "")
+                        raw_a = ds[i].get("answer", "")
+                        # GSM8K stores full solution; extract numeric answer after "####"
+                        a = raw_a.split("####")[-1].strip().replace(",", "") if "####" in raw_a else raw_a
                         item = {
                             "puzzle": self._maybe_harden(q, hardener),
                             "answer": a,
