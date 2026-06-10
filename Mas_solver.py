@@ -315,6 +315,17 @@ HETEROGENEOUS_PRESETS: Dict[str, Dict[AgentRole, ModelConfig]] = {
         AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct",          load_4bit=True),
     },
 
+    # [v10.6] Qwen2.5-Math 7B fp16 — NO bitsandbytes (bnb 4-bit materialization
+    # crashes Kaggle kernels). fp16 weights ≈ 14.2 GB, sharded across all visible
+    # GPUs via device_map="auto". Requires Kaggle accelerator "GPU T4 x2" (2×15 GB).
+    "qwen_math_7b_fp16": {
+        AgentRole.BASELINE:              ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct"),
+        AgentRole.PROGRAMMER:            ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct"),
+        AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct"),
+    },
+
     # [v10.3] DeepSeek-R1-Distill 7B local — 4-bit NF4 on T4 GPU (~4 GB VRAM).
     # Reasoning-chain distilled from R1 (671B). Tests whether reasoning-focused 7B
     # benefits from MAS decomposition.
@@ -1363,13 +1374,34 @@ class UnifiedLLMClient:
                         self.model_name, torch_dtype=dtype, **_lkw,
                     ).to("cuda")
             else:
-                # Standard path: CPU load → manual .to("cuda").
-                # Avoids accelerate hooks entirely for single-GPU setups.
-                mdl = AutoModelForCausalLM.from_pretrained(
-                    self.model_name, torch_dtype=dtype, **_lkw,
-                )
+                # Standard fp16 path.
+                # [v10.6] device_map="auto" shards weights across ALL visible GPUs —
+                # required for 7B fp16 on Kaggle T4 x2 (14.2 GB over 2×15 GB cards).
+                # Same dispatch machinery as the 4-bit path (proven on this env),
+                # eager attention already prevents the FA2 kernel mismatch.
                 if use_cuda:
-                    mdl = mdl.to("cuda")
+                    n_gpu = torch.cuda.device_count()
+                    max_mem = {
+                        g: f"{max(1, int(torch.cuda.get_device_properties(g).total_memory / 2**30) - 2)}GiB"
+                        for g in range(n_gpu)
+                    }  # ~2 GiB headroom per GPU for KV cache + activations
+                    mdl = AutoModelForCausalLM.from_pretrained(
+                        self.model_name, torch_dtype=dtype,
+                        device_map="auto", max_memory=max_mem,
+                        low_cpu_mem_usage=True, **_lkw,
+                    )
+                    logger.info(f"local_hf: fp16 sharded over {n_gpu} GPU(s) {max_mem}")
+                    devs = set(map(str, getattr(mdl, "hf_device_map", {}).values()))
+                    if any(("cpu" in d) or ("disk" in d) for d in devs):
+                        logger.warning(
+                            f"local_hf: some layers offloaded to CPU/disk ({devs}) — "
+                            "generation will be VERY slow. Switch Kaggle accelerator "
+                            "to 'GPU T4 x2' for enough VRAM."
+                        )
+                else:
+                    mdl = AutoModelForCausalLM.from_pretrained(
+                        self.model_name, torch_dtype=dtype, **_lkw,
+                    )
 
             mdl.eval()
             self._local_tokenizer = tok
@@ -1422,7 +1454,16 @@ class UnifiedLLMClient:
         # configs, so we use a conservative default of 4096 minus output budget.
         ctx = getattr(mdl.config, "max_position_embeddings", 4096) or 4096
         max_input = max(256, ctx - max_tokens - 64)
+        # [v10.6] Truncate from the LEFT: losing prompt head degrades quality,
+        # but right-truncation cuts the chat-template assistant tag and breaks
+        # generation entirely (model continues the prompt instead of answering).
+        tok.truncation_side = "left"
         ids = tok(prompt, return_tensors="pt", truncation=True, max_length=max_input)
+        if ids["input_ids"].shape[1] >= max_input:
+            logger.warning(
+                f"local_hf: prompt hit context limit — truncated to {max_input} tokens "
+                f"(ctx={ctx}, {max_tokens} reserved for output). Quality may degrade."
+            )
         actual_device = next(mdl.parameters()).device
         ids = {k: v.to(actual_device) for k, v in ids.items()}
 
@@ -2272,8 +2313,9 @@ Output:
         ]
         
         res = self._get_client(AgentRole.MATHEMATICIAN).call_model(
-            msgs, temperature=self.math_temp, max_tokens=600
-        )
+            msgs, temperature=self.math_temp, max_tokens=1000
+        )  # [v10.6] 600→1000: math models emit reasoning before the JSON;
+           # 600 often cut the blueprint mid-object → empty blueprint cascade
         blueprint = _extract_blueprint_json(str(res))
 
         res2 = None  # [v10.2] kept for CoT fallback scoping below
@@ -2289,8 +2331,8 @@ Reply with ONLY this JSON (no other text):
 
             res2 = self._get_client(AgentRole.MATHEMATICIAN).call_model(
                 [{"role": "user", "content": retry_msg}],
-                temperature=0.0, max_tokens=600
-            )
+                temperature=0.0, max_tokens=1000
+            )  # [v10.6] 600→1000, same reason as the primary call
             blueprint2 = _extract_blueprint_json(str(res2))
             if blueprint2.get("equations") or blueprint2.get("givens"):
                 logger.info("Retry succeeded — got valid blueprint")
@@ -2332,7 +2374,8 @@ Reply with ONLY this JSON (no other text):
                     logger.warning(
                         "local_hf CoT fallback: no numeric answer found in CoT text"
                         " — blueprint stays empty, programmer_failed expected"
-                    )
+                        f" | raw head: {raw_cot[:220]!r}"
+                    )  # [v10.6] log the actual model output so failures are diagnosable
 
         return blueprint
 

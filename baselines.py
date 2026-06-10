@@ -159,7 +159,7 @@ COT_PROMPT = (
 
 
 def chain_of_thought(client: UnifiedLLMClient, problem: str,
-                     max_tokens: int = 500,
+                     max_tokens: int = 1024,  # [v10.6] 500→1024: math-model CoT on hard problems needs >500 tok; clipping the answer unfairly penalizes the baseline
                      temperature: float = 0.0) -> BaselineResult:
     """B2 — single CoT call. Temperature defaults to 0 for determinism;
     self_consistency() bumps it to 0.7 for diversity."""
@@ -370,7 +370,7 @@ PAL_USER = (
 
 
 def pal(client: UnifiedLLMClient, problem: str,
-        max_tokens: int = 800) -> BaselineResult:
+        max_tokens: int = 1024) -> BaselineResult:  # [v10.6] 800→1024 headroom
     """Program-Aided Language model baseline (Gao et al., ICML 2023).
     Single LLM call → Python program → sandboxed execution → numeric answer.
 
