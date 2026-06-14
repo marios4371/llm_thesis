@@ -1358,6 +1358,13 @@ class UnifiedLLMClient:
         # four retries × partial-7B = VRAM full of unreachable fragments → OOM spiral.
         import gc as _gc
         mdl = None
+        # [v10.8] Reclaim VRAM from any prior/partial load before allocating.
+        # Stale weights from an earlier cell run (or a failed retry) leave the
+        # GPU near-full, so a fresh 14 GB load OOMs at ~86% then loops forever
+        # (load fails -> _local_model stays None -> every next call reloads).
+        if use_cuda:
+            _gc.collect()
+            torch.cuda.empty_cache()
         try:
             if self.load_4bit and use_cuda:
                 # 4-bit (BitsAndBytes) requires device_map="auto" — no workaround exists.
