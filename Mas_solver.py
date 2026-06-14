@@ -1326,7 +1326,14 @@ class UnifiedLLMClient:
             raise ImportError(f"local_hf provider needs transformers+torch: {e}")
 
         use_cuda = torch.cuda.is_available()
-        dtype    = torch.float16 if use_cuda else torch.float32
+        # [v10.7] bfloat16 on GPU, NOT float16. Qwen2.5(-Math) overflows fp16:
+        # attention logits exceed fp16's 65504 max → Inf → NaN → the model emits
+        # token 0 ('!') forever ('![](!!!!!!' garbage, exactly what pre-flight saw).
+        # bf16 shares fp32's exponent range, so it cannot overflow. T4 (sm_75) runs
+        # bf16 in PyTorch correctly (no tensor-core accel, but numerically fine).
+        # Forced rather than gated on is_bf16_supported(), which returns a false
+        # negative on some setups and would silently revert to broken fp16.
+        dtype = torch.bfloat16 if use_cuda else torch.float32
         quant_tag = " [4-bit NF4]" if self.load_4bit else ""
         logger.info(
             f"local_hf: loading {self.model_name} "
@@ -1360,7 +1367,7 @@ class UnifiedLLMClient:
                     bnb_cfg = BitsAndBytesConfig(
                         load_in_4bit=True,
                         bnb_4bit_quant_type="nf4",
-                        bnb_4bit_compute_dtype=torch.float16,
+                        bnb_4bit_compute_dtype=dtype,   # [v10.7] bf16 — avoid fp16 overflow
                         bnb_4bit_use_double_quant=True,
                     )
                     mdl = AutoModelForCausalLM.from_pretrained(
@@ -1390,7 +1397,7 @@ class UnifiedLLMClient:
                         device_map="auto", max_memory=max_mem,
                         low_cpu_mem_usage=True, **_lkw,
                     )
-                    logger.info(f"local_hf: fp16 sharded over {n_gpu} GPU(s) {max_mem}")
+                    logger.info(f"local_hf: {str(dtype).split('.')[-1]} sharded over {n_gpu} GPU(s) {max_mem}")
                     devs = set(map(str, getattr(mdl, "hf_device_map", {}).values()))
                     if any(("cpu" in d) or ("disk" in d) for d in devs):
                         logger.warning(
