@@ -2333,8 +2333,13 @@ Output:
         blueprint = _extract_blueprint_json(str(res))
 
         res2 = None  # [v10.2] kept for CoT fallback scoping below
-        # [v9.0] If blueprint is empty (JSON parse failed), retry with simpler prompt
-        if not blueprint.get("equations") and not blueprint.get("givens"):
+        # [v9.0] If blueprint is empty (JSON parse failed), retry with simpler prompt.
+        # [v11.0] Skip this retry for local_hf CoT models — they re-emit prose, not
+        # JSON, so the retry is a wasted ~40s call; the extraction step below handles
+        # them directly off the primary CoT output.
+        _math_provider = getattr(self._get_client(AgentRole.MATHEMATICIAN), "provider", "")
+        if (not blueprint.get("equations") and not blueprint.get("givens")
+                and _math_provider != "local_hf"):
             logger.info("Blueprint empty — retrying Mathematician with simplified prompt")
             retry_msg = f"""Solve this math problem step by step. Extract the numbers, write Python equations, and give the answer.
 
@@ -2352,18 +2357,65 @@ Reply with ONLY this JSON (no other text):
                 logger.info("Retry succeeded — got valid blueprint")
                 blueprint = blueprint2
 
-        # [v10.2] local_hf CoT fallback ----------------------------------------
-        # Small local models (1.5B) produce chain-of-thought math text instead of
-        # JSON. Both attempts above will have failed. Rather than returning an empty
-        # blueprint (which causes programmer_failed → SHT cascade on every problem),
-        # we extract the final numeric answer from the raw CoT output and build a
-        # minimal passthrough blueprint: answer = givens['answer'].
+        # [v11.0] Two-step blueprint extraction — THE fix for CoT-trained models.
+        # ---------------------------------------------------------------------
+        # Math-specialist models (Qwen2.5-Math, DeepSeek-Math) are RL-tuned to emit
+        # free-form chain-of-thought ending in \boxed{}, NOT JSON, so the two attempts
+        # above return empty. Instead of giving up (or building a tautological
+        # passthrough that the Programmer can't act on and SIV can't meaningfully
+        # verify), we make ONE focused extraction call: hand the model its OWN worked
+        # solution and ask it to convert that into structured givens + equations.
         #
-        # Trade-off (documented for thesis): this bypasses the Architect–Engineer
-        # decomposition — the 1.5B model acts as a single-agent solver. The pipeline
-        # scaffolding (SHT, SIV, confidence gate) still runs, but SIV will trivially
-        # verify a tautological equation. The flag _local_hf_fallback=True is stored
-        # in the blueprint so downstream logging can distinguish this path.
+        # Extracting structure from an existing derivation is far easier for these
+        # models than generating it from scratch — so this is where the Architect→
+        # Engineer→Verifier pipeline (Programmer execution, SIV audit, SHT) finally
+        # receives real material. Blueprints carry _extracted_from_cot=True for logging.
+        if not blueprint.get("equations") and not blueprint.get("givens"):
+            math_client = self._get_client(AgentRole.MATHEMATICIAN)
+            raw_cot = str(res2 if res2 is not None else res)
+            if raw_cot.strip() and not _is_error_response(raw_cot):
+                # Keep setup (givens, stated early) AND conclusion (answer, at the end).
+                if len(raw_cot) > 3000:
+                    cot_excerpt = raw_cot[:1500] + "\n...\n" + raw_cot[-1500:]
+                else:
+                    cot_excerpt = raw_cot
+                extract_prompt = f"""You are given a math problem and a worked solution. Convert the solution into a structured JSON blueprint a Python program can execute to reproduce the answer.
+
+PROBLEM:
+{problem}
+
+WORKED SOLUTION:
+{cot_excerpt}
+
+Rules:
+- "givens": JSON object mapping snake_case names to the NUMERIC input values (numbers only, no units, no text).
+- "equations": ordered list of Python assignment strings using givens['name'] and earlier results; the LAST line MUST assign to `answer`.
+- "expected_answer": the final numeric answer from the solution.
+
+Output ONLY this JSON, nothing else:
+{{"unknown": "what to find", "givens": {{"name": number}}, "equations": ["step1 = givens['a'] + givens['b']", "answer = step1 * 2"], "solution_steps": ["Step 1: ..."], "expected_answer": "number", "distractor_check": "None"}}"""
+                res3 = math_client.call_model(
+                    [{"role": "user", "content": extract_prompt}],
+                    temperature=0.0, max_tokens=800,
+                )
+                bp3 = _extract_blueprint_json(str(res3))
+                if bp3.get("equations") and bp3.get("givens"):
+                    logger.info(
+                        f"CoT→blueprint extraction SUCCESS: {len(bp3['givens'])} givens, "
+                        f"{len(bp3['equations'])} equations (expected_answer={bp3.get('expected_answer')})"
+                    )
+                    bp3["_extracted_from_cot"] = True
+                    blueprint = bp3
+                else:
+                    logger.info(
+                        "CoT→blueprint extraction yielded no executable equations "
+                        f"| raw head: {str(res3)[:160]!r}"
+                    )
+
+        # [v10.2] Last-resort tautological passthrough (local_hf only) — reached only
+        # if extraction above also failed. Keeps an answer flowing (answer = givens
+        # ['answer']) so the problem isn't a total loss, but SIV can only trivially
+        # verify it. _local_hf_fallback=True marks this degraded path for logging.
         if not blueprint.get("equations") and not blueprint.get("givens"):
             math_client = self._get_client(AgentRole.MATHEMATICIAN)
             if getattr(math_client, "provider", "") == "local_hf":
@@ -2371,7 +2423,7 @@ Reply with ONLY this JSON (no other text):
                 extracted = _extract_last_number(raw_cot)
                 if extracted is not None:
                     logger.info(
-                        f"local_hf CoT fallback: extracted answer={extracted} "
+                        f"local_hf CoT fallback (tautological): answer={extracted} "
                         f"from {len(raw_cot)}-char reasoning text"
                     )
                     blueprint = {
@@ -2386,10 +2438,10 @@ Reply with ONLY this JSON (no other text):
                     }
                 else:
                     logger.warning(
-                        "local_hf CoT fallback: no numeric answer found in CoT text"
+                        "CoT fallback: no numeric answer found in CoT text"
                         " — blueprint stays empty, programmer_failed expected"
                         f" | raw head: {raw_cot[:220]!r}"
-                    )  # [v10.6] log the actual model output so failures are diagnosable
+                    )
 
         return blueprint
 
@@ -3347,6 +3399,7 @@ Evaluate and select the most reliable answer."""
                 "logic_trace": json.dumps(blackboard_logic, ensure_ascii=False)[:500],
                 "used_baseline_fallback": used_baseline_fallback,
                 "local_hf_fallback": bool(blackboard_logic.get("_local_hf_fallback", False)),  # [v10.2]
+                "extracted_from_cot": bool(blackboard_logic.get("_extracted_from_cot", False)),  # [v11.0]
                 "programmer_metrics": programmer_response.quality_metrics,
                 "verification": {
                     "passed": verification_passed,
