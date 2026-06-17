@@ -553,6 +553,23 @@ def _is_error_response(text: Any) -> bool:
     return False
 
 
+# [v11.1] JSON schema for the Mathematician blueprint, used for constrained
+# decoding. The "reasoning" field comes FIRST and is required, so the enforcer
+# lets the model think in free text before it must emit the structured fields —
+# preserving its chain-of-thought scratchpad while still guaranteeing valid JSON.
+_BLUEPRINT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reasoning":       {"type": "string"},
+        "unknown":         {"type": "string"},
+        "givens":          {"type": "object", "additionalProperties": {"type": "number"}},
+        "equations":       {"type": "array",  "items": {"type": "string"}},
+        "expected_answer": {"type": "string"},
+    },
+    "required": ["reasoning", "givens", "equations", "expected_answer"],
+}
+
+
 # OPTIMIZED: Better blueprint extraction with structured fallback
 def _extract_blueprint_json(text: str) -> dict:
     """
@@ -1077,7 +1094,11 @@ class UnifiedLLMClient:
             logger.error(f"API validation FAILED with exception: {e}")
             return False
 
-    def call_model(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int = 1200) -> Any:
+    def call_model(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int = 1200,
+                   json_schema: Optional[dict] = None) -> Any:
+        # [v11.1] json_schema: if set and provider is local_hf, force the output to
+        # match this JSON schema via constrained decoding (token-level grammar).
+        # Other providers ignore it (API models follow JSON prompts on their own).
         key = _make_cache_key(self.provider, self.model_name, messages, temperature)
 
         if self.use_cache and key in CALL_CACHE:
@@ -1133,7 +1154,7 @@ class UnifiedLLMClient:
                 return resp.choices[0].message.content
             # [NEW v10.2] Local transformers model
             if self.provider == "local_hf":
-                return self._call_local_hf(messages, temperature, max_tokens)
+                return self._call_local_hf(messages, temperature, max_tokens, json_schema=json_schema)
 
         for attempt in range(4):
             try:
@@ -1443,9 +1464,15 @@ class UnifiedLLMClient:
             raise  # propagate to call_model's retry loop
 
     def _call_local_hf(self, messages: List[Dict[str, str]],
-                       temperature: float, max_tokens: int) -> str:
+                       temperature: float, max_tokens: int,
+                       json_schema: Optional[dict] = None) -> str:
         """Run a local HF causal LM. Uses the tokenizer's chat template if
-        available (most modern instruct models ship one)."""
+        available (most modern instruct models ship one).
+
+        [v11.1] If json_schema is given, applies token-level constrained decoding
+        (lm-format-enforcer) so the output is GUARANTEED to be valid JSON matching
+        the schema — the only reliable way to get structured output from a CoT-only
+        model like Qwen2.5-Math, which ignores every prompt-level JSON instruction."""
         import torch
         self._ensure_local_model()
         tok = self._local_tokenizer
@@ -1489,6 +1516,26 @@ class UnifiedLLMClient:
             do_sample=False,                         # greedy — no temperature division
             pad_token_id=tok.pad_token_id or tok.eos_token_id,
         )
+        # [v11.1] Token-level JSON-schema enforcement. The model literally cannot
+        # emit a token that would break the schema, so prose-only models are forced
+        # to produce a valid blueprint. Degrades gracefully to unconstrained
+        # generation if the library is missing or errors.
+        if json_schema is not None:
+            try:
+                from lmformatenforcer import JsonSchemaParser
+                from lmformatenforcer.integrations.transformers import (
+                    build_transformers_prefix_allowed_tokens_fn,
+                )
+                _parser = JsonSchemaParser(json_schema)
+                gen_kwargs["prefix_allowed_tokens_fn"] = (
+                    build_transformers_prefix_allowed_tokens_fn(tok, _parser)
+                )
+                logger.info("local_hf: JSON-schema constrained decoding ENABLED")
+            except Exception as _enf_err:
+                logger.warning(
+                    f"local_hf: constrained decoding unavailable ({type(_enf_err).__name__}: "
+                    f"{str(_enf_err)[:80]}) — generating unconstrained"
+                )
         with torch.no_grad():
             try:
                 out = mdl.generate(**ids, **gen_kwargs)
@@ -2326,10 +2373,15 @@ Output:
             {"role": "user", "content": f"Problem:\n{problem}\n\nAnalyze and return the JSON blueprint."}
         ]
         
+        # [v11.1] Pass the blueprint JSON schema. For local_hf this triggers
+        # constrained decoding (guaranteed-valid JSON, even from a CoT-only model);
+        # API providers ignore it and rely on the prompt. max_tokens raised to 1536
+        # because the schema's "reasoning" field holds the model's scratchpad before
+        # the structured fields, and we must not truncate mid-object.
         res = self._get_client(AgentRole.MATHEMATICIAN).call_model(
-            msgs, temperature=self.math_temp, max_tokens=1000
-        )  # [v10.6] 600→1000: math models emit reasoning before the JSON;
-           # 600 often cut the blueprint mid-object → empty blueprint cascade
+            msgs, temperature=self.math_temp, max_tokens=1536,
+            json_schema=_BLUEPRINT_SCHEMA,
+        )
         blueprint = _extract_blueprint_json(str(res))
 
         res2 = None  # [v10.2] kept for CoT fallback scoping below
