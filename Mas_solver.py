@@ -2507,6 +2507,22 @@ Output ONLY this JSON, nothing else:
                         f" | raw head: {raw_cot[:220]!r}"
                     )
 
+        # [v11.3] Log the final blueprint content so we can SEE what the model
+        # produced (givens + equations) — the key diagnostic for whether the
+        # structured pipeline is receiving real material or just falling back.
+        _g = blueprint.get("givens", {}) or {}
+        _eq = blueprint.get("equations", []) or []
+        _src = ("tautological" if blueprint.get("_local_hf_fallback")
+                else "extracted" if blueprint.get("_extracted_from_cot")
+                else "primary")
+        logger.info(
+            f"Blueprint[{_src}]: {len(_g)} givens, {len(_eq)} equations, "
+            f"expected_answer={blueprint.get('expected_answer')!r}"
+        )
+        if _eq:
+            logger.info(f"  givens={_g}")
+            logger.info(f"  equations={_eq}")
+
         return blueprint
 
     # -------------------------------------------------------------------------
