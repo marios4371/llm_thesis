@@ -326,6 +326,19 @@ HETEROGENEOUS_PRESETS: Dict[str, Dict[AgentRole, ModelConfig]] = {
         AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct"),
     },
 
+    # [v11.2] Qwen2.5-7B-INSTRUCT (general, NOT -Math) fp16 — the instruction-tuned
+    # sibling. Unlike Qwen2.5-Math (RL-locked to chain-of-thought), this model
+    # follows the JSON-blueprint prompt, so the full MAS pipeline (Mathematician →
+    # Programmer → SIV → SHT) engages as designed. Same size/family as the Math
+    # model = fair comparison. fp16 ≈ 14.2 GB sharded over T4 x2 (no bitsandbytes).
+    "qwen_7b_instruct_fp16": {
+        AgentRole.BASELINE:              ModelConfig("local_hf", "Qwen/Qwen2.5-7B-Instruct"),
+        AgentRole.MATHEMATICIAN:         ModelConfig("local_hf", "Qwen/Qwen2.5-7B-Instruct"),
+        AgentRole.PROGRAMMER:            ModelConfig("local_hf", "Qwen/Qwen2.5-7B-Instruct"),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "Qwen/Qwen2.5-7B-Instruct"),
+        AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-7B-Instruct"),
+    },
+
     # [v10.3] DeepSeek-R1-Distill 7B local — 4-bit NF4 on T4 GPU (~4 GB VRAM).
     # Reasoning-chain distilled from R1 (671B). Tests whether reasoning-focused 7B
     # benefits from MAS decomposition.
@@ -2373,14 +2386,13 @@ Output:
             {"role": "user", "content": f"Problem:\n{problem}\n\nAnalyze and return the JSON blueprint."}
         ]
         
-        # [v11.1] Pass the blueprint JSON schema. For local_hf this triggers
-        # constrained decoding (guaranteed-valid JSON, even from a CoT-only model);
-        # API providers ignore it and rely on the prompt. max_tokens raised to 1536
-        # because the schema's "reasoning" field holds the model's scratchpad before
-        # the structured fields, and we must not truncate mid-object.
+        # [v11.2] Plain call — instruction-tuned models (Qwen2.5-7B-Instruct, API)
+        # follow the JSON-blueprint prompt directly. Constrained decoding (json_schema)
+        # is left available in call_model for CoT-only models, but lm-format-enforcer
+        # is incompatible with the Kaggle transformers build, so we rely on the model.
+        # max_tokens 1536: room for the full blueprint without mid-object truncation.
         res = self._get_client(AgentRole.MATHEMATICIAN).call_model(
             msgs, temperature=self.math_temp, max_tokens=1536,
-            json_schema=_BLUEPRINT_SCHEMA,
         )
         blueprint = _extract_blueprint_json(str(res))
 
