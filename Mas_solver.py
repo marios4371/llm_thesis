@@ -3457,6 +3457,32 @@ Evaluate and select the most reliable answer."""
             )
             mas_answer = hypothesis_log.final_answer
             used_baseline_fallback = False
+
+            # [v11.4] SIV anchor: when SIV fully audited the original blueprint
+            # (execution_audit_passed + all givens verified + rel_error ≈ 0),
+            # its CAS-computed answer is more reliable than SHT majority vote.
+            # SHT candidates come from *alternative* blueprints that may diverge;
+            # the SIV-anchored answer from the primary blueprint should win.
+            # Guard: only override when SHT actually changed the answer (avoids
+            # no-op writes) and SIV rel_error is essentially zero (< 0.1%).
+            if (siv_result is not None
+                    and siv_result.execution_audit_passed
+                    and siv_result.verified
+                    and siv_result.blueprint_answer is not None
+                    and (siv_result.execution_rel_error or 1.0) < 1e-3):
+                _siv_str = str(siv_result.blueprint_answer)
+                _siv_num = _extract_last_number(_siv_str)
+                _mas_num = _extract_last_number(str(mas_answer))
+                if _siv_num is not None and _mas_num is not None and abs(_siv_num - _mas_num) > 1e-3:
+                    logger.info(
+                        f"[v11.4] SIV-anchor override: SHT={mas_answer!r} → "
+                        f"SIV={_siv_str!r} "
+                        f"(audit_passed, all_givens_verified, "
+                        f"rel_err={siv_result.execution_rel_error:.2e})"
+                    )
+                    mas_answer = _siv_str
+                    if hypothesis_log is not None:
+                        hypothesis_log.final_answer = mas_answer
         else:
             mas_answer = programmer_response.answer
             used_baseline_fallback = False
