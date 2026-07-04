@@ -112,13 +112,16 @@ Large language models (LLMs) have demonstrated remarkable capabilities across di
 Single-pass inference frequently yields errors in multi-step arithmetic word problems due to hallucinated intermediate steps, misidentified operands, and sensitivity to irrelevant distractor information.
 We introduce \textbf{MAS-SHT} (Multi-Agent Solver with Structured Hypothesis Testing), a framework that decomposes mathematical problem-solving into specialized agent roles: a \emph{Mathematician} (Architect) that produces a formal, self-verified JSON blueprint and a \emph{Programmer} (Engineer) that implements it as sandboxed executable Python code.
 When the Programmer fails or produces an answer that disagrees with a zero-shot baseline, a confidence-gated \emph{Critic} agent performs structured peer review of the primary solution, generating a targeted correction and an independent rederivation.
-If multiple candidates still disagree, an LLM-based \emph{Judge} resolves the conflict.
+Disagreeing candidates are then resolved by \emph{verification-weighted arbitration}: answer groups are ranked by deterministic, verifiable evidence---independent-derivation votes (executed program, CAS-evaluated blueprint, zero-shot baseline), symbolic verification status, and code-execution support---and an LLM-based \emph{Judge} is consulted only to break exact evidence ties, constrained to select one of the presented candidates rather than emit a free-form answer.
 A rule-based process verification layer and a SymPy symbolic solver fallback provide additional robustness against code-generation failures at zero API cost.
 We further introduce \textbf{Symbolic Inverse Verification (SIV)}, a deterministic, zero-API-call verification mechanism operating in two complementary layers.
 \emph{Layer~1 (Execution Audit)} substitutes all numeric givens into the symbolic blueprint expression and compares the result to the Programmer's answer, detecting execution deviations without any LLM calls.
 \emph{Layer~2 (Fault Localization)} algebraically inverts the forward equation chain using SymPy: for each given parameter, SIV treats it as unknown and solves backwards from the computed answer, identifying precisely which variable is inconsistent and enabling targeted Critic repair.
 We note explicitly that SIV operates on the \emph{math$\to$math} layer: it verifies that the Programmer faithfully executed the Architect's blueprint, but cannot detect errors in the \emph{NL$\to$math} translation layer (i.e., a blueprint that models the problem incorrectly will still pass SIV if it is internally consistent).
 This scope is complementary to---rather than competitive with---FOBAR \citep{jiang2024fobar}, which applies LLM-based backward reasoning that partially addresses the translation layer but is probabilistic and provides only a binary verdict; SIV provides deterministic, per-variable fault localization on the execution layer.
+Because our experiments identify blueprint construction as the single performance bottleneck, we further contribute two architectural mechanisms that target it directly: a \emph{two-step chain-of-thought-to-blueprint extraction} stage that converts a model's own free-form derivation into structured givens and equations (recovering the pipeline on reasoning-tuned models that do not natively emit JSON), and \emph{token-level constrained decoding} that grammar-enforces the blueprint schema for locally hosted open-weight models.
+These mechanisms, together with multi-provider support (Groq, Google, Hugging Face, Together) and an in-process local-inference backend with 4-bit quantization, allow MAS-SHT to run end-to-end on small open-weight models (e.g., Qwen2.5-7B, Qwen2.5-Math-7B) at zero API cost and without rate limits.
+We additionally expose per-component ablation switches (\texttt{enable\_siv}, \texttt{enable\_sht}) that instantiate inspector-off and hypothesis-testing-off variants for controlled attribution of each component's contribution.
 We evaluate MAS-SHT on five established benchmarks---GSM8K, GSM-Hard, GSM-Plus, GSM-Symbolic (P2), and SVAMP---under distractor-augmented conditions.
 On a challenging mixed-benchmark set, MAS-SHT achieves 56.8\% accuracy with Qwen3-32B via Groq, compared to 5.4\% for the zero-shot baseline---a gain of \textbf{+51.4 percentage points}---while recording zero ``damage'' cases where a correct baseline answer was overwritten with an incorrect one.
 A key finding is that when the Programmer successfully generates and executes code, it achieves 100\% accuracy; the entire performance gap is explained by blueprint construction failures.
@@ -152,8 +155,12 @@ We present \textbf{MAS-SHT} (Multi-Agent Solver with Structured Hypothesis Testi
     \item \textbf{Rule-based process verification.} A zero-API-call verification pass cross-checks the generated code against the blueprint (givens consistency, equation variable coverage, answer sanity, expected-answer deviation). On failure, a second SymPy invocation is attempted.
     \item \textbf{Critic-based Structured Hypothesis Testing (SHT).} When the confidence gate detects uncertainty, a \emph{Critic} agent performs structured peer review: it diagnoses likely errors, generates a targeted correction (informed by the SIV fault localization report when available), and independently rederives a solution from scratch. This peer-review design avoids the correlated-error failure mode of naive parallel resampling.
     \item \textbf{Baseline as an active triage candidate.} The zero-shot baseline answer participates alongside the primary and critic-generated alternatives in majority-vote triage, providing an additional independent signal.
+    \item \textbf{Verification-weighted arbitration (v12).} Candidate selection is evidence-first: the CAS evaluation of the Architect's blueprint enters the triage pool as a zero-cost candidate (yielding three \emph{independent} derivations---free program, declarative blueprint, zero-shot CoT), answer groups are ranked by deterministic evidence (votes, SIV verification, executed-code support), and the LLM Judge is demoted to a \emph{constrained tie-breaker} that must select one of the presented candidates by index. This redesign is directly motivated by an $n{=}150$ pilot in which a free-form 7B judge scored 15\% on the problems it arbitrated while the answers it discarded scored 42.5\% (\Cref{sec:pilot_diagnosis}).
+    \item \textbf{Blueprint-robust construction for non-JSON-native models.} Motivated by our finding that blueprint construction is the sole bottleneck, we introduce two mechanisms that target it directly. (i)~A \emph{two-step chain-of-thought-to-blueprint extraction} stage: when a model emits free-form reasoning instead of JSON (as reasoning-tuned math models such as Qwen2.5-Math and DeepSeek-Math do by construction), the system feeds the model its own worked solution and asks it to convert that derivation into structured givens and equations---a substantially easier task than generating structure \emph{ex nihilo}. (ii)~\emph{Token-level constrained decoding}: for locally hosted models, a JSON-schema grammar enforces a valid blueprint at the token level, with a leading free-text \texttt{reasoning} field that preserves the model's scratchpad while still guaranteeing parseable output.
+    \item \textbf{Provider-agnostic execution and local open-weight deployment.} A unified client abstracts five backends---Groq, Google, Hugging Face Inference Providers, Together AI, and an in-process \texttt{local\_hf} backend built on \texttt{transformers}. The local backend supports 4-bit (NF4) quantization and multi-GPU sharding, enabling the entire multi-agent pipeline to run on small open-weight models (1.5B--7B) at zero API cost and without rate limits.
+    \item \textbf{Component-level ablation infrastructure.} Pipeline-level switches (\texttt{enable\_siv}, \texttt{enable\_sht}) instantiate MAS-NoSIV and MAS-NoSHT variants from a single code path, permitting controlled attribution of the inspector and the hypothesis-testing stage without duplicating the pipeline.
     \item \textbf{Distractor robustness evaluation.} A configurable hardening mechanism injects 1--3 irrelevant numerical sentences into problem statements, testing model resilience to distractors.
-    \item \textbf{Comprehensive multi-benchmark evaluation} on five benchmarks (GSM8K, GSM-Hard, GSM-Plus, GSM-Symbolic P2, SVAMP) with two inference providers.
+    \item \textbf{Comprehensive multi-benchmark evaluation} on five benchmarks (GSM8K, GSM-Hard, GSM-Plus, GSM-Symbolic P2, SVAMP) across cloud and local open-weight inference backends.
 \end{enumerate}
 \Cref{sec:related} surveys related work.
 \Cref{sec:method} details the MAS-SHT architecture.
@@ -214,15 +221,17 @@ We evaluate on all five benchmarks.
 \label{sec:method}
 % ============================================================
 \subsection{System Overview}
-MAS-SHT processes each mathematical word problem through an eight-stage pipeline illustrated in \Cref{fig:architecture}:
+MAS-SHT processes each mathematical word problem through the pipeline illustrated in \Cref{fig:architecture}:
 (1)~zero-shot \emph{Baseline} generation,
-(2)~\emph{Mathematician} blueprint construction with self-verification,
-(3)~\emph{Programmer} code generation, sandboxed execution, and repair loop,
-(3b)~\emph{Rule-based process verification} with optional SymPy fallback,
+(2)~\emph{Mathematician} blueprint construction with self-verification, optionally under token-level constrained decoding,
+(2b)~\emph{Blueprint recovery}: if construction yields no equations, a single chain-of-thought-to-blueprint extraction call converts the model's own free-form derivation into structured givens and equations,
+(3)~\emph{Programmer} program-aided solving (PAL-style: the agent solves the problem directly in sandboxed Python, with the blueprint supplied as a cross-reference rather than as equations to transcribe), with execution and repair loop,
+(3b)~\emph{Rule-based process verification} (advisory: it adjusts confidence and annotates the run, but never overwrites the executed answer),
 (3c)~\emph{Symbolic Inverse Verification (SIV)}: a two-layer audit comprising a forward execution check (Layer~1) and per-variable inverse fault localization (Layer~2), both using SymPy CAS at zero API cost,
-(4)~\emph{Confidence Gate} evaluation (with SIV execution audit as the highest-priority criterion),
+(4)~\emph{Confidence Gate} evaluation,
 (5)~\emph{Critic-based Hypothesis Testing} with SIV-informed targeted correction and independent rederivation, and---if candidates disagree---
-(6)~\emph{LLM Judge} arbitration.
+(6)~\emph{verification-weighted arbitration}: majority voting over the candidate pool (which includes the CAS-evaluated blueprint answer as a zero-cost vote), then deterministic evidence ranking, with a \emph{constrained} LLM Judge consulted only on exact evidence ties.
+Stage~2b and the constrained-decoding option in Stage~2 (both detailed in \Cref{sec:blueprint_recovery}) are the v11 mechanisms that directly target the empty-blueprint failure mode identified in \Cref{sec:results}; the PAL-style Programmer and the arbitration redesign in Stage~6 are the v12 mechanisms that target the selection-layer failure mode identified in the $n{=}150$ pilot (\Cref{sec:pilot_diagnosis}).
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}[node distance=1.0cm and 1.9cm, auto]
@@ -231,6 +240,7 @@ MAS-SHT processes each mathematical word problem through an eight-stage pipeline
     \node[agent, below left=1.2cm and 1.6cm of input] (baseline) {Baseline Agent};
     \node[agent, below right=1.2cm and 1.0cm of input] (math) {Mathematician\\(Architect)};
     \node[process, below=of math] (blueprint) {Blueprint + \texttt{expected\_answer}};
+    \node[siv_style, right=1.5cm of blueprint, text width=2.6cm] (recover) {CoT$\to$Blueprint\\Recovery (2b)};
     \node[agent, below=of blueprint] (prog) {Programmer\\(Engineer)};
     \node[verify, below=of prog] (verif) {Rule-Based\\Process Verification};
     \node[process, right=1.8cm of verif] (sympy) {SymPy\\Fallback};
@@ -239,13 +249,15 @@ MAS-SHT processes each mathematical word problem through an eight-stage pipeline
     \node[data, left=2.0cm of gate] (output1) {Final Answer};
     \node[agent, below right=1.3cm and 0.4cm of gate] (critic) {Critic Agent\\(Peer Review)};
     \node[process, below=of critic] (exec2) {Execute\\Corrections};
-    \node[decision, below=1.0cm of exec2] (triage) {Triage\\(Majority Vote)};
-    \node[agent, right=2.0cm of triage] (judge) {LLM Judge};
+    \node[decision, below=1.0cm of exec2] (triage) {Triage\\(Majority + Evidence)};
+    \node[agent, right=2.0cm of triage] (judge) {Constrained Judge\\(tie-break)};
     \node[data, below=1.0cm of triage] (output2) {Final Answer};
     % Arrows — primary path
     \draw[arrow] (input) -| (baseline);
     \draw[arrow] (input) -| (math);
     \draw[arrow] (math) -- (blueprint);
+    \draw[arrowdashed] (blueprint) -- node[above, font=\tiny]{empty} (recover);
+    \draw[arrowdashed] (recover) |- (prog);
     \draw[arrow] (blueprint) -- node[right, font=\tiny]{Blueprint} (prog);
     \draw[arrow] (prog) -- node[right, font=\tiny]{Code + answer} (verif);
     \draw[arrowdashed] (verif) -- node[above, font=\tiny]{fail} (sympy);
@@ -258,11 +270,11 @@ MAS-SHT processes each mathematical word problem through an eight-stage pipeline
     \draw[arrow] (gate) -- node[right, font=\small]{Uncertain} (critic);
     \draw[arrow] (critic) -- node[right, font=\tiny]{2 alt blueprints} (exec2);
     \draw[arrow] (exec2) -- (triage);
-    \draw[arrow] (triage) -- node[above, font=\tiny]{No majority} (judge);
+    \draw[arrow] (triage) -- node[above, font=\tiny]{Evidence tie} (judge);
     \draw[arrow] (triage) -- node[left, font=\tiny]{Majority / Unanimous} (output2);
     \draw[arrow] (judge) |- (output2);
 \end{tikzpicture}
-\caption{MAS-SHT pipeline (v10.0). Solid arrows show the primary execution path; dashed arrows show the SymPy fallback path and SIV fault localization report. SIV (green) performs a two-layer audit: Layer~1 (forward execution audit) detects Programmer deviations from the blueprint; Layer~2 (inverse fault localization) identifies which specific given variable is inconsistent. When the execution audit passes and all solvable givens reconstruct (confidence $\geq 0.90$), SHT is skipped; when inconsistencies are found, the fault report is forwarded to the Critic. \emph{Note:} SIV operates on the math$\to$math layer and cannot detect NL$\to$math translation errors. The baseline answer enters the triage pool with a fixed confidence of 0.5.}
+\caption{MAS-SHT pipeline (v12.0). Solid arrows show the primary execution path; dashed arrows show recovery and fallback paths. The \emph{Blueprint Recovery} stage (2b, green) is engaged only when blueprint construction returns no equations: it converts the model's own chain-of-thought into a structured blueprint, supplying executable material to the downstream pipeline on models that do not natively emit JSON. SIV (green) performs a two-layer audit: Layer~1 (forward execution audit) cross-checks the PAL-style Programmer's answer against the independent blueprint evaluation; Layer~2 (inverse fault localization) identifies which specific given variable is inconsistent. When the execution audit passes and all solvable givens reconstruct (confidence $\geq 0.90$), SHT is skipped; when inconsistencies are found, the fault report is forwarded to the Critic. \emph{Note:} SIV operates on the math$\to$math layer and cannot detect NL$\to$math translation errors. The triage pool contains the primary answer, the baseline (fixed confidence 0.5), the CAS-evaluated blueprint answer (zero-cost vote), and up to two Critic alternatives; ties surviving evidence ranking go to a Judge that is constrained to select one presented candidate by index.}
 \label{fig:architecture}
 \end{figure}
 % ----- 3.2 -----
@@ -270,7 +282,7 @@ MAS-SHT processes each mathematical word problem through an eight-stage pipeline
 \label{sec:baseline}
 The baseline agent receives the problem $P$ with a minimal instruction to solve step-by-step and format the final answer as \texttt{ANSWER:~[[value]]}.
 It serves two roles: providing a reference signal for the confidence gate (\Cref{sec:confidence_gate}) and acting as a last-resort fallback when the entire multi-agent pipeline fails.
-Generation uses temperature $\tau=0.1$ and a 500-token budget.
+Generation uses temperature $\tau=0.1$; the token budget was 500 in the v9.1 configuration of Experiments~1--2 and was raised to 1024 in v11.2 (\Cref{sec:experiments}) to accommodate the longer step-by-step traces emitted by reasoning-tuned open-weight baselines.
 \paragraph{Answer extraction.}
 All agent outputs---including the baseline---pass through a three-stage extraction pipeline:
 (1)~tagged extraction matching \texttt{ANSWER:~[[value]]},
@@ -304,22 +316,61 @@ The raw LLM response undergoes a four-stage extraction cascade:
 (3)~field-level regex for the \texttt{givens} dictionary (\texttt{"\,givens"\,:\,\{...\}});
 (4)~field-level regex for the \texttt{equations} array.
 Stages 3--4 provide partial recovery even when the top-level JSON is broken.
-Generation uses $\tau=0.0$ for maximum determinism and a 600-token budget.
+Generation uses $\tau=0.0$ for maximum determinism. The blueprint token budget was 600 in the v9.1 configuration under which Experiments~1--2 were run; v11.2 raises it to 1536 tokens to eliminate the mid-object JSON truncation that produced empty blueprints under the tighter budget (\Cref{sec:discussion}).
 \paragraph{Blueprint retry.}
 If extraction yields an empty blueprint (no equations \emph{and} no givens), a single retry is issued using a simplified prompt that requests only the minimal required JSON fields.
 In our experiments, this retry recovers approximately 30\% of initially failed blueprint generations.
 Despite this mechanism, 37.8\% of problems in the hard-benchmark experiments still resulted in empty blueprint failures, representing the primary bottleneck of the pipeline.
+This empirical finding directly motivates the two v11 blueprint-recovery mechanisms---constrained decoding and chain-of-thought extraction---described in \Cref{sec:blueprint_recovery}, which are engaged respectively \emph{before} and \emph{after} this retry. For reasoning-tuned models (\Cref{sec:heterogeneous}) the simplified retry is skipped entirely, since such models re-emit prose rather than JSON and the extraction stage handles them directly.
+% ----- 3.3b -----
+\subsection{Stage 2b: Blueprint Recovery and Constrained Decoding}
+\label{sec:blueprint_recovery}
+The results in \Cref{sec:results} establish that the Architect--Engineer pipeline is bottlenecked entirely by blueprint construction: when a valid blueprint is produced, downstream accuracy is essentially perfect.
+This bottleneck is most acute for two classes of model that fall outside the cloud 32B regime of our original experiments.
+First, \emph{reasoning-tuned math models} (e.g., Qwen2.5-Math, DeepSeek-Math) are reinforcement-tuned to emit free-form chain-of-thought terminating in a \texttt{\textbackslash boxed\{\}} answer, and do not reliably follow a JSON-output instruction.
+Second, \emph{small open-weight models} (1.5B--7B) hosted locally lack the instruction-following fidelity to emit schema-valid JSON under a token budget.
+We introduce two complementary mechanisms, both targeting the empty-blueprint failure directly.
+
+\subsubsection{Constrained Decoding (Pre-generation Guarantee)}
+For locally hosted models (the \texttt{local\_hf} backend, \Cref{sec:heterogeneous}), the Mathematician call can be issued under \emph{token-level constrained decoding}: a JSON-schema grammar is compiled into a token-level acceptor (\texttt{lm-format-enforcer}) and supplied as a \texttt{prefix\_allowed\_tokens\_fn} to the generation loop, so that at every step the model may only sample tokens that keep the output a valid prefix of a schema-conforming JSON object.
+The blueprint schema (\Cref{app:schema}) places a free-text \texttt{reasoning} field \emph{first} and marks it required, so the model retains a chain-of-thought scratchpad before it is forced to emit the structured \texttt{givens}, \texttt{equations}, and \texttt{expected\_answer} fields.
+This converts ``produce valid JSON'' from a soft instruction the model may ignore into a hard invariant of the decoder.
+The mechanism degrades gracefully: if the enforcement library is unavailable or errors, generation proceeds unconstrained and the standard extraction cascade (\Cref{sec:mathematician}) applies.
+\paragraph{Status in v11.2.}
+Constrained decoding is implemented and remains available on the \texttt{local\_hf} backend, but it is \emph{not engaged} in the v11.2 evaluation configuration: the \texttt{lm-format-enforcer} acceptor is incompatible with the \texttt{transformers} build available in our Kaggle runtime.
+Rather than pin an older library version, v11.2 instead selects an instruction-tuned base model (Qwen2.5-7B-Instruct) that follows the JSON-blueprint prompt directly without token-level enforcement, and relies on the extraction cascade (\Cref{sec:mathematician}) and the post-generation CoT recovery below for the residual failures.
+We therefore present constrained decoding as a designed, graceful-degradation pathway whose empirical contribution---relative to a strong instruction-following model plus CoT extraction---is left for future work once the library incompatibility is resolved.
+
+\subsubsection{Two-Step Chain-of-Thought Extraction (Post-generation Recovery)}
+Constrained decoding is unavailable for API-hosted models and is undesirable for reasoning-tuned models whose strength \emph{is} their free-form derivation.
+For these, we recover the blueprint \emph{after} generation.
+If both the primary Mathematician call and (where applicable) the simplified retry return no equations and no givens, the system issues a single focused extraction call: it presents the model with the original problem and its \emph{own} worked solution, and asks it to convert that derivation into structured \texttt{givens} (numeric inputs only) and an ordered list of Python \texttt{equations} whose final line assigns to \texttt{answer} (full prompt in \Cref{app:prompts}).
+The key insight is one of \emph{task difficulty asymmetry}: extracting structure from an existing correct derivation is markedly easier for a reasoning-tuned model than synthesizing that structure \emph{ex nihilo} from the problem statement.
+When extraction succeeds, the recovered blueprint is tagged \texttt{\_extracted\_from\_cot = True} for logging, and the full downstream pipeline---Programmer execution, SIV audit, and SHT---proceeds on genuine, executable material rather than on a degenerate passthrough.
+Long derivations are truncated to their setup and conclusion (first and last 1{,}500 characters) so that both the input quantities and the final answer survive the model's context budget.
+
+\paragraph{Last-resort passthrough.}
+If extraction still yields no equations (for the \texttt{local\_hf} backend only), a tautological blueprint is synthesized that assigns the last numeral of the reasoning text to \texttt{answer}, tagged \texttt{\_local\_hf\_fallback = True}.
+This keeps an answer flowing so the problem is not a total loss, but we treat it as a degraded path: SIV can only trivially verify such a blueprint, and we report these cases separately rather than counting them as genuine blueprint successes.
+
+\paragraph{Relationship to the bottleneck.}
+Constrained decoding attacks the bottleneck \emph{before} generation (making malformed output unrepresentable); CoT extraction attacks it \emph{after} generation (rescuing a correct derivation that happened to be unstructured).
+Together they extend the regime in which the Architect--Engineer decomposition---and therefore SIV---can operate, from the cloud 32B setting of our initial experiments down to small, locally hosted open-weight models.
+
 % ----- 3.4 -----
 \subsection{Stage 3: Programmer Agent (Engineer)}
 \label{sec:programmer}
-The Programmer receives the original problem $P$ and the blueprint formatted as a structured text block with labeled sections (\textsc{Target}, \textsc{Given Values}, \textsc{Solution Steps}, \textsc{Equations to Implement}, and optionally \textsc{Distractors to Ignore}).
-This structured formatting, produced by a dedicated \texttt{format\_blueprint\_for\_programmer()} function, provides a cleaner interface than raw JSON and reduces misinterpretation.
-The Programmer's system prompt enforces five strict rules:
-(1)~initialize a \texttt{givens} dictionary with the exact values from the blueprint;
-(2)~implement each blueprint equation in order;
-(3)~store the final result in a variable named \texttt{answer};
-(4)~print only the final numeric answer; and
-(5)~use the exact variable names from the blueprint.
+The Programmer receives the original problem $P$ and the blueprint formatted as a structured text block with labeled sections (\textsc{Target}, \textsc{Given Values}, \textsc{Solution Steps}, \textsc{Equations to Implement}, and optionally \textsc{Distractors to Ignore}), produced by a dedicated \texttt{format\_blueprint\_for\_programmer()} function.
+\paragraph{PAL-style solving (v12).}
+Since v12, the Programmer operates in the program-aided-language-model regime \citep{gao2023pal}: it is instructed to \emph{solve the problem directly} in Python, treating the blueprint as a colleague's draft to cross-check---explicitly, ``if the draft conflicts with the problem, follow the problem.''
+Earlier versions instead required the Programmer to transcribe the blueprint's equations verbatim, which coupled the executed answer to the Architect's translation quality: a mistranslated blueprint was faithfully implemented into a wrong program, and SIV's execution audit degenerated into a tautology (the blueprint being compared against its own transcription).
+Our $n{=}150$ pilot quantified the cost of this coupling: single-call PAL scored 88.0\% where the blueprint-transcribing pipeline scored 74.0\% (\Cref{sec:pilot_diagnosis}).
+Decoupling restores primary-solver quality to the PAL level \emph{and} makes SIV's execution audit a genuine independent cross-check between two separately derived artifacts (free program vs.\ declarative blueprint).
+The Programmer's system prompt enforces the following contract:
+(1)~begin with a \texttt{givens} dictionary holding the numeric values the Programmer itself extracts from the problem (this convention is what rule-based verification, metamorphic testing, and SIV givens-matching operate on);
+(2)~compute the solution step by step from those givens in plain Python;
+(3)~store the final result in a variable named \texttt{answer}; and
+(4)~print only the final numeric answer.
 \paragraph{Sandboxed execution.}
 Generated code is executed in a Python sandbox that blocks: \texttt{import os}, \texttt{import sys}, \texttt{subprocess}, \texttt{\_\_import\_\_}, \texttt{eval(}, \texttt{exec(}, \texttt{compile(}, \texttt{open(}, \texttt{file(}, \texttt{input(}, and \texttt{raw\_input()}.
 Output is captured via \texttt{redirect\_stdout}, with fallback inspection of the \texttt{answer} and \texttt{result} local variables if no output was printed.
@@ -361,10 +412,13 @@ After code execution produces an answer, a zero-API-call rule-based verifier per
     The threshold of 10\% accommodates rounding but catches the most common arithmetic errors.
 \end{enumerate}
 Issues are classified as \emph{critical} (givens mismatch, negative answer, magnitude anomaly) or \emph{minor} (variable coverage gaps, expected-answer deviation).
-When critical issues are found, the verifier confidence is reduced to $\max(0.3,\ 1.0 - 0.25 \cdot n_{\text{crit}} - 0.1 \cdot n_{\text{minor}})$, and a SymPy re-solve is attempted.
-\paragraph{SymPy symbolic solver (fallback 2).}
-If verification fails critically and SymPy produces a valid answer on the same blueprint, that answer replaces the Programmer's answer with a confidence of 0.75.
-This second invocation point is distinct from the post-programmer-failure fallback (\Cref{sec:programmer}): here SymPy serves as an independent arithmetic check, potentially revealing that the equations are correct but the code contained a naming or syntax bug.
+When critical issues are found, the verifier confidence is reduced to $\max(0.3,\ 1.0 - 0.25 \cdot n_{\text{crit}} - 0.1 \cdot n_{\text{minor}})$.
+\paragraph{Advisory role (v12).}
+Rule-based verification is \emph{advisory}: it adjusts the reported confidence and annotates the run log, but it never overwrites the executed answer.
+Earlier versions attempted a SymPy re-solve of the blueprint on critical failure and \emph{replaced} the Programmer's answer with the result (confidence 0.75).
+The $n{=}150$ pilot (\Cref{sec:pilot_diagnosis}) showed this replacement to be a net loss: the SymPy replacements were 33\% accurate while the answers they overwrote were 50\% accurate on the same problems.
+The root cause is a changed interpretation under the PAL-style Programmer: a givens mismatch now frequently signals a \emph{blueprint} (translation) error rather than a code error, so re-solving the blueprint amplifies the wrong artifact.
+In v12 the blueprint's CAS evaluation instead participates in arbitration as an SHT candidate (\Cref{sec:sht}), where it is weighed against the executed answer rather than silently supplanting it.
 \paragraph{Verification in practice.}
 In Experiment 1 ($n=37$), the rule-based verifier passed with confidence 1.0 on all 20 problems where the Programmer generated executable code.
 This indicates that when code generation succeeds, the generated code faithfully implements the blueprint---the verifier's primary value is as a guard against regressions rather than a frequent corrective mechanism.
@@ -471,16 +525,16 @@ SIV integrates at three points in the pipeline:
 The confidence gate is a deterministic, zero-cost component deciding whether to accept the primary answer or trigger hypothesis testing.
 It evaluates criteria in priority order; any single trigger activates SHT:
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
-    \item \textbf{SIV execution-consistent skip (Criterion 0a).} If the SIV execution audit passes \emph{and} all solvable givens reconstruct \emph{and} confidence $\geq 0.90$, the answer is accepted without SHT. This is the highest-priority positive signal. \emph{Note:} this criterion confirms execution fidelity only; NL$\to$math translation correctness is not verified.
-    \item \textbf{SIV execution error (Criterion 0b).} If \texttt{execution\_audit\_passed = False} (the Programmer's answer deviates from the blueprint forward evaluation), SHT is triggered with reason \texttt{siv\_execution\_error}. This is a high-confidence negative signal---the Programmer deviated from the Architect's equations.
-    \item \textbf{SIV fault localization (Criterion 0c).} If the chain is symbolically invertible but one or more solvable givens fail to reconstruct, SHT is triggered. The specific fault localization report is passed to the Critic (\Cref{sec:sht}).
-    \item \textbf{Programmer failure.} The primary answer is ``unknown'' (all repair attempts and both SymPy invocations failed).
-    \item \textbf{Baseline disagreement.} $|a_p - a_b| > 10^{-3}$ (numeric comparison) or string inequality (non-numeric answers).
+    \item \textbf{Programmer failure.} The primary answer is ``unknown'' (all repair attempts and the SymPy fallback failed).
+    \item \textbf{Baseline disagreement.} $|a_p - a_b| > 10^{-3}$ (numeric comparison) or string inequality (non-numeric answers). This criterion runs \emph{before} any SIV-driven skip (a v10.1 ordering fix): SIV cannot detect NL$\to$math translation errors, and the baseline is the only translation-layer cross-check available, so a SIV pass must never override a baseline disagreement.
     \item \textbf{Repair exhaustion.} The \texttt{quality\_metrics} dict reports \texttt{error = "Max attempts reached"}, indicating the Programmer produced code but failed to execute it successfully.
-    \item \textbf{Negative answer.} $a_p < 0$ without linguistic support in the problem text.
+    \item \textbf{SIV fault localization.} If the chain is symbolically invertible but one or more solvable givens fail to reconstruct, SHT is triggered. The specific fault localization report is passed to the Critic (\Cref{sec:sht}).
+    \item \textbf{SIV execution error.} If \texttt{execution\_audit\_passed = False} (the Programmer's answer deviates from the blueprint forward evaluation), SHT is triggered with reason \texttt{siv\_execution\_error}.
+    \item \textbf{Unverifiable negative answer (revised in v12).} $a_p < 0$ \emph{and} the baseline failed. A negative primary that the baseline \emph{agrees} with no longer triggers SHT: two independent derivations concurring on a negative value is evidence, not an anomaly. The pre-v12 unconditional trigger routed every agreed-negative into SHT and was a measurable liability on GSM-Hard, whose golds are frequently negative (pilot: 17\% MAS vs.\ 83\% PAL accuracy on negative-gold problems); a negative that disagrees with the baseline is already caught by criterion~2.
     \item \textbf{Magnitude anomaly.} $|a_p| > 10^4 \times \max_{v \in \text{givens}} |v|$.
+    \item \textbf{Baseline failure.} $a_b = $ ``unknown'': with no cross-check available, SHT is triggered out of caution.
 \end{enumerate}
-An additional guard is applied: if $a_b = $ ``unknown'' as well as $a_p = $ ``unknown'', SHT is skipped (no reliable information source exists to anchor triage).
+If none of the triggers fires, the answer is accepted; when additionally the SIV execution audit passed, all solvable givens reconstructed, and SIV confidence $\geq 0.90$, the skip is recorded as \texttt{siv\_execution\_consistent} (cross-validated by baseline agreement \emph{and} symbolic verification).
 In our hard-benchmark experiments, the gate triggered on 94.6\% of problems.
 The dominant reason is \textbf{baseline disagreement}: the Programmer's structured pipeline frequently produces a different answer from the zero-shot baseline, which may itself be unreliable on hard benchmarks.
 This high trigger rate is not a failure of calibration but a reflection of genuine difficulty---on standard GSM8K, the trigger rate drops to 20\%.
@@ -503,13 +557,14 @@ When the confidence gate triggers, a single LLM call to the Critic performs thre
 \end{enumerate}
 The Critic outputs a JSON object with a \texttt{review} field and an \texttt{alternatives} array of exactly two blueprints.
 Generation uses $\tau=0.3$, permitting variation in error diagnosis while maintaining structural JSON fidelity.
-\subsubsection{Baseline as an Active Triage Candidate}
+\subsubsection{Baseline and Blueprint as Active Triage Candidates}
 Crucially, the zero-shot baseline answer is not merely a gate trigger---it is registered as a triage candidate with a fixed confidence of 0.5.
-This means that if both the Programmer's code and the Critic's alternatives fail to execute, the baseline answer can still be selected by the Judge as the best available answer.
-This architectural choice ensures the triage pool always contains at least two candidates (primary + baseline) and that no information is discarded.
+This means that if both the Programmer's code and the Critic's alternatives fail to execute, the baseline answer can still be selected as the best available answer.
+Since v12, the CAS evaluation of the Architect's blueprint (already computed by SIV's execution audit, hence free) also enters the pool as the \texttt{blueprint\_eval} candidate.
+With the PAL-style Programmer, the pool thus contains three \emph{independent} derivations of the answer---a free program, a declaratively modeled and CAS-evaluated blueprint, and a zero-shot chain of thought---so agreement between any two of them is meaningful evidence in a way that the earlier two-way primary-vs-baseline standoff was not.
 \subsubsection{Alternative Execution}
 Each of the Critic's two alternative blueprints is passed to the Programmer for a single execution attempt (no repair loop, to bound API costs).
-Combined with the primary answer and the baseline, this yields up to four candidates.
+Combined with the primary answer, the baseline, and the blueprint evaluation, this yields up to five candidates.
 \subsubsection{Triage (Majority Voting)}
 Candidates are filtered to those with \texttt{code\_success = True} and a non-null parsed numeric answer, then grouped by answer value (tolerance $\epsilon = 10^{-3}$).
 Groups are ranked by size, with average confidence as a tiebreaker.
@@ -517,12 +572,24 @@ Three outcomes are possible:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
     \item \textbf{Unanimous}: all valid candidates share a single answer $\Rightarrow$ accepted directly.
     \item \textbf{Majority}: the largest group has $\geq 2$ members and strictly dominates $\Rightarrow$ accepted.
-    \item \textbf{No majority}: candidates disagree without a dominant group $\Rightarrow$ escalate to the LLM Judge.
+    \item \textbf{No majority}: candidates disagree without a dominant group $\Rightarrow$ escalate to evidence-based arbitration.
 \end{itemize}
-\subsubsection{LLM Judge}
-When triage fails, the Judge receives all candidate summaries (strategy name, execution status, equations, and first 300 characters of code) and selects the most reliable answer.
-The Judge evaluates: (1)~code execution success, (2)~mathematical correctness of equations, (3)~completeness, (4)~inter-candidate agreement, and (5)~simplicity.
-The Judge uses $\tau=0.0$ and outputs \texttt{SELECTED\_ANSWER:~[[value]]} and \texttt{SELECTED\_STRATEGY:~[[name]]} in a structured format.
+\subsubsection{Evidence-Based Arbitration (v12)}
+\label{sec:evidence_arbitration}
+When majority voting is inconclusive, answer groups are ranked by a lexicographic tuple of \emph{deterministic, verifiable} evidence---no LLM call is involved:
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+    \item \textbf{votes}: the number of independent derivations agreeing on the answer;
+    \item \textbf{SIV verification}: the SIV inverse layer fully verified this answer (execution audit passed, all solvable givens reconstruct, confidence $\geq 0.90$)---evidence beyond the forward blueprint vote;
+    \item \textbf{executed code}: the group contains an answer produced by actually executed code (in the pilot, on program-vs-CoT disagreements the executed program was correct in 15/29 cases and the CoT in 4/29);
+    \item \textbf{primary support}, then \textbf{baseline support}, as final deterministic tie-breaks.
+\end{enumerate}
+A strict lexicographic winner is accepted directly (\texttt{triage\_result = evidence}).
+\subsubsection{Constrained LLM Judge (Tie-Break Only)}
+Only when two or more groups tie on the full evidence tuple is the LLM Judge consulted, and its authority is deliberately narrow: it receives one representative per tied group (strategy name, answer, equations, first 300 characters of code) and must reply with the \emph{index} of one presented candidate (\texttt{SELECTED\_CANDIDATE:~[[k]]}, $\tau=0.0$).
+A legacy \texttt{SELECTED\_ANSWER} tag is honored only if it numerically matches a presented candidate.
+Any other output---an out-of-range index, a novel number, unparseable text---is rejected, and a deterministic fallback selects the executed primary, then the baseline, then any valid candidate.
+The judge therefore \emph{cannot} introduce an answer that no solver produced.
+This design is a direct response to the pilot failure analysis (\Cref{sec:pilot_diagnosis}): the pre-v12 judge answered free-form, and when its output tag failed to parse, the last number in its rationale was scraped as the ``answer''---yielding candidate indexes and confidence values as final answers, and a 15\% accuracy on the 40 problems it arbitrated (its own discarded baseline: 42.5\%).
 \paragraph{API call budget.}
 \Cref{tab:api_calls} summarizes the API call budget across execution paths with observed frequencies from Experiment 1.
 The most frequent paths are SHT with no productive alternative blueprints (4 calls, 45.9\%) and SHT with Judge resolution (5 calls, 45.9\%), yielding an observed average of 4.46 calls per problem.
@@ -547,17 +614,34 @@ SHT + Majority (full candidates)  & 6 & Gate fails; majority found            & 
 % ----- 3.9 -----
 \subsection{Heterogeneous Model Configuration}
 \label{sec:heterogeneous}
-MAS-SHT supports assigning different LLMs to different agent roles via an \texttt{AgentRole} enum (\textsc{Baseline}, \textsc{Mathematician}, \textsc{Programmer}, \textsc{Hypothesis\_Generator}, \textsc{Judge}) and a \texttt{ModelConfig} dataclass specifying provider and model name.
-Five pre-defined presets are available:
+MAS-SHT supports assigning different LLMs to different agent roles via an \texttt{AgentRole} enum (\textsc{Baseline}, \textsc{Mathematician}, \textsc{Programmer}, \textsc{Hypothesis\_Generator}, \textsc{Judge}) and a \texttt{ModelConfig} dataclass specifying a provider, a model name, and a \texttt{load\_4bit} flag.
+A single \texttt{UnifiedLLMClient} abstracts five backends behind one interface:
 \begin{itemize}[leftmargin=*,itemsep=1pt]
-    \item \textit{homogeneous\_groq}: all roles use Qwen3-32B.
-    \item \textit{diverse\_groq}: LLaMA~3.3~70B (Mathematician, Programmer, Judge), Gemma~2~9B (Baseline), Mixtral~8$\times$7B (Critic).
-    \item \textit{cross\_provider}: Groq LLaMA~70B for structured roles, Google Gemini~2.5~Flash-Lite for Baseline and Critic.
-    \item \textit{budget\_optimized}: LLaMA~8B for Baseline and Programmer, 70B for Mathematician, Critic, and Judge.
-    \item \textit{homogeneous\_google}: all roles use Gemini~2.5~Flash-Lite.
+    \item \textbf{groq} and \textbf{google}: cloud APIs (Qwen3-32B, LLaMA~3.x, Gemma, Mixtral; Gemini), each with a dedicated rate limiter.
+    \item \textbf{huggingface}: the Hugging Face Inference Providers Router (OpenAI-compatible), which transparently routes a model to an available serverless host and handles 503 cold-starts with exponential backoff.
+    \item \textbf{together}: Together AI's OpenAI-compatible endpoint, a practical host for serverless 7B math models.
+    \item \textbf{local\_hf}: an in-process backend built on \texttt{transformers.AutoModelForCausalLM}, loading weights directly onto the local GPU(s). It incurs \emph{zero} API cost and \emph{no} rate limit, and is the backend used for our small open-weight evaluation.
 \end{itemize}
-Client deduplication ensures that roles sharing the same (provider, model) pair share a single connection object, avoiding redundant authentication overhead.
-Our primary experiments use the \textit{homogeneous\_groq} preset with Qwen3-32B.
+\paragraph{Cloud presets.}
+Five cloud presets cover the homogeneous and heterogeneous regimes: \textit{homogeneous\_groq} (all roles Qwen3-32B), \textit{diverse\_groq} (LLaMA~3.3~70B for structured roles, Gemma~2~9B baseline, Mixtral~8$\times$7B critic), \textit{cross\_provider} (Groq LLaMA~70B $+$ Google Gemini), \textit{budget\_optimized} (LLaMA~8B for cheap roles, 70B where critical), and \textit{homogeneous\_google} (all roles Gemini Flash-Lite).
+\paragraph{Local open-weight presets.}
+A second family of presets runs the entire pipeline on small open-weight models via \texttt{local\_hf}, so that the contribution of the multi-agent scaffold can be measured independently of cloud-scale model capacity:
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+    \item \textit{tiny\_math\_homogeneous}: Qwen2.5-Math-1.5B-Instruct, small enough for a single entry-level GPU.
+    \item \textit{qwen\_math\_7b\_local} / \textit{deepseek\_7b\_local}: Qwen2.5-Math-7B and DeepSeek-R1-Distill-7B in 4-bit NF4 quantization ($\sim$4\,GB VRAM), fitting a single 16\,GB GPU.
+    \item \textit{qwen\_math\_7b\_fp16} / \textit{qwen\_7b\_instruct\_fp16}: full-precision 7B ($\sim$14\,GB), sharded across multiple GPUs via \texttt{device\_map="auto"}.
+\end{itemize}
+For 4-bit presets, weights are materialized as NF4 via BitsAndBytes; for full-precision presets, \texttt{bfloat16} is used on GPU (not \texttt{float16}, which overflows on Qwen2.5 attention logits) with per-device memory caps reserving headroom for the KV cache.
+Client deduplication ensures that roles sharing the same (provider, model) pair share a single connection or a single resident model, avoiding redundant authentication and---critically for \texttt{local\_hf}---redundant GPU memory.
+Our originally reported experiments (\Cref{sec:results}) use \textit{homogeneous\_groq} with Qwen3-32B; the local open-weight presets are the subject of the evaluation track described in \Cref{sec:experiments}.
+% ----- 3.9b -----
+\subsection{Component Ablation Configuration}
+\label{sec:ablation}
+To attribute accuracy and cost to individual components rather than to the pipeline as a whole, the \texttt{QualityAwarePipeline} exposes two Boolean switches, \texttt{enable\_siv} and \texttt{enable\_sht}, threaded through to the solver without duplicating the pipeline.
+With \texttt{enable\_siv = False} (the \textbf{MAS-NoSIV} variant), the Symbolic Inverse Verifier never runs; the confidence gate still operates, but loses its highest-priority criterion (the SIV execution audit) and falls back to baseline-vs-MAS disagreement and the rule-based signals.
+With \texttt{enable\_sht = False} (the \textbf{MAS-NoSHT} variant), the Critic and Judge stages are disabled and the pipeline returns the Engineer's first verified answer directly.
+Because both variants share a single code path with the full system, any accuracy or API-cost difference is attributable to the toggled component alone.
+The confidence-gate ordering invariant of \Cref{sec:confidence_gate} is preserved in all configurations.
 % ----- 3.10 -----
 \subsection{Distractor Hardening}
 \label{sec:hardener}
@@ -572,9 +656,14 @@ All Experiment 1 evaluations use distractor hardening.
 \label{sec:robustness}
 Several engineering decisions are critical for reliable operation under free-tier API constraints.
 \paragraph{Rate limiting.}
-Two independent rate limiters operate at the provider level: 12 RPM for Groq (constrained by the $\sim$6K tokens/min TPM limit for 32B models) and 15 RPM for Google.
+Independent per-provider rate limiters operate at the client level: 12 RPM for Groq (constrained by the $\sim$6K tokens/min TPM limit for 32B models), 15 RPM for Google, 10 RPM for Hugging Face, and 20 RPM for Together.
 Each limiter enforces its inter-call delay using a thread-safe lock, allowing concurrent requests from multiple agents to be serialized safely.
-An additional inter-problem cooldown of 3 seconds (with SHT enabled) or 2 seconds (without) prevents token bursts across problems.
+The \texttt{local\_hf} backend is exempt: in-process inference contends only for the GPU, so it runs with an effectively unlimited limiter.
+An additional inter-problem cooldown of 3 seconds (with SHT enabled) or 2 seconds (without) prevents token bursts across problems on rate-limited providers.
+\paragraph{Local inference and GPU memory management.}
+For the \texttt{local\_hf} backend, the model and tokenizer are lazily loaded on first use and cached on the client instance, so that roles sharing a model never hold two resident copies.
+On load failure, VRAM is purged (\texttt{empty\_cache} followed by \texttt{synchronize}) before any retry, preventing fragment accumulation across attempts.
+On Kaggle, the experiment harness explicitly frees each resident model (moving it to CPU, deleting it, and clearing the CUDA cache) between systems---e.g., before switching from the baseline model to a MAS variant---so that two 7B models are never simultaneously resident on a single 16\,GB GPU.
 \paragraph{Token budget management.}
 A daily token budget of 100,000 tokens (Groq free tier) is tracked in real time.
 The \emph{estimation formula} is:
@@ -608,20 +697,32 @@ We evaluate on five mathematical reasoning benchmarks:
     \item \textbf{GSM-Symbolic (P2)} \citep{shi2023gsmsymbolic}: The hardest complexity level, combining symbolic value variations with additional problem clauses.
     \item \textbf{SVAMP} \citep{patel2021svamp}: Structurally varied arithmetic problems from diverse sources, testing cross-domain generalization.
 \end{itemize}
+\subsection{Baselines and System Variants}
+\label{sec:variants}
+We compare MAS-SHT against four single-model baselines and two ablations of the framework itself.
+The baselines are: \textbf{B1 (Direct)}, a zero-shot answer with no reasoning; \textbf{B2 (CoT)}, chain-of-thought prompting \citep{wei2022chain}; \textbf{B-PAL}, program-aided reasoning \citep{gao2023pal}; and \textbf{B-PoT}, program-of-thought reasoning \citep{chen2023program}.
+The ablations are \textbf{MAS-NoSIV} (\texttt{enable\_siv = False}) and \textbf{MAS-NoSHT} (\texttt{enable\_sht = False}), instantiated via the switches of \Cref{sec:ablation}.
+All variants in a given experiment use the same underlying model, so that differences isolate the reasoning scaffold rather than model capacity.
 \subsection{Language Models and Infrastructure}
-\paragraph{Experiment 1 (Hard Benchmarks).}
+\paragraph{Experiment 1 (Hard Benchmarks, cloud).}
 All five benchmarks are sampled with distractor hardening enabled.
 All agent roles use \textbf{Qwen3-32B} via the Groq inference API (homogeneous preset).
 Groq provides low-latency access under a free-tier constraint of approximately 100,000 tokens/day at 12 RPM.
-\paragraph{Experiment 2 (Standard GSM8K).}
+\paragraph{Experiment 2 (Standard GSM8K, cloud).}
 A second run on 10 standard GSM8K problems (no distractor hardening) uses the SambaNova inference API, verifying that the framework generalizes across inference providers.
+\paragraph{Experiment 3 (Local Open-Weight Models).}
+A third evaluation track---enabled by the v11 blueprint-recovery mechanisms (\Cref{sec:blueprint_recovery}) and the \texttt{local\_hf} backend (\Cref{sec:heterogeneous})---runs the entire pipeline on small open-weight models at zero API cost.
+All agent roles use a single 7B model (Qwen2.5-Math-7B-Instruct in 4-bit, or Qwen2.5-7B-Instruct in \texttt{bfloat16}), hosted in-process on a Kaggle T4 GPU.
+In this configuration constrained decoding is not engaged (the \texttt{lm-format-enforcer} acceptor is incompatible with the Kaggle \texttt{transformers} build, \Cref{sec:blueprint_recovery}); blueprint validity instead rests on the instruction-tuned model following the JSON schema directly, backed by the extraction cascade and the post-generation CoT recovery.
+This track is sampled from the tractable end of the benchmark suite (GSM8K, GSM-Hard, SVAMP), where a 7B model produces blueprints frequently enough for SIV to have meaningful coverage---in contrast to competition-level sets (MATH-500, AIME), on which a 7B model exhibits a floor effect that masks any component-level delta.
+It is the designated track for the dedicated SIV evaluation, as it includes the MAS-NoSIV ablation (\Cref{sec:variants}) on a model that the pipeline can actually drive end-to-end.
 \paragraph{Note on SIV evaluation.}
-The experiments reported in \Cref{sec:results} were conducted under v9.1 of the pipeline (prior to the integration of SIV in v10.0).
-SIV metrics therefore appear as \texttt{null} in the experiment logs.
-Quantitative evaluation of SIV's two-layer impact---specifically, the execution audit catch rate, the rate at which SIV correctly skips SHT on execution-consistent problems, and the degree to which its fault localization report improves Critic corrections---is reserved for future experiments using v10.0.
+The experiments of \Cref{sec:results} were conducted under v9.1 of the pipeline, prior to the integration of SIV in v10.0; SIV metrics therefore appear as \texttt{null} in those logs.
+The two-layer impact of SIV---the execution-audit catch rate, the rate at which SIV correctly skips SHT on execution-consistent problems, the execution-layer-vs-translation-layer error decomposition, and the accuracy and cost delta against the MAS-NoSIV ablation---is the explicit object of Experiment~3 under v11.2.
+A dedicated analysis module (\Cref{app:siv_eval}) computes these tables directly from the per-problem run logs.
 \subsection{Temperature and Token Settings}
 Role-specific temperatures: $\tau=0.0$ (Mathematician, Judge), $\tau=0.05$ (Programmer), $\tau=0.1$ (Baseline), $\tau=0.3$ (Critic).
-Token budgets (v9.1 reduced settings): Baseline and Judge 500 tokens, Mathematician 600 tokens, Programmer 1000 tokens, Critic 900 tokens.
+Token budgets differ by pipeline version. Experiments~1--2 used the v9.1 reduced settings: Baseline and Judge 500 tokens, Mathematician 600 tokens, Programmer 1000 tokens, Critic 900 tokens. Experiment~3 uses the v11.2 settings, which raise the Baseline to 1024 and the Mathematician to 1536 tokens (with the simplified blueprint retry at 1000 and the CoT-extraction call at 800), while leaving the Programmer (1000), Critic (900), and Judge (500) unchanged. The Mathematician increase directly targets the mid-object truncation diagnosed in \Cref{sec:discussion}.
 \subsection{Evaluation Metrics}
 \paragraph{Accuracy.}
 A prediction is correct if the extracted numeric answer matches the gold answer within $\epsilon=10^{-3}$.
@@ -769,9 +870,10 @@ The most important empirical finding of this work is precise: MAS-SHT achieves \
 All 21 wrong answers in Experiment 1 originate from problems where the Mathematician either failed to produce parseable JSON (14 cases) or produced an empty blueprint despite the retry (3 additional cases).
 This finding sharply delineates the research agenda: improving the downstream pipeline (verification, SHT, Judge) yields diminishing returns; improving blueprint construction yields proportional accuracy gains.
 Empty blueprints arise primarily in two scenarios:
-\textit{(i)} complex multi-clause problems (GSM-Symbolic P2 contributes 5 of the 14 empty blueprints) where the model exhausts its 600-token budget writing reasoning prose before emitting JSON; and
+\textit{(i)} complex multi-clause problems (GSM-Symbolic P2 contributes 5 of the 14 empty blueprints) where the model exhausts its (v9.1) 600-token budget writing reasoning prose before emitting JSON; and
 \textit{(ii)} problems requiring non-trivial mathematical structuring (percentages, proportions, inverse rates) where the model fails to identify a clean Python-expressible equation chain.
-The token budget cap is thus an active constraint: increasing it from 600 to 1000 may recover a substantial fraction of empty-blueprint failures.
+The token budget cap is thus an active constraint, and v11.2 acts on it directly: the Mathematician budget is raised from 600 to 1536 tokens (\Cref{sec:experiments}), explicitly to let the model finish a complete JSON object rather than truncating mid-blueprint after exhausting the budget on reasoning prose---attacking scenario~\textit{(i)} at its root.
+The remaining v11 mechanisms of \Cref{sec:blueprint_recovery} address the residual cases: constrained decoding would make malformed output unrepresentable (available but not engaged in v11.2, \Cref{sec:blueprint_recovery}), while two-step CoT extraction removes much of scenario~\textit{(ii)} by recovering structure from a derivation the model \emph{can} produce even when it cannot emit clean JSON \emph{ex nihilo}. Quantifying how far the raised budget and CoT extraction close the 37.8\% empty-blueprint gap on small open-weight models is the central question of Experiment~3.
 \subsection{Correlated Errors and the Critic Design}
 A central architectural decision in v9.0 was replacing the ``5 strategy archetypes'' parallel generation approach with critic-based peer review.
 Under the original design, the same model was instructed to generate two alternative blueprints from different mathematical archetypes (Arithmetic-Sequential, Algebraic-Equational, Unit-Rate, Working-Backwards, Partitioning).
@@ -817,10 +919,33 @@ First, on problems where both the primary and the Critic's alternatives fail cod
 This explains the high Judge rate (48.6\%): the Judge is not called because candidates \emph{disagree}, but because only the baseline is a ``valid'' candidate in the triage sense.
 Second, on standard benchmarks where the baseline is highly reliable, its participation in triage provides additional confirmation of correct answers, potentially reducing false SHT triggers.
 \subsection{The Role of the SymPy Fallback}
-Although SymPy was not invoked as the final solver in any of the 37 Experiment 1 problems, it plays two structural roles that are difficult to quantify from these results alone.
-First, as a post-programmer-failure fallback (confidence 0.8), it provides a backstop against code generation failures when the blueprint equations are correct---a scenario that did not occur in these experiments but is expected to arise on different problem distributions.
-Second, as a post-verification fallback (confidence 0.75), it provides arithmetic confirmation that the blueprint's equations are correctly specified even when the code implementation has bugs.
-The 100\% verification pass rate in Experiment 1 means SymPy was not needed, but this cannot be assumed to generalize.
+Although SymPy was not invoked as the final solver in any of the 37 Experiment 1 problems, it plays a structural role that is difficult to quantify from these results alone: as a post-programmer-failure fallback (confidence 0.8), it provides a backstop against code generation failures when the blueprint equations are correct.
+In the $n{=}150$ pilot this path resolved 16 problems at 68.8\% accuracy---below the Programmer path but far better than returning ``unknown''.
+The \emph{second} historical invocation point---replacing the Programmer's answer when rule-based verification failed---was removed in v12 after the pilot measured it at 33\% accuracy against the 50\% of the answers it overwrote (\Cref{sec:pilot_diagnosis}); the blueprint's CAS evaluation now competes in arbitration instead of overwriting the primary.
+
+\subsection{Pilot Diagnosis at $n{=}150$: The Selection Layer, Not the Solvers, Was the Bottleneck}
+\label{sec:pilot_diagnosis}
+Before the v12 redesign we ran the full system and three baselines on an identical stratified sample of 150 problems (GSM8K, GSM-Hard, SVAMP) with Qwen2.5-Math-7B-Instruct as the sole model for every role (\texttt{local\_hf} backend, Kaggle GPU, seed 42).
+The headline numbers were sobering: direct answering 60.0\%, zero-shot CoT 80.7\%, single-call PAL 88.0\%, and the full MAS-SHT pipeline \textbf{74.0\%}---the multi-agent system was \emph{losing} 14 points to a single-call baseline it contains as a component.
+Path-level decomposition, however, localized the damage precisely:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{confident\_skip} (101/150 problems): 96.0\% accurate---when the gate accepted the primary answer, the system was essentially as good as agreement-filtered PAL;
+    \item \textbf{unanimous} triage (9): 88.9\%;
+    \item \textbf{judge} triage (40): \textbf{15.0\%}, on problems where the internal baseline answer it was free to select scored 42.5\%. The judge path converted 16 correct answers into wrong ones while fixing only 6.
+\end{itemize}
+Five concrete mechanisms, each independently verifiable in the run logs, produced this failure:
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Free-form judging with text scraping.} The judge emitted free text; when its \texttt{SELECTED\_ANSWER} tag failed to parse, the pipeline scraped the \emph{last number in the rationale} as the final answer---returning candidate indexes and confidence values (predicted answers of 1, 2, 3, 4, 5, 8 against three-to-seven-digit golds).
+    \item \textbf{A falsy-zero guard disabled the SIV anchor exactly when SIV was most certain.} The v11.4 anchor required \texttt{(execution\_rel\_error or 1.0) < 1e-3}; a \emph{perfect} audit (\texttt{rel\_error = 0.0}) is falsy in Python, so the guard read 1.0 and never fired. On \texttt{gsm-hard\_1125} (rel.\ error $5.5\times10^{-4}$) the anchor fired and fixed the answer; on \texttt{gsm-hard\_542} the SIV-verified blueprint answer \emph{equaled the gold} ($-4416673$) with rel.\ error exactly 0.0, the anchor was skipped, and the judge output ``3''.
+    \item \textbf{Blueprint coupling.} The Programmer transcribed the Architect's equations verbatim, so a mistranslated blueprint became a faithfully wrong program (PAL, free of this coupling, scored 88.0\% vs 74.0\%).
+    \item \textbf{Verification-triggered answer replacement.} SymPy re-solves of the blueprint overwrote executed answers at 33\% accuracy against the 50\% they replaced.
+    \item \textbf{Unconditional negative-answer alarm.} Every negative primary triggered SHT even when the baseline agreed; on the six negative-gold GSM-Hard problems the system scored 17\% against PAL's 83\%.
+\end{enumerate}
+Each mechanism maps one-to-one onto a v12 change: constrained index-only judging with a no-scrape guarantee, an explicit \texttt{is not None} anchor guard, the PAL-style Programmer, advisory-only verification, and the agreed-negative exemption---plus the blueprint-evaluation vote and evidence ranking of \Cref{sec:evidence_arbitration} that remove most judge invocations altogether.
+Two aspects of this diagnosis deserve emphasis.
+First, the pilot \emph{validates} the framework's core premises even while indicting its selection layer: execution-based solving, cross-derivation agreement gating, and SIV's audit signal were all individually healthy (agreement-gated answers: 96\%; SIV-verified answers: 73.3\% vs 53.5\% for unverified).
+Second, it supplies the honest motivation for verification-weighted arbitration: in a homogeneous small-model deployment, \emph{the same 7B model that solves problems well judges them poorly}, so authority must rest with deterministic, verifiable evidence, and LLM judgment must be constrained to choices that evidence cannot separate.
+The v12 evaluation run---same 150 problems, same model, same seed---is the immediate next deliverable.
 \subsection{API Cost Analysis}
 The observed average API call count per problem in Experiment 1:
 \begin{equation*}
@@ -835,10 +960,11 @@ While results are internally consistent, statistical significance testing and co
 Larger-scale evaluation is essential to confirm per-benchmark trends.
 \paragraph{Blueprint bottleneck.}
 The 37.8\% empty-blueprint failure rate caps MAS-SHT's theoretical accuracy at approximately 62\% even with perfect downstream processing---the per-benchmark results are consistent with this ceiling.
-\paragraph{SIV not yet evaluated empirically.}
-The Symbolic Inverse Verification module was integrated in v10.0 after the experiments reported here.
-Quantitative measurement of SIV's effect on execution error detection rate, SHT trigger rate reduction, Critic correction quality, and overall accuracy remains as future work.
-The explicit scope limitation (NL$\to$math errors are undetectable) will need to be quantified empirically by measuring the fraction of errors that are execution-layer vs.\ translation-layer in nature.
+\paragraph{SIV evaluation in progress.}
+The Symbolic Inverse Verification module was integrated in v10.0, after the cloud experiments reported here, so SIV metrics are absent from the Experiment~1 and~2 logs.
+The $n{=}150$ pilot (\Cref{sec:pilot_diagnosis}) produced the first populated SIV telemetry (58/150 problems with audit data; SIV-verified answers 73.3\% accurate vs.\ 53.5\% for unverified---a usable but noisy signal under the pre-v12 selection layer that frequently discarded what SIV verified).
+The dedicated empirical evaluation---execution-audit catch rate, SHT-trigger reduction, Critic correction quality, the execution-vs-translation error decomposition, and the accuracy/cost delta against MAS-NoSIV---is the object of Experiment~3 (\Cref{sec:experiments}) under v12.0, with the analysis pipeline already in place (\Cref{app:siv_eval}).
+We report the architecture and evaluation methodology here; the Experiment~3 measurements themselves are the immediate next deliverable rather than a completed result, and we are careful not to anticipate their values.
 \paragraph{Benchmark scope.}
 All five benchmarks are arithmetic word problems.
 Extension to algebra, geometry, combinatorics, probability, and calculus requires structural modifications to the blueprint schema (e.g., supporting inequality constraints, symbolic unknowns, or set-theoretic operations).
@@ -853,15 +979,17 @@ It supports three assertion types---delta, ratio, and monotonic---and could prov
 \section{Conclusion}
 \label{sec:conclusion}
 % ============================================================
-We presented MAS-SHT (v10.0), a multi-agent mathematical reasoning framework combining Architect--Engineer decomposition, self-verified blueprint construction, rule-based process verification, dual-invocation SymPy symbolic fallback, Symbolic Inverse Verification (SIV), and confidence-gated critic-based Structured Hypothesis Testing.
-SIV is the novel verification contribution of v10.0, operating in two complementary layers.
+We presented MAS-SHT (v12.0), a multi-agent mathematical reasoning framework combining Architect--Engineer decomposition, self-verified blueprint construction, PAL-style program-aided solving, advisory rule-based process verification, a SymPy symbolic fallback, Symbolic Inverse Verification (SIV), and confidence-gated critic-based Structured Hypothesis Testing resolved by verification-weighted arbitration.
+To extend the framework from cloud-scale models to small, locally hosted open-weight models, v11 adds two blueprint-recovery mechanisms that directly target the empty-blueprint bottleneck identified in our experiments---token-level constrained decoding and two-step chain-of-thought-to-blueprint extraction---alongside a provider-agnostic client with an in-process local-inference backend and component-level ablation switches.
+Motivated by an $n{=}150$ pilot in which a free-form LLM judge scored 15\% on the problems it arbitrated (\Cref{sec:pilot_diagnosis}), v12 re-architects the selection layer around deterministic evidence: the CAS-evaluated blueprint enters the candidate pool as a zero-cost independent vote, answer groups are ranked by verifiable evidence (agreement, SIV verification, executed-code support), and the LLM judge is retained only as a tie-breaker constrained to select one presented candidate by index---it can no longer emit an answer that no solver produced.
+SIV remains the novel verification contribution, operating in two complementary layers.
 \emph{Layer~1 (Execution Audit)} detects deviations between the Programmer's computed answer and the forward evaluation of the blueprint equations---establishing execution fidelity at zero API cost.
 \emph{Layer~2 (Fault Localization)} inverts the symbolic chain to identify precisely which declared variable is inconsistent with the answer, enabling targeted Critic repair rather than blind re-generation.
 An explicit, documented scope limitation distinguishes SIV from LLM-based backward verification \citep{jiang2024fobar}: SIV operates exclusively on the execution layer (math$\to$math) and cannot detect NL$\to$math translation errors. The two methods are orthogonal and complementary.
 On a challenging mixed-benchmark set where a 32B zero-shot baseline achieves only 5.4\% accuracy, MAS-SHT recovers 56.8\%---a gain of +51.4 percentage points---with zero damage cases and zero false regressions on easier problems.
 The most important empirical finding is that \emph{code execution success implies 100\% accuracy}: the entire performance gap between the framework and the baseline is explained by blueprint construction failures, pinpointing the Mathematician stage as the sole bottleneck.
-Future work should prioritize: (1)~empirical evaluation of SIV's two-layer impact (execution error detection rate, SHT trigger reduction, Critic correction quality) in a dedicated v10.0 experiment; (2)~combining SIV with an NL-layer verifier (e.g., FOBAR-style) to cover both error layers; (3)~increasing the Mathematician's token budget and experimenting with larger context models to reduce empty-blueprint failures; (4)~systematic evaluation of heterogeneous agent configurations, particularly dedicating a stronger instruction-following model to the Mathematician role; and (5)~larger-scale evaluation to establish statistical significance of the per-benchmark results.
-We believe that the three central design principles of MAS-SHT---structured blueprint-constrained code generation, critic-based peer review over parallel resampling, and deterministic CAS-based execution audit with per-variable fault localization---are broadly applicable beyond arithmetic word problems and represent a productive direction for LLM reasoning reliability research.
+Future work should prioritize: (1)~completing the dedicated SIV evaluation of Experiment~3 (execution-audit catch rate, SHT-trigger reduction, Critic correction quality, and the accuracy/cost delta against MAS-NoSIV) on small open-weight models under v11.2; (2)~combining SIV with an NL-layer verifier (e.g., FOBAR-style) to cover both error layers; (3)~measuring how far the v11 blueprint-recovery mechanisms (constrained decoding and CoT extraction) close the empty-blueprint gap across model scales; (4)~systematic evaluation of heterogeneous agent configurations, particularly dedicating a stronger instruction-following model to the Mathematician role; and (5)~larger-scale evaluation to establish statistical significance of the per-benchmark results.
+We believe that the three central design principles of MAS-SHT---program-aided solving cross-checked against an independently constructed declarative blueprint, critic-based peer review over parallel resampling, and deterministic CAS-based verification with evidence-first arbitration in which LLM judgment is confined to evidence ties---are broadly applicable beyond arithmetic word problems and represent a productive direction for LLM reasoning reliability research.
 % ============================================================
 \newpage
 \bibliography{references}
@@ -902,21 +1030,48 @@ CRITICAL RULES:
    Does the result match expected_answer? If not, fix your equations.
 6. Return ONLY valid JSON, no preamble or explanation
 \end{lstlisting}
+\subsection{Chain-of-Thought Extraction Prompt (v11.0)}
+\begin{lstlisting}[caption={Two-step CoT$\to$blueprint extraction prompt (\Cref{sec:blueprint_recovery}). Issued only when blueprint construction returns no equations. The model is handed its own worked solution and asked to convert it into executable structure---an easier task than synthesizing structure from the problem alone. Long solutions are truncated to their first and last 1{,}500 characters before insertion.}]
+You are given a math problem and a worked solution. Convert the
+solution into a structured JSON blueprint a Python program can
+execute to reproduce the answer.
+
+PROBLEM:
+{problem}
+
+WORKED SOLUTION:
+{worked_solution}
+
+Rules:
+- "givens": JSON object mapping snake_case names to the NUMERIC
+  input values (numbers only, no units, no text).
+- "equations": ordered list of Python assignment strings using
+  givens['name'] and earlier results; the LAST line MUST assign
+  to `answer`.
+- "expected_answer": the final numeric answer from the solution.
+
+Output ONLY this JSON, nothing else:
+{"unknown": "what to find", "givens": {"name": number},
+ "equations": ["step1 = givens['a'] + givens['b']",
+               "answer = step1 * 2"],
+ "solution_steps": ["Step 1: ..."],
+ "expected_answer": "number", "distractor_check": "None"}
+\end{lstlisting}
 \subsection{Programmer System Prompt}
-\begin{lstlisting}[caption={Programmer system prompt. The structured input format (TARGET / GIVEN VALUES / SOLUTION STEPS / EQUATIONS) ensures faithful blueprint implementation.}]
-You are an expert Python programmer solving math problems.
+\begin{lstlisting}[caption={Programmer system prompt (v12, PAL-style). The Programmer solves the problem directly; the blueprint is a cross-reference, not a transcription source. The \texttt{givens = \{...\}} first-line convention is what rule-based verification, metamorphic testing, and SIV givens-matching operate on.}]
+You are an expert Python programmer solving math word problems.
 STRICT RULES:
-1. Start with: givens = <exact dict from blueprint>
-2. Implement EACH equation from blueprint IN ORDER
-3. Store final result in variable called 'answer'
-4. Print ONLY the final numeric answer (no units, no text)
-5. Use exact variable names from the blueprint
-INPUT FORMAT provided:
-  TARGET: what we need to find
-  GIVEN VALUES: {"var": value, ...}
-  SOLUTION STEPS: 1. ... 2. ...
-  EQUATIONS TO IMPLEMENT (in order): ...
-  DISTRACTORS TO IGNORE: ... (if any)
+1. Read the PROBLEM carefully and solve it yourself.
+   Trust the PROBLEM text.
+2. Start your code with: givens = {...} -- a dict of the numeric
+   values you extract from the PROBLEM (clear snake_case names).
+3. Compute the solution step by step from those givens using
+   plain Python (math module allowed, nothing else).
+4. Store the final result in a variable called 'answer'
+5. Print ONLY the final numeric answer: print(answer)
+6. A colleague's draft analysis may be provided. Use it to
+   double-check your understanding, but if it conflicts with
+   the PROBLEM, follow the PROBLEM.
 EXAMPLE:
 ```python
 givens = {"initial": 10, "used": 3}
@@ -965,59 +1120,68 @@ OUTPUT FORMAT (strict JSON):
 }
 \end{lstlisting}
 \subsection{Judge System Prompt}
-\begin{lstlisting}[caption={Judge system prompt. Temperature $\tau=0.0$ ensures deterministic selection.}]
-You are a mathematical reasoning Judge. Multiple solution strategies
-were tried for the same problem. Some may have errors.
+\begin{lstlisting}[caption={Constrained Judge system prompt (v12). The judge sees only evidence-tied candidates and must select one by index; any other output is rejected and a deterministic fallback decides. Temperature $\tau=0.0$.}]
+You are a mathematical reasoning Judge. Several solution attempts
+for the same problem produced DIFFERENT answers. Exactly one
+candidate must be selected.
 Evaluation criteria (in order of importance):
-1. CODE EXECUTION: Did the code run successfully?
+1. FAITHFULNESS: Does the candidate use the problem's numbers
+   and conditions correctly?
 2. MATHEMATICAL CORRECTNESS: Are the equations and logic sound?
 3. COMPLETENESS: Does the approach account for ALL conditions?
-4. AGREEMENT: Do multiple strategies agree on an answer?
-5. SIMPLICITY: Among equally valid approaches, prefer simpler.
-First explain your reasoning briefly (2-3 sentences).
-Then write: SELECTED_ANSWER: [[number]]
-Then write: SELECTED_STRATEGY: [[strategy_name]]
+OUTPUT FORMAT (strict):
+First explain your comparison briefly (2-3 sentences).
+Then write EXACTLY one line: SELECTED_CANDIDATE: [[k]]
+where k is the number (1 to N) of the candidate you select.
+Do NOT invent a new answer. You MUST pick one of the presented
+candidates.
 \end{lstlisting}
 \section{Confidence Gate Decision Logic}
 \label{app:gate}
 \begin{algorithm}[H]
-\caption{Confidence Gate (v10.0 with two-layer SIV)}
+\caption{Confidence Gate (v12.0). Baseline disagreement is checked \emph{before} any SIV-driven skip (v10.1 ordering invariant); a negative answer triggers SHT only when no baseline cross-check exists (v12).}
 \label{alg:gate}
 \begin{algorithmic}[1]
 \Require Primary answer $a_p$, Baseline answer $a_b$, Programmer response $r$, Blueprint $B$, SIV result $\sigma$
 \Ensure Boolean \texttt{is\_confident}, reason string
-\If{$\sigma \neq \textsc{None}$}
-    \If{$\sigma.\texttt{execution\_audit\_passed}$ \textbf{and} $\sigma.\texttt{verified}$ \textbf{and} $\sigma.\texttt{confidence} \geq 0.90$}
-        \State \Return \textsc{True}, \texttt{siv\_execution\_consistent}
-        \Comment{Exec.\ fidelity confirmed; NL$\to$math layer untested}
-    \ElsIf{\textbf{not} $\sigma.\texttt{execution\_audit\_passed}$ \textbf{and} $\sigma.\texttt{blueprint\_answer} \neq \textsc{None}$}
-        \State \Return \textsc{False}, \texttt{siv\_execution\_error}
-        \Comment{Programmer deviated from blueprint}
-    \ElsIf{$\sigma.\texttt{invertible}$ \textbf{and} \textbf{not} $\sigma.\texttt{verified}$}
-        \State \Return \textsc{False}, \texttt{siv\_inconsistency:}\texttt{failed\_givens}
-        \Comment{Specific variable(s) inconsistent}
-    \EndIf
-\EndIf
 \If{$a_p = $ ``unknown''}
     \State \Return \textsc{False}, \texttt{programmer\_failed}
 \EndIf
-\If{$a_b = $ ``unknown''}
-    \State \Return \textsc{False}, \texttt{total\_api\_failure}
-\EndIf
-\If{$a_p$ and $a_b$ are numeric \textbf{and} $|a_p - a_b| > 10^{-3}$}
-    \State \Return \textsc{False}, \texttt{baseline\_disagreement}
-\ElsIf{$a_p$ or $a_b$ are non-numeric \textbf{and} $a_p \neq a_b$}
-    \State \Return \textsc{False}, \texttt{baseline\_disagreement}
+\State $b_{\text{failed}} \gets (a_b = \text{``unknown''})$
+\If{\textbf{not} $b_{\text{failed}}$}
+    \If{$a_p$ and $a_b$ are numeric \textbf{and} $|a_p - a_b| > 10^{-3}$}
+        \State \Return \textsc{False}, \texttt{baseline\_disagreement}
+        \Comment{Runs BEFORE SIV skip: only translation-layer check}
+    \ElsIf{$a_p$ or $a_b$ are non-numeric \textbf{and} $a_p \neq a_b$}
+        \State \Return \textsc{False}, \texttt{baseline\_disagreement}
+    \EndIf
 \EndIf
 \If{$r.\texttt{quality\_metrics}[\texttt{"error"}] = $ ``Max attempts reached''}
     \State \Return \textsc{False}, \texttt{repair\_exhaustion}
 \EndIf
-\If{$a_p < 0$ \textbf{and} problem does not contain \{``loss'', ``debt'', ``decrease'', \ldots\}}
-    \State \Return \textsc{False}, \texttt{negative\_answer}
+\If{$\sigma \neq \textsc{None}$}
+    \If{$\sigma.\texttt{invertible}$ \textbf{and} \textbf{not} $\sigma.\texttt{verified}$}
+        \State \Return \textsc{False}, \texttt{siv\_inconsistency:}\texttt{failed\_givens}
+        \Comment{Specific variable(s) inconsistent}
+    \ElsIf{\textbf{not} $\sigma.\texttt{execution\_audit\_passed}$ \textbf{and} $\sigma.\texttt{blueprint\_answer} \neq \textsc{None}$}
+        \State \Return \textsc{False}, \texttt{siv\_execution\_error}
+        \Comment{Program deviates from blueprint evaluation}
+    \EndIf
+\EndIf
+\If{$a_p < 0$ \textbf{and} $b_{\text{failed}}$}
+    \State \Return \textsc{False}, \texttt{negative\_answer\_unverified}
+    \Comment{v12: agreed negatives are evidence, not anomalies}
 \EndIf
 \State $M \gets \max\{|v| \mid v \in B.\texttt{givens},\ v \in \mathbb{R}\}$
 \If{$|a_p| > 10^4 \cdot M$ \textbf{and} $M > 0$}
     \State \Return \textsc{False}, \texttt{magnitude\_anomaly}
+\EndIf
+\If{$b_{\text{failed}}$}
+    \State \Return \textsc{False}, \texttt{baseline\_also\_failed}
+\EndIf
+\If{$\sigma \neq \textsc{None}$ \textbf{and} $\sigma.\texttt{execution\_audit\_passed}$ \textbf{and} $\sigma.\texttt{verified}$ \textbf{and} $\sigma.\texttt{confidence} \geq 0.90$}
+    \State \Return \textsc{True}, \texttt{siv\_execution\_consistent}
+    \Comment{Cross-validated: baseline agrees AND symbolically verified}
 \EndIf
 \State \Return \textsc{True}, \texttt{all\_criteria\_passed}
 \end{algorithmic}
@@ -1025,10 +1189,10 @@ Then write: SELECTED_STRATEGY: [[strategy_name]]
 \section{Triage Algorithm}
 \label{app:triage}
 \begin{algorithm}[H]
-\caption{Majority-Vote Triage}
+\caption{Majority-Vote Triage with Evidence Escalation (v12.0)}
 \label{alg:triage}
 \begin{algorithmic}[1]
-\Require Candidate list $C$ (primary, baseline at conf.~0.5, $\leq 2$ alternatives)
+\Require Candidate list $C$ (primary, baseline at conf.~0.5, blueprint CAS evaluation, $\leq 2$ alternatives)
 \Ensure Winning answer, strategy name, resolution method
 \State $V \gets \{c \in C \mid c.\texttt{code\_success} = \textsc{True} \land c.\texttt{parsed\_answer} \neq \textsc{None}\}$
 \If{$V = \emptyset$}
@@ -1042,7 +1206,13 @@ Then write: SELECTED_STRATEGY: [[strategy_name]]
 \ElsIf{$|G_1| \geq 2$ \textbf{and} $|G_1| > |G_2|$}
     \State \Return $\bigl(G_1[0].\texttt{answer},\ G_1[0].\texttt{strategy},\ \texttt{majority}\bigr)$
 \Else
-    \State \Return $\bigl(\textsc{None},\ \textsc{None},\ \texttt{escalate\_to\_judge}\bigr)$
+    \State Rank groups by evidence tuple $\bigl(\text{votes},\ \text{SIV-verified},\ \text{executed},\ \text{primary},\ \text{baseline}\bigr)$
+    \If{strict lexicographic winner exists}
+        \State \Return $\bigl(G^{*}.\texttt{answer},\ G^{*}.\texttt{strategy},\ \texttt{evidence}\bigr)$
+    \Else
+        \State Judge selects an \emph{index} among tied representatives; invalid output $\Rightarrow$ deterministic fallback (executed primary $\to$ baseline $\to$ any valid)
+        \State \Return $\bigl(\text{selected}.\texttt{answer},\ \text{selected}.\texttt{strategy},\ \texttt{judge}\ \text{or}\ \texttt{judge\_fallback}\bigr)$
+    \EndIf
 \EndIf
 \end{algorithmic}
 \end{algorithm}
@@ -1169,4 +1339,35 @@ It returns \textsc{True} (indicating an error, not a mathematical answer) under 
     \item The response is shorter than 5 characters and does not match a standalone number pattern.
 \end{enumerate}
 This guard is particularly important for preventing HTTP status codes returned during API failures (e.g., a 401 response parsed as the answer ``401.0'') from being recorded as correct answers.
+\section{Blueprint JSON Schema for Constrained Decoding}
+\label{app:schema}
+The schema below is compiled into a token-level acceptor (\texttt{lm-format-enforcer}) and supplied to the local-inference generation loop as a \texttt{prefix\_allowed\_tokens\_fn} (\Cref{sec:blueprint_recovery}).
+The \texttt{reasoning} field is listed first and marked required so that the model produces a free-text scratchpad \emph{before} it is constrained to emit the structured fields; \texttt{givens} is constrained to a numeric-valued object and \texttt{equations} to an array of strings.
+\begin{lstlisting}[language=Python,caption={Blueprint schema (v11.1) used for token-level constrained decoding on the \texttt{local\_hf} backend.}]
+_BLUEPRINT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reasoning":       {"type": "string"},
+        "unknown":         {"type": "string"},
+        "givens":          {"type": "object",
+                            "additionalProperties": {"type": "number"}},
+        "equations":       {"type": "array",
+                            "items": {"type": "string"}},
+        "expected_answer": {"type": "string"},
+    },
+    "required": ["reasoning", "givens", "equations", "expected_answer"],
+}
+\end{lstlisting}
+\section{SIV Evaluation Module}
+\label{app:siv_eval}
+The SIV-specific results of Experiment~3 are produced by a standalone analysis module that consumes the per-problem run logs (which already record the \texttt{siv\_*} columns) and emits one tidy table per research question, without any model or network access.
+It computes five tables:
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Coverage funnel}: the attrition from total problems $\to$ non-empty blueprint $\to$ SIV-audited $\to$ symbolically invertible $\to$ verified. This quantifies how often the inspector actually had a blueprint to check---the truth check for whether SIV is starved on a given model.
+    \item \textbf{Detector metrics}: treating the SIV verdict (Layer~1 execution audit, and the Layer~2 \texttt{verified} flag) as a binary correctness detector, the confusion matrix and derived precision, recall, specificity, and false-positive rate. The false-positive cell isolates exactly the translation-layer errors SIV is blind to by design.
+    \item \textbf{Error-layer decomposition}: among SIV-audited wrong answers, the split into execution-layer (SIV-detectable), translation-layer (NL$\to$math, SIV-blind), and non-invertible (SIV abstained). This is the empirical instantiation of the scope claim of \Cref{sec:siv}.
+    \item \textbf{Confident-skip efficacy}: accuracy and average LLM-call count for the SIV-confident-skip group versus the went-to-SHT group, quantifying the cost saved without accuracy loss.
+    \item \textbf{Ablation}: the accuracy and cost delta between the full system and MAS-NoSIV, with a McNemar test on the paired per-problem outcomes.
+\end{enumerate}
+Because ``SIV ran'' cannot be read from a single column (a non-invertible chain leaves the audit verdict null even though SIV executed), the module detects it as the disjunction of three signals: a non-null invertibility flag, a non-null execution-audit verdict, or a positive given count.
 \end{document}

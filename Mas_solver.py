@@ -1,6 +1,70 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 10.2: Small Open Math Models + Ablation Flags
+VERSION 12.0: Verification-Weighted Arbitration
+
+CHANGELOG v12.0 (over v11.4) — driven by the n=150 Kaggle pilot
+(qwen_math_7b_local, 2026-07-02). Pilot diagnosis: confident_skip path 96%
+accurate (101/150 problems), unanimous 89%, but the judge triage path scored
+15% on 40 problems where its own internal baseline scored 42.5% — the LLM
+judge was the single component destroying the system (16 regressions vs 6
+fixes; final 74.0% vs PAL 88.0%). Fixes:
+- [FIX][CRITICAL] v11.4 SIV-anchor guard `(execution_rel_error or 1.0) < 1e-3`
+        never fired on a PERFECT audit: rel_error == 0.0 is falsy, so
+        `0.0 or 1.0` evaluated to 1.0 and the anchor was skipped exactly when
+        SIV evidence was strongest. Confirmed in pilot: gsm-hard_1125
+        (rel_err=5.5e-4) was anchored → fixed; gsm-hard_542 (rel_err=0.0,
+        blueprint answer == gold) was NOT anchored → judge output "3".
+        Now uses an explicit `is not None` check.
+- [FIX][CRITICAL] _judge_hypotheses: judge is now CONSTRAINED to select one
+        of the presented candidates by index (SELECTED_CANDIDATE: [[k]]).
+        Previously, when the SELECTED_ANSWER tag regex failed, the code fell
+        back to _extract_last_number(judge_free_text) — which returned
+        candidate indexes, confidences and other trailing junk as "answers"
+        (pilot regressions with predicted ∈ {1,2,3,4,5,8} against
+        3-4 digit golds). A free-form number that matches no candidate is
+        now rejected; on any parse failure the caller falls back to
+        deterministic evidence-based selection, never to text scraping.
+- [NEW] Evidence-based arbitration (_select_by_evidence): before the LLM
+        judge is consulted, candidate answer groups are scored on
+        deterministic evidence only: (#independent votes, CAS/blueprint
+        agreement, SIV full verification, executed-code support, baseline
+        support). A strict winner is selected without any LLM call
+        (triage_result='evidence'). The LLM judge remains only as a
+        tie-breaker among the top-scored groups.
+- [NEW] Blueprint-evaluation candidate: when SIV's execution audit produced
+        a numeric blueprint answer, that value enters SHT as a zero-cost
+        candidate ('blueprint_eval'). Together with the PAL-style Programmer
+        (below) this gives three INDEPENDENT derivations of the answer —
+        free program, declarative blueprint (CAS-evaluated), zero-shot CoT —
+        and majority/evidence voting over them is meaningful.
+- [CHANGE] Programmer is now PAL-style: it solves the PROBLEM directly
+        (the pilot's plain-PAL baseline scored 88.0% vs 74.0% for the full
+        pipeline) and receives the Architect blueprint as a colleague's
+        draft to cross-check, not as equations to transcribe. The
+        `givens = {...}` first-line convention is kept so rule-based
+        verification, metamorphic testing and SIV keep working. This makes
+        SIV's execution audit a genuine independent cross-check (program vs
+        blueprint) instead of a tautology (blueprint vs itself).
+- [FIX] Primary-candidate validity in SHT is now based on actual code
+        execution success, not on verification-adjusted confidence. The old
+        `confidence > 0.5` check silently dropped the primary answer from
+        arbitration whenever rule-based verification disagreed with the
+        blueprint (confidence floor 0.3) — precisely the cases where
+        arbitration matters most.
+- [REMOVED] SymPy post-verification REPLACEMENT of the Programmer answer
+        (pilot accuracy of that path: 33%, vs 50% for the answers it
+        replaced). SymbolicSolver output now enters SHT as a candidate via
+        the blueprint_eval mechanism instead of overwriting the primary.
+        The programmer-hard-fail SymPy fallback (68.8% in pilot) is kept.
+- [FIX] _confidence_gate criterion 5: a negative primary answer no longer
+        triggers SHT when the baseline AGREES with it (two independent
+        paths agreeing on a negative is evidence, not an anomaly — GSM-Hard
+        golds are frequently negative; pilot: b_pal 83% vs MAS 17% on
+        negative-gold problems). Negative answers trigger SHT only when the
+        baseline also failed (no cross-check available).
+- [NEW] SOLVER_VERSION constant exported for experiment provenance; the
+        notebook runner stamps every CSV row and auto-discards checkpoints
+        written by a different solver version.
 
 CHANGELOG v10.2 (over v10.1):
 - [NEW] HuggingFace Inference Providers Router support (provider="huggingface").
@@ -95,6 +159,11 @@ from __future__ import annotations
 
 import os
 import re
+
+# [v12.0] Experiment provenance: stamped into every CSV row by the notebook
+# runner; checkpoints from a different solver version are auto-discarded so
+# results never mix selection policies.
+SOLVER_VERSION = "12.0"
 import json
 import time
 import random
@@ -2550,21 +2619,29 @@ Output ONLY this JSON, nothing else:
         
         blueprint_text = _format_blueprint_for_programmer(blueprint)
         
-        sys_msg = """You are an expert Python programmer solving math problems.
+        # [v12.0] PAL-style prompt. The Programmer solves the PROBLEM directly
+        # (single-call PAL scored 88.0% in the n=150 pilot vs 74.0% for the
+        # blueprint-transcribing pipeline). The Architect blueprint is shown as
+        # a colleague's draft to cross-check against — NOT as equations to
+        # transcribe — so a mistranslated blueprint no longer poisons the
+        # Programmer, and SIV's execution audit becomes a genuine independent
+        # cross-check (free program vs declarative blueprint).
+        # The `givens = {...}` first-line convention is kept: rule-based
+        # verification, metamorphic testing and SIV givens-matching depend on it.
+        sys_msg = """You are an expert Python programmer solving math word problems.
 
 STRICT RULES:
-1. Start with: givens = <the exact dict from the blueprint>
-2. Implement EACH equation from the blueprint IN ORDER
-3. Store the final result in a variable called 'answer'
-4. Print ONLY the final numeric answer (no explanations, no units)
-5. Use the exact variable names from the blueprint
+1. Read the PROBLEM carefully and solve it yourself. Trust the PROBLEM text.
+2. Start your code with: givens = {...}  — a dict of the numeric values you
+   extract from the PROBLEM (clear snake_case names).
+3. Compute the solution step by step from those givens using plain Python
+   (math module allowed, nothing else).
+4. Store the final result in a variable called 'answer'
+5. Print ONLY the final numeric answer: print(answer) — no explanations, no units
+6. A colleague's draft analysis may be provided. Use it to double-check your
+   understanding, but if it conflicts with the PROBLEM, follow the PROBLEM.
 
 EXAMPLE:
-Given blueprint equations:
-  remaining = givens['initial'] - givens['used']
-  answer = remaining
-
-Your code:
 ```python
 givens = {"initial": 10, "used": 3}
 remaining = givens['initial'] - givens['used']
@@ -2576,14 +2653,14 @@ OUTPUT FORMAT:
 - Python code in ```python ... ``` block
 - After code, write: ANSWER: [[<number>]]
 """
-        
-        user_msg = f"""ORIGINAL PROBLEM:
+
+        user_msg = f"""PROBLEM:
 {problem}
 
-ARCHITECT'S BLUEPRINT:
+COLLEAGUE'S DRAFT ANALYSIS (may contain errors — cross-check, do not transcribe):
 {blueprint_text}
 
-Write the Python code to solve this. Follow the blueprint equations exactly.
+Write a Python program that solves the PROBLEM and prints the final numeric answer.
 """
         
         repair_feedback = ""
@@ -2911,8 +2988,15 @@ Write the Python code to solve this. Follow the blueprint equations exactly.
 
         # Criterion 5: Sanity checks
         if primary_num is not None:
-            if primary_num < 0:
-                return False, "negative_answer"
+            # [v12.0] A negative answer is only suspicious when there is no
+            # cross-check: reaching this line means the baseline either agreed
+            # (criterion 2 didn't fire) or failed. Two independent paths
+            # agreeing on a negative value is evidence, not an anomaly —
+            # GSM-Hard golds are frequently negative and the old unconditional
+            # trigger sent every agreed-negative into SHT (pilot: 17% MAS vs
+            # 83% PAL accuracy on negative-gold problems).
+            if primary_num < 0 and baseline_failed:
+                return False, "negative_answer_unverified"
 
             givens = blueprint.get("givens", {})
             if givens:
@@ -3110,37 +3194,157 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
 
         return None, None, "no_majority"
 
-    def _judge_hypotheses(self, problem: str,
-                          candidates: List[HypothesisResult]) -> Tuple[str, str, str]:
-        candidate_summaries = []
-        for i, c in enumerate(candidates):
-            if not c.code_success:
-                status = f"FAILED (error: {c.execution_output[:100]})"
-            else:
-                status = f"SUCCESS → answer = {c.answer}"
+    # -------------------------------------------------------------------------
+    # [v12.0] Evidence-based arbitration
+    # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _answers_match(a: Optional[float], b: Optional[float]) -> bool:
+        """Same tolerance as the triage grouping (abs 1e-3), plus a relative
+        tolerance so large GSM-Hard magnitudes with float noise still match."""
+        if a is None or b is None:
+            return False
+        return abs(a - b) < max(1e-3, 1e-9 * max(abs(a), abs(b)))
+
+    def _group_valid_candidates(self, candidates: List[HypothesisResult]
+                                ) -> List[Tuple[float, List[HypothesisResult]]]:
+        """Group executable/parsed candidates by numeric answer."""
+        valid = [c for c in candidates if c.code_success and c.parsed_answer is not None]
+        groups: List[Tuple[float, List[HypothesisResult]]] = []
+        for c in valid:
+            for rep, members in groups:
+                if self._answers_match(c.parsed_answer, rep):
+                    members.append(c)
+                    break
+            else:
+                groups.append((c.parsed_answer, [c]))
+        return groups
+
+    def _evidence_score(self, rep: float, members: List[HypothesisResult],
+                        siv_result: Optional[SIVResult]) -> Tuple[int, int, int, int, int]:
+        """
+        Deterministic evidence for one answer group. Lexicographic order:
+          1. votes      — independent derivations agreeing on this answer
+                          (free program / CoT baseline / CAS-evaluated blueprint
+                          / Critic alternatives each contribute one vote)
+          2. siv_full   — SIV inverse layer fully verified this answer
+                          (audit passed + givens reconstruct, conf ≥ 0.9);
+                          extra evidence beyond the forward blueprint vote
+          3. executed   — group contains an answer produced by executed code
+                          (pilot: on program-vs-CoT disagreements the program
+                          was right 15/29, the CoT 4/29)
+          4. primary    — group contains the primary Programmer answer
+          5. baseline   — group contains the zero-shot baseline
+        """
+        ids = {m.hypothesis_id for m in members}
+        siv_full = 0
+        if (siv_result is not None and siv_result.execution_audit_passed
+                and siv_result.verified and siv_result.confidence >= 0.90
+                and siv_result.blueprint_answer is not None):
+            try:
+                if self._answers_match(rep, float(siv_result.blueprint_answer)):
+                    siv_full = 1
+            except (TypeError, ValueError):
+                pass
+        executed = 1 if any(m.code for m in members) else 0
+        return (len(members), siv_full, executed,
+                1 if "primary" in ids else 0,
+                1 if "baseline" in ids else 0)
+
+    def _select_by_evidence(self, candidates: List[HypothesisResult],
+                            siv_result: Optional[SIVResult]
+                            ) -> Tuple[Optional[HypothesisResult], List[HypothesisResult], str]:
+        """
+        [v12.0] Arbitrate WITHOUT an LLM: rank answer groups by verifiable
+        evidence and return a strict winner if one exists.
+
+        Returns (winner, tied_representatives, note):
+          winner is None when the top score is shared — tied_representatives
+          then holds one representative per tied group for the LLM tie-break.
+        """
+        groups = self._group_valid_candidates(candidates)
+        if not groups:
+            return None, [], "no_valid_candidates"
+
+        scored = sorted(
+            ((self._evidence_score(rep, members, siv_result), rep, members)
+             for rep, members in groups),
+            key=lambda t: t[0], reverse=True,
+        )
+
+        def _representative(members: List[HypothesisResult]) -> HypothesisResult:
+            rank = {"primary": 0, "baseline": 1, "blueprint_eval": 2}
+            return sorted(members, key=lambda m: rank.get(m.hypothesis_id, 3))[0]
+
+        top_score = scored[0][0]
+        tied = [(rep, members) for score, rep, members in scored if score == top_score]
+        note = "; ".join(
+            f"{rep:.6g}: votes={s[0]} siv={s[1]} exec={s[2]} prim={s[3]} base={s[4]}"
+            for s, rep, _ in scored[:4]
+        )
+        if len(tied) == 1:
+            return _representative(tied[0][1]), [], note
+        return None, [_representative(members) for _, members in tied], note
+
+    def _deterministic_fallback(self, candidates: List[HypothesisResult],
+                                siv_result: Optional[SIVResult]) -> HypothesisResult:
+        """Last-resort pick when even the judge is unusable. Never scrapes
+        free text: preference is executed primary → baseline → any valid
+        candidate → primary object regardless."""
+        by_id = {c.hypothesis_id: c for c in candidates}
+        primary = by_id.get("primary")
+        if primary is not None and primary.code_success and primary.parsed_answer is not None:
+            return primary
+        baseline = by_id.get("baseline")
+        if baseline is not None and baseline.parsed_answer is not None:
+            return baseline
+        for c in candidates:
+            if c.code_success and c.parsed_answer is not None:
+                return c
+        return primary if primary is not None else candidates[0]
+
+    def _judge_hypotheses(self, problem: str,
+                          candidates: List[HypothesisResult]
+                          ) -> Tuple[Optional[HypothesisResult], str]:
+        """
+        [v12.0] LLM judge as a CONSTRAINED tie-breaker.
+
+        The judge sees only candidates that already tied on deterministic
+        evidence and must reply with the INDEX of one of them
+        (SELECTED_CANDIDATE: [[k]]). A free-form SELECTED_ANSWER is accepted
+        only when it numerically matches one of the presented candidates.
+        Anything else returns (None, reasoning) and the caller falls back to
+        deterministic selection — the judge can no longer inject numbers that
+        no solver produced (the pilot's free-form judge did exactly that,
+        scoring 15% on 40 problems against its own baseline's 42.5%).
+        """
+        judgeable = [c for c in candidates if c.parsed_answer is not None]
+        if not judgeable:
+            return None, "no judgeable candidates"
+        if len(judgeable) == 1:
+            return judgeable[0], "single judgeable candidate"
+
+        candidate_summaries = []
+        for i, c in enumerate(judgeable):
             summary = f"""--- Candidate {i+1}: {c.strategy_name} ({c.hypothesis_id}) ---
-Status: {status}
+Answer: {c.answer}
 Equations: {json.dumps(c.blueprint.get('equations', []))}
 Code (first 300 chars): {(c.code or 'N/A')[:300]}
 """
             candidate_summaries.append(summary)
 
-        sys_msg = """You are a mathematical reasoning Judge. Multiple solution strategies were tried for the same problem. Some may have errors.
-
-Your task: Evaluate each candidate's reasoning and select the MOST RELIABLE answer.
+        sys_msg = f"""You are a mathematical reasoning Judge. Several solution attempts for the same problem produced DIFFERENT answers. Exactly one candidate must be selected.
 
 Evaluation criteria (in order of importance):
-1. CODE EXECUTION: Did the code run successfully? Discard failed candidates.
+1. FAITHFULNESS: Does the candidate use the problem's numbers and conditions correctly?
 2. MATHEMATICAL CORRECTNESS: Are the equations and logic sound?
 3. COMPLETENESS: Does the approach account for ALL conditions in the problem?
-4. AGREEMENT: If multiple strategies agree on an answer, that's strong evidence.
-5. SIMPLICITY: Among equally valid approaches, prefer the simpler one.
 
-OUTPUT FORMAT:
-First explain your reasoning briefly (2-3 sentences).
-Then write: SELECTED_ANSWER: [[number]]
-Then write: SELECTED_STRATEGY: [[strategy_name]]"""
+OUTPUT FORMAT (strict):
+First explain your comparison briefly (2-3 sentences).
+Then write EXACTLY one line: SELECTED_CANDIDATE: [[k]]
+where k is the number (1 to {len(judgeable)}) of the candidate you select.
+Do NOT invent a new answer. You MUST pick one of the presented candidates."""
 
         user_msg = f"""PROBLEM:
 {problem}
@@ -3148,7 +3352,7 @@ Then write: SELECTED_STRATEGY: [[strategy_name]]"""
 CANDIDATES:
 {''.join(candidate_summaries)}
 
-Evaluate and select the most reliable answer."""
+Select the most reliable candidate."""
 
         msgs = [
             {"role": "system", "content": sys_msg},
@@ -3156,26 +3360,30 @@ Evaluate and select the most reliable answer."""
         ]
 
         raw = self._get_client(AgentRole.JUDGE).call_model(msgs, temperature=0.0, max_tokens=500)
-        
+
         # [FIX v7.1] Check for error response from judge
         if _is_error_response(raw):
             logger.warning("Judge returned error response")
-            return "unknown", "judge_error", "Judge API call failed"
-        
+            return None, "Judge API call failed"
+
         raw_text = str(raw)
 
-        answer_match = re.search(r'SELECTED_ANSWER:\s*\[\[([^\]]+)\]\]', raw_text)
-        strategy_match = re.search(r'SELECTED_STRATEGY:\s*\[\[([^\]]+)\]\]', raw_text)
+        idx_match = re.search(r'SELECTED_CANDIDATE:\s*\[\[?\s*(\d+)\s*\]?\]', raw_text)
+        if idx_match:
+            k = int(idx_match.group(1))
+            if 1 <= k <= len(judgeable):
+                return judgeable[k - 1], raw_text[:500]
 
-        if answer_match:
-            judge_answer = answer_match.group(1).strip()
-        else:
-            num = _extract_last_number(raw_text)
-            judge_answer = str(num) if num is not None else "unknown"
+        # Tolerate the legacy tag, but ONLY if it names an existing candidate.
+        ans_match = re.search(r'SELECTED_ANSWER:\s*\[\[([^\]]+)\]\]', raw_text)
+        if ans_match:
+            num = _extract_last_number(ans_match.group(1))
+            for c in judgeable:
+                if self._answers_match(num, c.parsed_answer):
+                    return c, raw_text[:500]
 
-        judge_strategy = strategy_match.group(1).strip() if strategy_match else "judge_selection"
-
-        return judge_answer, judge_strategy, raw_text[:500]
+        logger.warning("Judge output unparseable/invalid — deterministic fallback will be used")
+        return None, raw_text[:500]
 
     def _structured_hypothesis_testing(self, problem: str, expected: str,
                                        primary_blueprint: dict,
@@ -3193,12 +3401,23 @@ Evaluate and select the most reliable answer."""
             final_strategy="primary",
         )
 
+        # [v12.0] Validity from ACTUAL execution success, not from
+        # verification-adjusted confidence: the old `confidence > 0.5` check
+        # silently dropped the primary answer from arbitration whenever
+        # rule-based verification disagreed with the blueprint (floor 0.3) —
+        # exactly the disagreement cases where arbitration matters most.
+        primary_exec_ok = (
+            str(primary_answer).strip().lower() != "unknown"
+            and primary_num is not None
+            and (bool(programmer_response.quality_metrics.get("execution_output"))
+                 or str(programmer_response.agent).startswith("SymPy"))
+        )
         primary_candidate = HypothesisResult(
             hypothesis_id="primary",
             strategy_name="primary_blueprint",
             blueprint=primary_blueprint,
             code=programmer_response.reasoning_trace,
-            code_success=programmer_response.confidence > 0.5,
+            code_success=primary_exec_ok,
             execution_output=programmer_response.quality_metrics.get("execution_output", ""),
             answer=primary_answer,
             parsed_answer=primary_num,
@@ -3221,6 +3440,29 @@ Evaluate and select the most reliable answer."""
             agent_response=None,
         )
         log.candidates.append(baseline_candidate)
+
+        # [v12.0] Blueprint-evaluation candidate: the CAS already evaluated the
+        # Architect's equations during the SIV execution audit — that numeric
+        # value is a third INDEPENDENT derivation (free program / declarative
+        # blueprint / zero-shot CoT) and it costs zero LLM calls. Majority and
+        # evidence voting over three independent paths is meaningful where
+        # two-way primary-vs-baseline disagreement was not.
+        if (self.enable_siv and siv_result is not None
+                and siv_result.blueprint_answer is not None):
+            bp_num = _extract_last_number(str(siv_result.blueprint_answer))
+            if bp_num is not None:
+                log.candidates.append(HypothesisResult(
+                    hypothesis_id="blueprint_eval",
+                    strategy_name="architect_blueprint_cas",
+                    blueprint=primary_blueprint,
+                    code=None,
+                    code_success=True,
+                    execution_output=f"CAS evaluation of blueprint equations = {bp_num}",
+                    answer=str(bp_num),
+                    parsed_answer=bp_num,
+                    confidence=siv_result.confidence if siv_result.verified else 0.6,
+                    agent_response=None,
+                ))
 
         is_confident, gate_reason = self._confidence_gate(
             primary_answer, baseline_answer, programmer_response, primary_blueprint,
@@ -3294,15 +3536,41 @@ Evaluate and select the most reliable answer."""
             log.api_calls_used = api_calls
             return log
 
-        judge_answer, judge_strategy, judge_reasoning = self._judge_hypotheses(
-            problem, log.candidates
+        # [v12.0] Deterministic evidence-based arbitration BEFORE any LLM
+        # judgment: rank answer groups by verifiable evidence (votes, SIV
+        # verification, executed code, primary/baseline support). A strict
+        # winner is selected with zero additional LLM calls.
+        winner, tied_reps, evidence_note = self._select_by_evidence(
+            log.candidates, siv_result
         )
+        if winner is not None:
+            log.triage_result = "evidence"
+            log.judge_reasoning = f"evidence ranking: {evidence_note}"[:500]
+            log.final_answer = winner.answer
+            log.final_strategy = winner.strategy_name
+            log.api_calls_used = api_calls
+            return log
+
+        # [v12.0] LLM judge only as a tie-breaker among evidence-tied
+        # candidates, constrained to select by index. On any parse failure or
+        # out-of-set answer the deterministic fallback decides — the judge can
+        # no longer inject numbers that no solver produced.
+        judge_pool = tied_reps if tied_reps else [
+            c for c in log.candidates if c.parsed_answer is not None
+        ]
+        judge_pick, judge_reasoning = self._judge_hypotheses(problem, judge_pool)
         api_calls += 1
 
-        log.triage_result = "judge"
-        log.judge_reasoning = judge_reasoning
-        log.final_answer = judge_answer
-        log.final_strategy = judge_strategy
+        log.judge_reasoning = f"[{evidence_note}] {judge_reasoning}"[:500]
+        if judge_pick is not None:
+            log.triage_result = "judge"
+            log.final_answer = judge_pick.answer
+            log.final_strategy = judge_pick.strategy_name
+        else:
+            fallback = self._deterministic_fallback(log.candidates, siv_result)
+            log.triage_result = "judge_fallback"
+            log.final_answer = fallback.answer
+            log.final_strategy = f"{fallback.strategy_name}_fallback"
         log.api_calls_used = api_calls
         return log
 
@@ -3422,30 +3690,20 @@ Evaluate and select the most reliable answer."""
                 }
             )
             
+            # [v12.0] The SymPy post-verification REPLACEMENT is gone. In the
+            # n=150 pilot the "SymPy (post-verification fallback)" answers were
+            # 33% accurate while the Programmer answers they overwrote were 50%
+            # accurate — replacing a working executed program because the
+            # rule-based checker disagreed with the (possibly wrong) blueprint
+            # was a net loss. The blueprint's CAS evaluation still participates
+            # in arbitration as the 'blueprint_eval' SHT candidate, and the
+            # verification verdict still lowers confidence / lands in the CSV;
+            # it just no longer overwrites the primary answer pre-arbitration.
             if not verification_passed:
-                logger.info(f"Process verification FAILED (conf={verification_confidence:.2f}). "
-                            f"Trying SymPy as alternative...")
-                if SYMPY_AVAILABLE and blackboard_logic.get("equations"):
-                    sym_ok, sym_ans, sym_trace = SymbolicSolver.solve_from_blueprint(blackboard_logic)
-                    if sym_ok:
-                        sym_num = _extract_last_number(sym_ans)
-                        if sym_num is not None:
-                            programmer_response = AgentResponse(
-                                agent="SymPy (post-verification fallback)",
-                                answer=str(sym_num),
-                                parsed=str(sym_num),
-                                confidence=0.75,
-                                reasoning_trace=sym_trace[:500],
-                                quality_metrics={
-                                    "solver": "sympy_post_verification",
-                                    "original_answer": programmer_response.answer,
-                                    "verification_rejection": verification_feedback[:200],
-                                }
-                            )
-                            # [v10.0] Re-run SIV on the SymPy answer
-                            # [v10.2] Honour enable_siv flag here too (B5 ablation)
-                            if self.enable_siv:
-                                siv_result = SymbolicInverseVerifier.verify(blackboard_logic, sym_num)
+                logger.info(
+                    f"Process verification FAILED (conf={verification_confidence:.2f}). "
+                    f"Keeping Programmer answer; blueprint CAS value arbitrates in SHT."
+                )
 
         # Step 4: Structured Hypothesis Testing (with SIV integration)
         hypothesis_log = None
@@ -3465,11 +3723,20 @@ Evaluate and select the most reliable answer."""
             # the SIV-anchored answer from the primary blueprint should win.
             # Guard: only override when SHT actually changed the answer (avoids
             # no-op writes) and SIV rel_error is essentially zero (< 0.1%).
+            # [v12.0][CRITICAL FIX] `(rel_error or 1.0) < 1e-3` never fired on a
+            # PERFECT audit: 0.0 is falsy, so `0.0 or 1.0` → 1.0 and the anchor
+            # was skipped exactly when the evidence was strongest. Pilot proof:
+            # gsm-hard_1125 (rel_err=5.5e-4) anchored → correct; gsm-hard_542
+            # (rel_err=0.0, blueprint answer == gold) NOT anchored → judge
+            # emitted "3". Explicit None check below.
+            _siv_rel_err = (siv_result.execution_rel_error
+                            if siv_result is not None else None)
             if (siv_result is not None
                     and siv_result.execution_audit_passed
                     and siv_result.verified
                     and siv_result.blueprint_answer is not None
-                    and (siv_result.execution_rel_error or 1.0) < 1e-3):
+                    and _siv_rel_err is not None
+                    and _siv_rel_err < 1e-3):
                 _siv_str = str(siv_result.blueprint_answer)
                 _siv_num = _extract_last_number(_siv_str)
                 _mas_num = _extract_last_number(str(mas_answer))
