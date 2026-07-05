@@ -37,6 +37,33 @@ most of the shortfall:
   the v12.0 run's own CSV, not to a second full run. The next Kaggle
   execution is the first empirical measurement of v12.1.
 
+NOTE — post-v12.1 scope correction (documentation/evaluation only, no
+solve()/SHT behavior change, SOLVER_VERSION unchanged at "12.1"):
+Analyzing the v12.0 run showed SIV Layer 2 (fault localization) genuinely
+fires on real multi-variable blueprints only 1/150 times — far too rarely to
+validate empirically from field data. A new controlled fault-injection suite
+(test_siv_fault_injection.py) corrupts one given at a time across 12
+synthetic blueprints (37 single-given corruptions, 1-5 used givens each) and
+calls SymbolicInverseVerifier.verify() directly. Result: recall (the true
+fault is always present in failed_givens) = 100%; exclusion (declared-but-
+unused givens correctly separated from used ones) = 100%; but exact
+isolation (failed_givens names ONLY the corrupted variable) = 0% whenever
+2+ givens are used, with mean precision landing at exactly 1/n_used (50% at
+n=2, down to 20% at n=5). This is a structural property, not a bug: every
+MAS-SHT blueprint's equations collapse to one scalar expression
+`answer = f(g1,...,gn)`, and holding all other givens fixed at their
+declared values while inverting for one at a time generically shows EVERY
+used given as inconsistent whenever the forward audit fails — not just the
+truly corrupted one. siv_module.py's docstrings, SIVResult.failed_givens
+field doc, and get_error_localization_report() are corrected to describe
+Layer 2 honestly: a validated distractor/relevance filter and an implicated-
+variable SUPERSET (never misses the true fault), not a point localizer. The
+paper's claims are corrected to match (removed: "identifies precisely which
+variable is inconsistent" / "per-variable fault localization" as a FOBAR
+differentiator; added: the quantified fault-injection methodology and
+numbers above as an honest, thesis-worthy validation of what Layer 2 does
+and does not deliver).
+
 CHANGELOG v12.0 (over v11.4) — driven by the n=150 Kaggle pilot
 (qwen_math_7b_local, 2026-07-02). Pilot diagnosis: confident_skip path 96%
 accurate (101/150 problems), unanimous 89%, but the judge triage path scored

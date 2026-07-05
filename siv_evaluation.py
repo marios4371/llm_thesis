@@ -25,11 +25,18 @@ always because the Mathematician produced an *empty blueprint* (no equations /
 no numeric givens). That regime is the single most important thing to surface,
 so it is reported first as a coverage funnel.
 
-Five public functions, each returning a tidy DataFrame (so they drop straight
+Six public functions, each returning a tidy DataFrame (so they drop straight
 into a thesis table), plus a `siv_report` that bundles them into markdown:
 
     siv_coverage(df)               -> the funnel: empty blueprint -> SIV ran ->
-                                      invertible -> verified.
+                                      invertible -> verified. [v12.2] Also splits
+                                      "SIV ran" into GENUINE (>=2 used givens,
+                                      not the local_hf tautological fallback) vs
+                                      DEGENERATE (single given, e.g. the CoT-
+                                      extraction passthrough `{"answer": X}`) —
+                                      conflating these inflated an early "100%
+                                      accurate when SIV-verified" headline number
+                                      that was actually 11/12 degenerate cases.
     siv_detector_metrics(df)       -> SIV's execution audit (and Layer-2 verdict)
                                       as a binary detector of answer correctness:
                                       confusion matrix + precision/recall/specificity.
@@ -38,6 +45,18 @@ into a thesis table), plus a `siv_report` that bundles them into markdown:
                                       translation-layer (NL->math, SIV-blind).
                                       This is the empirical version of the paper's
                                       central scope-limitation claim.
+    siv_fault_localization_scope(df) -> [v12.2] among rows where the audit
+                                      FAILED, how many have failed_givens == the
+                                      full set of used givens (i.e. Layer 2 did
+                                      not narrow down a single culprit) vs a
+                                      strict subset. Companion to the controlled
+                                      fault-injection suite in
+                                      test_siv_fault_injection.py (which found
+                                      0% exact isolation, 100% recall, precision
+                                      = 1/n_used, on synthetic single-variable
+                                      corruptions) — this function checks whether
+                                      the same "all used givens flagged together"
+                                      pattern holds on the real run's field data.
     siv_skip_efficacy(df)          -> does the confident-skip path save API calls
                                       without losing accuracy? (full system only)
     siv_ablation(full_df, no_siv_df) -> accuracy + cost delta of turning SIV on,
@@ -145,6 +164,33 @@ def _siv_ran_mask(df: pd.DataFrame) -> pd.Series:
     return ran.astype(bool)
 
 
+def _genuine_mask(df: pd.DataFrame) -> pd.Series:
+    """[v12.2] Among SIV-audited rows, which reflect a GENUINE multi-variable
+    blueprint rather than the degenerate single-given tautological fallback?
+
+    The `local_hf_fallback` passthrough (Mas_solver: blueprint construction
+    fully failed, so `givens = {"answer": <last CoT number>}` is synthesized to
+    keep an answer flowing) trivially satisfies "SIV ran" — there is exactly
+    one given, so its own single-variable reconstruction check is close to a
+    no-op. A first pass at this evaluation reported "SIV-verified => 100%
+    accurate" without excluding these: 11 of the 12 "verified" rows in the
+    first full v12.0 run were this degenerate case, not genuine multi-equation
+    verification (only 1/12 was). We define "genuine" as >=2 numeric givens
+    (siv_givens_total) AND local_hf_fallback != True where that column exists;
+    if local_hf_fallback is unavailable we fall back to the givens_total>=2
+    criterion alone (a slightly looser but still much more honest cut than no
+    split at all).
+    """
+    ran = _siv_ran_mask(df)
+    if "siv_givens_total" not in df.columns:
+        return pd.Series(False, index=df.index)
+    multi = _to_num(df["siv_givens_total"]).fillna(0) >= 2
+    genuine = ran & multi
+    if "local_hf_fallback" in df.columns:
+        genuine = genuine & ~_to_bool(df["local_hf_fallback"]).fillna(False)
+    return genuine.astype(bool)
+
+
 # =====================================================================
 # 1) Coverage funnel
 # =====================================================================
@@ -175,6 +221,14 @@ def siv_coverage(df: pd.DataFrame) -> pd.DataFrame:
     verified = _to_bool(df.get("siv_verified", pd.Series(index=df.index)))
     n_verified = int((verified.fillna(False) & ran).sum())
 
+    # [v12.2] genuine (>=2 used givens, not the tautological single-given
+    # fallback) vs degenerate split — see _genuine_mask docstring.
+    genuine = _genuine_mask(df)
+    n_genuine = int(genuine.sum())
+    n_degenerate = int((ran & ~genuine).sum())
+    n_genuine_verified = int((genuine & verified.fillna(False)).sum())
+    n_degenerate_verified = int((ran & ~genuine & verified.fillna(False)).sum())
+
     def row(stage, k):
         return {
             "stage": stage,
@@ -187,8 +241,12 @@ def siv_coverage(df: pd.DataFrame) -> pd.DataFrame:
         row("total_problems", n),
         row("blueprint_empty (SIV could not run)", n - n_audited),
         row("audited_by_siv", n_audited),
+        row("  of which: genuine (>=2 used givens)", n_genuine),
+        row("  of which: degenerate (1 given / tautological fallback)", n_degenerate),
         row("invertible_chain", n_invertible),
         row("verified (all solvable givens matched)", n_verified),
+        row("  of which: genuine-verified", n_genuine_verified),
+        row("  of which: degenerate-verified", n_degenerate_verified),
     ])
 
 
@@ -320,6 +378,60 @@ def error_layer_decomposition(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =====================================================================
+# 3b) Layer-2 isolation scope, on real field data (v12.2)
+# =====================================================================
+
+def siv_fault_localization_scope(df: pd.DataFrame) -> pd.DataFrame:
+    """[v12.2] Does Layer 2 isolate a single culprit, or flag every used given?
+
+    Companion to the controlled synthetic evaluation in
+    test_siv_fault_injection.py (12 blueprints, 37 single-given corruptions:
+    recall=100%, exact isolation=0% whenever 2+ givens are used, mean
+    precision=1/n_used). That suite proves the STRUCTURAL limitation
+    directly; this function checks whether the same pattern — every used
+    given getting flagged together, rather than a narrowed-down subset — also
+    shows up in the field data from an actual run, restricted to rows where
+    the execution audit FAILED and at least one given was solvable.
+
+    Columns: n_failed_givens, n_solvable_givens, matches_full_used_set,
+             count, pct.
+    """
+    ran = _siv_ran_mask(df)
+    audit = _to_bool(df.get("siv_execution_audit_passed", pd.Series(index=df.index)))
+    failed_mask = ran & (audit == False)  # noqa: E712 (nullable bool)
+    sub = df[failed_mask].copy()
+    if len(sub) == 0:
+        return pd.DataFrame([{"n_failed_givens": None, "n_solvable_givens": None,
+                              "matches_full_used_set": None, "count": 0, "pct": float("nan"),
+                              "note": "no rows with a failed execution audit"}])
+
+    failed_lists = sub.get("siv_failed_givens", pd.Series([""] * len(sub), index=sub.index)).map(_parse_list)
+    n_matched = _to_num(sub.get("siv_givens_matched", pd.Series(index=sub.index))).fillna(0)
+    n_failed = failed_lists.map(len)
+    # [v12.2 FIX] siv_givens_total counts ALL declared numeric givens, INCLUDING
+    # unused/distractor ones (siv_module: `total = len(numeric_givens)`, not the
+    # solvable subset) -- using it directly as "n_solvable" under-classified most
+    # rows whenever any unused given was present. `matched + failed` is the
+    # correct solvable count: SIV's own accounting partitions every SOLVABLE
+    # given into exactly one of these two buckets (see siv_module.verify()),
+    # while unused/non-invertible givens are excluded from both by construction.
+    n_solvable = n_matched + n_failed
+    full_set = (n_solvable > 0) & (n_failed == n_solvable)
+
+    rows = []
+    total = len(sub)
+    rows.append({"category": "audit_failed_and_ALL_solvable_givens_flagged (no isolation)",
+                 "count": int(full_set.sum()), "pct": float(full_set.mean())})
+    rows.append({"category": "audit_failed_but_a_STRICT_SUBSET_was_flagged (some isolation)",
+                 "count": int((~full_set & (n_failed > 0) & (n_failed < n_solvable)).sum()),
+                 "pct": float((~full_set & (n_failed > 0) & (n_failed < n_solvable)).mean())})
+    rows.append({"category": "audit_failed_but_no_solvable_givens (non-invertible, abstained)",
+                 "count": int((n_solvable == 0).sum()), "pct": float((n_solvable == 0).mean())})
+    rows.append({"category": "TOTAL_audit_failed_rows", "count": total, "pct": 1.0})
+    return pd.DataFrame(rows)
+
+
+# =====================================================================
 # 4) Confident-skip efficacy (cost without accuracy loss?)
 # =====================================================================
 
@@ -448,10 +560,14 @@ def siv_report(full_df: pd.DataFrame,
             parts.append(frame.to_string(index=False))
         parts.append("")
 
-    section("1. Coverage funnel (SIV input availability)", siv_coverage(full_df))
+    section("1. Coverage funnel (SIV input availability, genuine vs degenerate)",
+            siv_coverage(full_df))
     section("2. SIV as a correctness detector", siv_detector_metrics(full_df))
     section("3. Error-layer decomposition (execution vs translation)",
             error_layer_decomposition(full_df))
+    section("3b. Layer-2 isolation scope on field data (see also "
+            "test_siv_fault_injection.py for the controlled version)",
+            siv_fault_localization_scope(full_df))
     section("4. Confident-skip efficacy", siv_skip_efficacy(full_df))
     if no_siv_df is not None:
         section("5. Ablation — SIV on vs off", siv_ablation(full_df, no_siv_df))

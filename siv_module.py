@@ -15,12 +15,32 @@ Core Idea — Symbolic Execution Audit:
         If they match: the Programmer faithfully executed the blueprint.
         If they diverge: execution error detected (wrong code, wrong arithmetic).
 
-    LAYER 2 — Fault Localization (inverse):
+    LAYER 2 — Given Relevance / Fault Set (inverse):
         For each given gᵢ ∈ G, treat gᵢ as unknown, substitute all other givens
-        numerically, set result = computed_answer, solve for gᵢ.
+        numerically (at their DECLARED values), set result = computed_answer,
+        solve for gᵢ.
         If solved_gᵢ ≈ actual_gᵢ → this given is consistent with the answer.
-        If solved_gᵢ ≠ actual_gᵢ → this given is INCONSISTENT with the answer,
-        enabling targeted repair instead of full re-generation.
+        If solved_gᵢ ≠ actual_gᵢ → this given is INCONSISTENT with the answer.
+
+        [v12.2 — SCOPE CORRECTION, controlled fault-injection results in
+        test_siv_fault_injection.py] Because every MAS-SHT blueprint collapses
+        to ONE scalar expression `answer = f(g1, ..., gn)` (equations always
+        terminate in a single `answer` assignment), holding every OTHER given
+        fixed at its declared value and inverting for one given at a time
+        does NOT isolate a unique faulty variable when 2+ givens are used:
+        perturbing any single input generically makes EVERY used given's
+        one-at-a-time reconstruction disagree, not just the corrupted one.
+        Measured (n=37 controlled single-given corruptions, blueprints with
+        2-5 used givens): recall (the true fault is always present in
+        failed_givens) = 100%; exact isolation (failed_givens names ONLY the
+        corrupted variable) = 0% whenever 2+ givens are used; mean precision
+        = exactly 1/n_used (50% at n=2, 33% at n=3, 25% at n=4, 20% at n=5).
+        Isolation is only exact in the degenerate n_used=1 case.
+        What DOES work reliably (100% in the same test): separating used
+        (chain-connected) givens from UNUSED ones (see unused_givens below) —
+        i.e. Layer 2 is a validated relevance/distractor filter, and — when
+        the execution audit fails — a validated SUPERSET of implicated
+        variables (the true fault is never missed), not a point localizer.
 
 Known Limitation — Translation Layer:
     SIV operates on the math→math layer (blueprint equations → computed answer).
@@ -34,9 +54,12 @@ Comparison with FOBAR (Jiang et al., ACL 2024):
     FOBAR: LLM-based backward verification → operates partially on NL layer,
            but is probabilistic and inherits LLM errors. Gives binary verdict.
     SIV:   CAS-based, deterministic, zero LLM calls. Operates on symbolic-execution
-           layer. Gives per-variable fault localization, not just pass/fail.
+           layer. Gives a structured multi-variable diagnostic (implicated-variable
+           set + validated distractor exclusion), not just pass/fail — but, per the
+           v12.2 scope correction above, does not isolate a single faulty variable
+           among several used ones.
     The two are ORTHOGONAL: FOBAR targets translation errors; SIV targets execution
-    errors and provides localization. Their union is strictly stronger than either alone.
+    errors. Their union is strictly stronger than either alone.
 
 Theoretical basis:
     If f(x) = y, then f⁻¹(y) = x (invertibility / cycle consistency).
@@ -103,8 +126,16 @@ class SIVResult:
         givens_matched:  Number of givens that reconstructed correctly
         givens_total:    Total number of numeric givens
         reconstructions: Per-given reconstruction details
-        failed_givens:   Names of givens that did NOT reconstruct (error localization)
-        unused_givens:   Names of givens declared in blueprint but absent from equation chain
+        failed_givens:   Names of givens that did NOT reconstruct. [v12.2] This is
+                         an IMPLICATED SET, not a point localization: per
+                         test_siv_fault_injection.py, when 2+ givens are used,
+                         a single corrupted variable causes ALL used givens to
+                         appear here (precision = 1/n_used; the true fault is
+                         never missing — recall = 100% — but is not isolated).
+        unused_givens:   Names of givens declared in blueprint but absent from
+                         equation chain. This IS a reliably validated distinction
+                         (100% in controlled testing) — the genuine, working part
+                         of Layer 2's diagnostic value.
         invertible:      Whether the equation chain was symbolically invertible at all
 
     Meta:
@@ -690,11 +721,16 @@ class SymbolicInverseVerifier:
     @staticmethod
     def get_error_localization_report(result: SIVResult) -> str:
         """
-        Generate a targeted fault-localization report for the Critic/SHT stage.
+        Generate a fault report for the Critic/SHT stage.
 
-        Reports both execution-audit outcome (Layer 1) and per-variable
-        reconstruction results (Layer 2) so the Critic can issue targeted
-        repair prompts rather than blind re-generation.
+        Reports both execution-audit outcome (Layer 1) and the per-variable
+        reconstruction results (Layer 2) so the Critic can focus on the
+        implicated (used, non-distractor) variables rather than blind
+        re-generation. [v12.2] When 2+ givens are used, this is a candidate
+        set, not a single named culprit (see the SIVResult.failed_givens
+        docstring and test_siv_fault_injection.py) — the report is phrased
+        as "re-examine equations involving X, Y, Z", never as "X is the
+        error", to stay honest about what was actually established.
 
         Explicitly notes that blueprint–problem translation errors are outside
         SIV's detection scope, so the Critic should also apply its own
