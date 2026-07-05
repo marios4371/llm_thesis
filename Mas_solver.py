@@ -1,6 +1,41 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 12.0: Verification-Weighted Arbitration
+VERSION 12.1: Corroboration-Gated Evidence Arbitration
+
+CHANGELOG v12.1 (over v12.0) — driven by the first FULL v12.0 run
+(qwen_math_7b_local, n=150, 2026-07-04). Result: 82.7% (124/150), up from
+74.0% under the pre-v12 selection layer on the same problem set — the v12.0
+fixes validated directly (+8.7pp). confident_skip 96.9% (96/150), unanimous
+100% (18/150); SIV-verified answers 100% correct (12/12) vs 65.9% for
+unverified, the first clean confirmation that SIV's signal is trustworthy.
+Two remaining triage paths (evidence 34.6%, majority 40.0%) were still below
+the confident-skip level, and one specific structural bug accounted for
+most of the shortfall:
+- [FIX] `_select_by_evidence` no longer auto-resolves a group ranking that
+        has no real corroboration. v12.0 resolved the score ranking whenever
+        exactly one group scored highest — but in the single most common
+        no-majority case (a lone primary vs a lone baseline, no SIV signal,
+        each its own group of size 1), the `executed` scoring component
+        always favored the primary's group (it always has code; the
+        zero-shot baseline never does). That is not evidence of correctness,
+        just an artifact of which candidate happens to run code, and it
+        resolved identically regardless of which side was actually right.
+        Measured on the v12.0 run: of the 21 problems that reached exactly
+        this tie, the primary was correct on 7 and the baseline was correct
+        on a disjoint other 7 — a coin flip. Always picking the primary
+        recovered its own 7 while converting all 7 baseline-correct cases
+        into regressions (silent damage to already-correct answers, the
+        outcome class the project treats as worst-case). `_select_by_evidence`
+        now only auto-resolves when the winning group is genuinely
+        corroborated — multiple independent derivations agree (votes >= 2,
+        reachable here only via a size-tied 2-vs-2 "no majority" case) or SIV
+        fully verified that exact value. A field of lone, unverified
+        singletons (whichever candidates they are) is not decided
+        deterministically at all; every one of them is now handed to the
+        constrained judge, which is the mechanism designed for genuine ties.
+- Not yet re-measured: this fix responds to a bug discovered by analyzing
+  the v12.0 run's own CSV, not to a second full run. The next Kaggle
+  execution is the first empirical measurement of v12.1.
 
 CHANGELOG v12.0 (over v11.4) — driven by the n=150 Kaggle pilot
 (qwen_math_7b_local, 2026-07-02). Pilot diagnosis: confident_skip path 96%
@@ -163,7 +198,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "12.0"
+SOLVER_VERSION = "12.1"
 import json
 import time
 import random
@@ -3255,12 +3290,38 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
                             siv_result: Optional[SIVResult]
                             ) -> Tuple[Optional[HypothesisResult], List[HypothesisResult], str]:
         """
-        [v12.0] Arbitrate WITHOUT an LLM: rank answer groups by verifiable
-        evidence and return a strict winner if one exists.
+        [v12.1] Arbitrate WITHOUT an LLM: rank answer groups by verifiable
+        evidence and return a strict winner ONLY when the winning group is
+        actually corroborated.
+
+        [FIX v12.1] The v12.0 version resolved every group ranking as long as
+        exactly one group scored highest — but in the single most common
+        no-majority case (a lone primary vs a lone baseline, each in its own
+        group of size 1, no SIV signal), the `executed` component of
+        `_evidence_score` always favored the group containing the primary
+        (it always has code; the baseline candidate never does). This is not
+        evidence of correctness, just a structural artifact of who happens to
+        run code — and it always resolved in favor of the primary regardless
+        of whether the primary was actually right.
+        Measured impact on the first full v12.0 run (n=150): of the 21
+        problems that reached this exact primary-vs-baseline singleton tie,
+        the primary was correct on 7 and the baseline was correct on a
+        DIFFERENT 7 (a perfect, disjoint split — a coin flip). The old rule
+        always picked the primary, so it recovered its own 7 while silently
+        converting all 7 baseline-correct cases into regressions.
+        We now only auto-resolve when the winning group carries genuine
+        corroboration: either multiple independent derivations agree
+        (votes >= 2 — reachable here only via a size-tied "no majority" case,
+        e.g. 2-vs-2) or SIV fully verified this exact value. A lone,
+        unverified singleton — whichever candidate it happens to be — is not
+        evidence; it goes to the constrained judge instead, alongside every
+        other unverified singleton (not just the ones that happened to tie
+        on score), since none of them has more standing than any other.
 
         Returns (winner, tied_representatives, note):
-          winner is None when the top score is shared — tied_representatives
-          then holds one representative per tied group for the LLM tie-break.
+          winner is None when no group is corroborated (or scores tie even
+          after corroboration) — tied_representatives then holds one
+          representative per remaining group for the LLM tie-break.
         """
         groups = self._group_valid_candidates(candidates)
         if not groups:
@@ -3276,15 +3337,23 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
             rank = {"primary": 0, "baseline": 1, "blueprint_eval": 2}
             return sorted(members, key=lambda m: rank.get(m.hypothesis_id, 3))[0]
 
-        top_score = scored[0][0]
-        tied = [(rep, members) for score, rep, members in scored if score == top_score]
         note = "; ".join(
             f"{rep:.6g}: votes={s[0]} siv={s[1]} exec={s[2]} prim={s[3]} base={s[4]}"
             for s, rep, _ in scored[:4]
         )
-        if len(tied) == 1:
-            return _representative(tied[0][1]), [], note
-        return None, [_representative(members) for _, members in tied], note
+
+        top_score = scored[0][0]
+        top_votes, top_siv_full = top_score[0], top_score[1]
+        if top_votes >= 2 or top_siv_full == 1:
+            tied = [(rep, members) for score, rep, members in scored if score == top_score]
+            if len(tied) == 1:
+                return _representative(tied[0][1]), [], note
+            return None, [_representative(members) for _, members in tied], note
+
+        # No group is corroborated: every candidate is a lone, unverified
+        # voice. Deterministic evidence has nothing left to decide — send
+        # every group's representative to the judge.
+        return None, [_representative(members) for _, members in groups], note
 
     def _deterministic_fallback(self, candidates: List[HypothesisResult],
                                 siv_result: Optional[SIVResult]) -> HypothesisResult:
