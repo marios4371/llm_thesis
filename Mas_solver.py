@@ -470,6 +470,24 @@ HETEROGENEOUS_PRESETS: Dict[str, Dict[AgentRole, ModelConfig]] = {
         AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-7B-Instruct"),
     },
 
+    # [v12.3] Mixed: Qwen2.5-Math-7B everywhere EXCEPT the Mathematician, which
+    # gets the Instruct sibling — both 4-bit, both fit a single T4 (~8 GB total).
+    # Math-7B is RL-tuned to emit free chain-of-thought ending in \boxed{}, not
+    # JSON (see run_mathematician_analysis): 62.7% of blueprints came back empty
+    # on qwen_math_7b_local (n=150 v12.0/v12.1 run), starving SIV. Swapping ALL
+    # roles to Instruct (qwen_7b_instruct_fp16) would fix that but also trade
+    # away Math-7B's stronger raw arithmetic on the Programmer, and needs 2x T4
+    # (fp16, no bitsandbytes). This isolates the swap to the one role that
+    # actually needs JSON compliance and leaves Programmer/Baseline/Hypothesis-
+    # Generator on the model that already measured well there.
+    "qwen_math7b_mixed_mathematician_instruct": {
+        AgentRole.BASELINE:              ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct", load_4bit=True),
+        AgentRole.MATHEMATICIAN:         ModelConfig("local_hf", "Qwen/Qwen2.5-7B-Instruct",      load_4bit=True),
+        AgentRole.PROGRAMMER:            ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct", load_4bit=True),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct", load_4bit=True),
+        AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct", load_4bit=True),
+    },
+
     # [v10.3] DeepSeek-R1-Distill 7B local — 4-bit NF4 on T4 GPU (~4 GB VRAM).
     # Reasoning-chain distilled from R1 (671B). Tests whether reasoning-focused 7B
     # benefits from MAS decomposition.
