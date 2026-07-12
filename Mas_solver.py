@@ -1,6 +1,104 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 12.1: Corroboration-Gated Evidence Arbitration
+VERSION 13.0: Baseline-Anchored Selection (Do-No-Harm Invariant)
+
+CHANGELOG v13.0 (over v12.1) — driven by the first mixed-preset run
+(qwen_math7b_mixed_mathematician_instruct, n=150, v12.2 dataset mix,
+2026-07-11/12). That run achieved the coverage goal (blueprint_empty fell
+from 62.7% to 27.3%; SIV audited 109/150) but accuracy COLLAPSED to 57.3%
+vs 74.7% for plain CoT on the same mix — the selection layer, not the
+models, destroyed the value: the run's own internal zero-shot baseline was
+right 75.3% of the time. Three measured failures and their fixes:
+
+- [DESIGN] THE DO-NO-HARM INVARIANT. The system may override its internal
+  zero-shot baseline ONLY on positive, verifiable corroboration: >= 2
+  honestly-independent derivations agreeing on the same value. With no
+  corroboration anywhere, the final answer IS the baseline answer (new
+  triage value 'baseline_default'). This makes "never lose to the simple
+  baseline" a structural property instead of a hope. Measured basis: on
+  the 55 judge_fallback rows the old path picked the primary and scored
+  8/55 while the discarded baseline held 29/55; counterfactual replay of
+  this run's own rows under the invariant = 113/150 (75.3%) vs the
+  measured 86/150 (57.3%).
+
+- [FIX] PSEUDO-VOTES. `blueprint_eval` (the CAS evaluation of the
+  Architect's equations) can only co-group with the primary when the SIV
+  execution audit passed — which certifies the Programmer's code computed
+  THE SAME equations. That is one derivation counted twice, not two
+  independent derivations, yet both `_triage_candidates` (majority) and
+  `_evidence_score` (votes) counted it as 2 and outvoted the genuinely
+  independent baseline. Measured: 36 'majority' rows ~= the 37
+  audit-passed rows; baseline right on 30/36, the pair-vote answer on
+  24/36 (8 correct baselines destroyed to save 2). Vote counting now
+  dedupes the {primary, blueprint_eval} pair everywhere.
+
+- [FIX] SIV VERIFICATION IS A CROSS-VALIDATOR, NOT AN AUTHORITY. Measured
+  on this run: siv_verified with baseline AGREEMENT -> 22/22 correct
+  (100%); siv_verified with baseline DISAGREEMENT -> 2/14 correct (14%).
+  A verification that certifies blueprint-internal consistency inherits
+  the blueprint's translation errors (the paper's SIV scope claim, now
+  with field numbers — and the same phenomenon v10.1's gate ordering was
+  built on: 3/3 regressions in the v10.0 n=50 run). `siv_full` therefore
+  no longer auto-resolves the evidence ranking on its own; it remains a
+  deterministic tie-breaker BETWEEN corroborated groups. The
+  confident-skip gate is untouched — it already required baseline
+  agreement before any SIV skip (97.9% accurate on this run).
+
+- [FIX] `_deterministic_fallback` preferred the primary (the v12.1
+  coin-flip bug's twin, in the one function v12.1 didn't reach because
+  the judge never used to fail). It now prefers the baseline, per the
+  invariant. The constrained judge itself is retained ONLY for ties
+  between corroborated groups (rare); its output contract is tag-FIRST
+  (`SELECTED_CANDIDATE: [[k]]` on line 1) so truncation can no longer
+  destroy the tag — on this run it parsed 0/55 attempts (Math-7B judge
+  wrote free CoT until the token cap).
+
+- [PRESET] `qwen_math7b_mixed` (renamed from
+  qwen_math7b_mixed_mathematician_instruct): Instruct now also serves
+  HYPOTHESIS_GENERATOR and JUDGE — every role whose output must be
+  parsed (JSON blueprints, alternative blueprints, constrained tag)
+  runs on the format-following model; BASELINE and PROGRAMMER stay on
+  Math-7B (raw arithmetic strength). Zero extra VRAM: roles share
+  clients keyed by (provider, model, 4bit) — still exactly 2 loads.
+
+- [FIX] local_hf multi-GPU OOM: on a T4 x2 session, loading the SECOND
+  4-bit model OOM'd repeatedly (accelerate placed it on one GPU whose
+  free memory did not survive materialization; observed 2026-07-12, the
+  Mathematician never loaded and every blueprint died with
+  ERROR_GENERATION while pre-flight still PASSed). Multi-GPU 4-bit loads
+  now pass an explicit free-memory-aware max_memory map so placement
+  reflects what is actually free. Pre-flight (notebook Cell 2.5) also
+  gains a Mathematician-liveness check: a mixed-preset run with zero
+  formed blueprints across the test problems now FAILS loudly instead
+  of burning an 8h commit in fallback mode.
+
+UPDATE (same v13.0, pre-first-run) — blueprint repair loop, and a second
+do-no-harm gap closed:
+
+- [NEW] `_attempt_blueprint_repair`: one repair attempt, gated on
+  execution_audit_passed=False. Diagnostic basis (mas_full_20260712, the
+  same mixed-preset run): among audited rows whose blueprint answer was
+  wrong, this exact signal caught 49/61 (80.3% recall) with 0/25 false
+  alarms on blueprints that were actually correct — by far the
+  highest-leverage lever available, versus the ~20% (12/61) that are
+  translation errors invisible to any equation-level check. On audit
+  failure the Mathematician now gets SIV's own error-localization report
+  and one chance to re-derive the blueprint BEFORE the primary answer
+  reaches the confidence gate or SHT — SIV used as an in-loop repair
+  signal, not only a post-hoc detector. `_structured_hypothesis_testing`
+  takes a `pre_sht_calls` parameter (default 3, unchanged for every other
+  caller) so the +2 real calls a repair spends are reflected in
+  api_calls_used instead of silently undercounted. New CSV/result field
+  `blueprint_repaired`.
+- [FIX] The v11.4 SIV-anchor override (fully audited + verified +
+  rel_error<1e-3 replaces the SHT answer outright) was the one place in
+  `solve()` that still let self-consistency alone override a disagreeing
+  baseline — exactly the pattern the rest of v13.0 was built to close, just
+  not yet reached because it lives after `_structured_hypothesis_testing`
+  returns. Measured on the same run: siv_verified WITH baseline agreement
+  = 22/22 correct; WITH baseline disagreement = 2/14. The anchor now only
+  fires when the baseline agrees or has itself failed; a disagreeing
+  baseline suppresses it (logged, SHT's answer is kept).
 
 CHANGELOG v12.1 (over v12.0) — driven by the first FULL v12.0 run
 (qwen_math_7b_local, n=150, 2026-07-04). Result: 82.7% (124/150), up from
@@ -225,7 +323,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "12.1"
+SOLVER_VERSION = "13.0"
 import json
 import time
 import random
@@ -470,22 +568,28 @@ HETEROGENEOUS_PRESETS: Dict[str, Dict[AgentRole, ModelConfig]] = {
         AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-7B-Instruct"),
     },
 
-    # [v12.3] Mixed: Qwen2.5-Math-7B everywhere EXCEPT the Mathematician, which
-    # gets the Instruct sibling — both 4-bit, both fit a single T4 (~8 GB total).
-    # Math-7B is RL-tuned to emit free chain-of-thought ending in \boxed{}, not
-    # JSON (see run_mathematician_analysis): 62.7% of blueprints came back empty
-    # on qwen_math_7b_local (n=150 v12.0/v12.1 run), starving SIV. Swapping ALL
-    # roles to Instruct (qwen_7b_instruct_fp16) would fix that but also trade
-    # away Math-7B's stronger raw arithmetic on the Programmer, and needs 2x T4
-    # (fp16, no bitsandbytes). This isolates the swap to the one role that
-    # actually needs JSON compliance and leaves Programmer/Baseline/Hypothesis-
-    # Generator on the model that already measured well there.
-    "qwen_math7b_mixed_mathematician_instruct": {
+    # [v13.0] Mixed by OUTPUT CONTRACT (renamed from v12.3's
+    # qwen_math7b_mixed_mathematician_instruct, which swapped only the
+    # Mathematician): every role whose output must be PARSED runs on the
+    # instruction-following model, every role graded on raw math runs on the
+    # math specialist. Math-7B is RL-tuned to emit free chain-of-thought
+    # ending in \boxed{}, not structured output: as Mathematician it produced
+    # 62.7% empty blueprints (v12.0/v12.1 run), and as Judge it emitted the
+    # SELECTED_CANDIDATE tag 0/55 times (mixed run) — same pathology, three
+    # roles. Both models 4-bit NF4, ~8 GB total, single T4; roles share
+    # clients keyed by (provider, model, 4bit) so this is still exactly 2
+    # model loads.
+    #   Instruct : MATHEMATICIAN (JSON blueprint), HYPOTHESIS_GENERATOR
+    #              (JSON alternative blueprints — feeds the only channel that
+    #              may override the baseline under v13.0's do-no-harm rule),
+    #              JUDGE (constrained tag)
+    #   Math-7B  : BASELINE (zero-shot CoT anchor), PROGRAMMER (code)
+    "qwen_math7b_mixed": {
         AgentRole.BASELINE:              ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct", load_4bit=True),
         AgentRole.MATHEMATICIAN:         ModelConfig("local_hf", "Qwen/Qwen2.5-7B-Instruct",      load_4bit=True),
         AgentRole.PROGRAMMER:            ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct", load_4bit=True),
-        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct", load_4bit=True),
-        AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-Math-7B-Instruct", load_4bit=True),
+        AgentRole.HYPOTHESIS_GENERATOR:  ModelConfig("local_hf", "Qwen/Qwen2.5-7B-Instruct",      load_4bit=True),
+        AgentRole.JUDGE:                 ModelConfig("local_hf", "Qwen/Qwen2.5-7B-Instruct",      load_4bit=True),
     },
 
     # [v10.3] DeepSeek-R1-Distill 7B local — 4-bit NF4 on T4 GPU (~4 GB VRAM).
@@ -1560,9 +1664,30 @@ class UnifiedLLMClient:
                         bnb_4bit_compute_dtype=dtype,   # [v10.7] bf16 — avoid fp16 overflow
                         bnb_4bit_use_double_quant=True,
                     )
-                    mdl = AutoModelForCausalLM.from_pretrained(
-                        self.model_name, quantization_config=bnb_cfg,
+                    # [v13.0] On multi-GPU boxes, hand accelerate an explicit
+                    # free-memory-aware max_memory map. Observed 2026-07-12
+                    # (T4 x2, mixed preset): with Math-7B already resident,
+                    # "auto" placed the ENTIRE second model onto one GPU and
+                    # its load transient filled all 14.5 GB → OOM on every
+                    # retry, so the Mathematician never loaded. Capping each
+                    # GPU at ~85% of its CURRENTLY-free memory forces the
+                    # placement (and its materialization) to shard across
+                    # devices that actually have room.
+                    _load_kwargs = dict(
+                        quantization_config=bnb_cfg,
                         device_map="auto", low_cpu_mem_usage=True, **_lkw,
+                    )
+                    if torch.cuda.device_count() > 1:
+                        _mm = {}
+                        for _gi in range(torch.cuda.device_count()):
+                            _free_b, _ = torch.cuda.mem_get_info(_gi)
+                            _mm[_gi] = int(_free_b * 0.85)
+                        _mm["cpu"] = "24GiB"
+                        _load_kwargs["max_memory"] = _mm
+                        logger.info(f"local_hf: multi-GPU max_memory map = "
+                                    f"{ {k: (v if isinstance(v, str) else f'{v/1e9:.1f}GB') for k, v in _mm.items()} }")
+                    mdl = AutoModelForCausalLM.from_pretrained(
+                        self.model_name, **_load_kwargs,
                     )
                     logger.info(f"local_hf: {self.model_name} loaded in 4-bit NF4 on cuda")
                 except ImportError:
@@ -2469,13 +2594,18 @@ class QualityEnhancedMultiAgentSolver:
     # Mathematician Agent (Architect)
     # -------------------------------------------------------------------------
     
-    def run_mathematician_analysis(self, problem: str) -> dict:
+    def run_mathematician_analysis(self, problem: str, repair_context: str = "") -> dict:
         """
         [v9.0] Enhanced Mathematician with:
-        1. Self-verification: asks the LLM to mentally compute the answer  
+        1. Self-verification: asks the LLM to mentally compute the answer
            from its own equations and check if it's reasonable
-        2. Retry on failure: if JSON parsing fails, retries once with 
+        2. Retry on failure: if JSON parsing fails, retries once with
            a simpler prompt instead of returning empty blueprint
+
+        [v13.0] repair_context: when non-empty (SIV's error-localization
+        report from a FAILED execution audit on this Mathematician's own
+        prior blueprint), the user message asks for a corrected re-derivation
+        instead of a first attempt. See _attempt_blueprint_repair, the caller.
         """
         
         sys_msg = """You are an expert Mathematician analyzing word problems.
@@ -2530,9 +2660,23 @@ Output:
 }
 """
         
+        if repair_context:
+            user_msg = (
+                f"Problem:\n{problem}\n\n"
+                f"Your PREVIOUS blueprint for this exact problem failed verification:\n"
+                f"{repair_context}\n\n"
+                "Re-read the problem and re-derive the blueprint from scratch. The "
+                "variables named above did not reconstruct correctly from your "
+                "equations -- re-check which numbers in the problem text are the "
+                "true givens, and that each equation uses them the way the problem "
+                "actually describes. Return the corrected JSON blueprint."
+            )
+        else:
+            user_msg = f"Problem:\n{problem}\n\nAnalyze and return the JSON blueprint."
+
         msgs = [
             {"role": "system", "content": sys_msg},
-            {"role": "user", "content": f"Problem:\n{problem}\n\nAnalyze and return the JSON blueprint."}
+            {"role": "user", "content": user_msg}
         ]
         
         # [v11.2] Plain call — instruction-tuned models (Qwen2.5-7B-Instruct, API)
@@ -2675,9 +2819,67 @@ Output ONLY this JSON, nothing else:
         return blueprint
 
     # -------------------------------------------------------------------------
+    # [v13.0] Blueprint repair (one attempt, gated on execution-audit failure)
+    # -------------------------------------------------------------------------
+
+    def _attempt_blueprint_repair(self, problem: str, blueprint: dict,
+                                  programmer_response: "AgentResponse",
+                                  siv_result: "SIVResult"
+                                  ) -> Tuple[dict, "AgentResponse", Optional["SIVResult"], bool]:
+        """
+        [v13.0] One repair attempt when SIV's execution audit fails.
+
+        Measured motivation (mixed-preset run, n=150, see mas_full_20260712
+        analysis): among audited rows whose blueprint answer was wrong,
+        execution_audit_passed=False caught 49/61 (80.3% recall) with ZERO
+        false alarms on correct blueprints (0/25). That is the single
+        highest-leverage signal available: it targets exactly the failure
+        mode this gate checks for (internally inconsistent equations), it
+        never fires on a blueprint that was already fine, and it is
+        available for free (SIV already computed it). This hands the
+        Mathematician its own error report and asks for ONE corrected
+        re-derivation BEFORE the answer ever reaches the confidence gate or
+        SHT — SIV acting as an in-loop repair signal, not just a post-hoc
+        detector. Capped at one attempt: this targets a specific, diagnosed
+        failure, not a general retry-until-it-works loop.
+
+        Returns (blueprint, programmer_response, siv_result, repaired) — the
+        ORIGINAL triple unchanged whenever repair wasn't attempted or didn't
+        produce something usable, so the caller never needs a separate
+        repaired/not-repaired branch.
+        """
+        if siv_result is None or siv_result.execution_audit_passed or not siv_result.invertible:
+            return blueprint, programmer_response, siv_result, False
+
+        error_report = SymbolicInverseVerifier.get_error_localization_report(siv_result)
+        logger.info(f"Blueprint repair attempt — SIV error report: {error_report[:200]}")
+
+        new_blueprint = self.run_mathematician_analysis(problem, repair_context=error_report)
+        if not new_blueprint.get("equations") or not new_blueprint.get("givens"):
+            logger.info("Blueprint repair: Mathematician returned nothing usable — keeping original")
+            return blueprint, programmer_response, siv_result, False
+
+        new_response = self.run_programmer_solver(problem, new_blueprint)
+        new_answer_num = _extract_last_number(new_response.answer)
+        if new_answer_num is None:
+            logger.info("Blueprint repair: repaired blueprint's code produced no answer — keeping original")
+            return blueprint, programmer_response, siv_result, False
+
+        new_siv_result = None
+        if SYMPY_AVAILABLE and new_blueprint.get("equations"):
+            new_siv_result = SymbolicInverseVerifier.verify(new_blueprint, new_answer_num)
+
+        logger.info(
+            f"Blueprint repair: original audit_passed={siv_result.execution_audit_passed} -> "
+            f"repaired audit_passed={new_siv_result.execution_audit_passed if new_siv_result else None}"
+        )
+        new_blueprint["_blueprint_repaired"] = True
+        return new_blueprint, new_response, new_siv_result, True
+
+    # -------------------------------------------------------------------------
     # Programmer Agent (Engineer)
     # -------------------------------------------------------------------------
-    
+
     def run_programmer_solver(self, problem: str, blueprint: dict, max_attempts: int = 3) -> AgentResponse:
         
         givens = blueprint.get("givens", {})
@@ -3256,9 +3458,14 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
         if not groups:
             return None, None, "no_valid_candidates"
 
+        # [v13.0] Rank and threshold by HONEST votes (the {primary,
+        # blueprint_eval} pair counts once — see _honest_votes), so a
+        # blueprint agreeing with its own faithful execution can no longer
+        # outvote the independent zero-shot baseline.
         sorted_groups = sorted(
             groups.items(),
-            key=lambda g: (len(g[1]), sum(c.confidence for c in g[1]) / len(g[1])),
+            key=lambda g: (self._honest_votes(g[1]),
+                           sum(c.confidence for c in g[1]) / len(g[1])),
             reverse=True
         )
 
@@ -3268,7 +3475,9 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
             winner = best_group[0]
             return winner.answer, winner.strategy_name, "unanimous"
 
-        if len(best_group) >= 2 and (len(sorted_groups) < 2 or len(best_group) > len(sorted_groups[1][1])):
+        best_votes = self._honest_votes(best_group)
+        runner_up_votes = self._honest_votes(sorted_groups[1][1])
+        if best_votes >= 2 and best_votes > runner_up_votes:
             winner = best_group[0]
             return winner.answer, winner.strategy_name, "majority"
 
@@ -3285,6 +3494,27 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
         if a is None or b is None:
             return False
         return abs(a - b) < max(1e-3, 1e-9 * max(abs(a), abs(b)))
+
+    @staticmethod
+    def _honest_votes(members: List[HypothesisResult]) -> int:
+        """[v13.0] Independent derivations agreeing on this answer.
+
+        `blueprint_eval` is the CAS evaluation of the SAME equations the
+        primary Programmer's code implements; the two can only land in one
+        group when the SIV execution audit passed, i.e. when the code
+        provably computed those equations. That is one derivation observed
+        twice, not two independent confirmations — counting it as 2 let the
+        pair outvote the genuinely independent zero-shot baseline (measured
+        v12.1-mixed run: 36 such 'majority' rows, baseline right 30/36, the
+        pair answer right 24/36). blueprint_eval still counts as a full vote
+        in any group NOT containing the primary (e.g. agreeing with the
+        baseline against a deviant program — genuinely independent there).
+        """
+        ids = {m.hypothesis_id for m in members}
+        votes = len(members)
+        if "primary" in ids and "blueprint_eval" in ids:
+            votes -= 1
+        return votes
 
     def _group_valid_candidates(self, candidates: List[HypothesisResult]
                                 ) -> List[Tuple[float, List[HypothesisResult]]]:
@@ -3304,12 +3534,18 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
                         siv_result: Optional[SIVResult]) -> Tuple[int, int, int, int, int]:
         """
         Deterministic evidence for one answer group. Lexicographic order:
-          1. votes      — independent derivations agreeing on this answer
-                          (free program / CoT baseline / CAS-evaluated blueprint
-                          / Critic alternatives each contribute one vote)
+          1. votes      — HONEST independent derivations agreeing on this
+                          answer ([v13.0] the {primary, blueprint_eval} pair
+                          counts once — the audit-passed CAS value IS the
+                          primary's own equations; see _honest_votes)
           2. siv_full   — SIV inverse layer fully verified this answer
-                          (audit passed + givens reconstruct, conf ≥ 0.9);
-                          extra evidence beyond the forward blueprint vote
+                          (audit passed + givens reconstruct, conf ≥ 0.9).
+                          [v13.0] tie-breaker BETWEEN corroborated groups
+                          only, never a standalone override: measured on the
+                          mixed run, verified with baseline agreement was
+                          22/22 correct but verified with baseline
+                          DISAGREEMENT was 2/14 — self-consistency inherits
+                          translation errors
           3. executed   — group contains an answer produced by executed code
                           (pilot: on program-vs-CoT disagreements the program
                           was right 15/29, the CoT 4/29)
@@ -3327,7 +3563,7 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
             except (TypeError, ValueError):
                 pass
         executed = 1 if any(m.code for m in members) else 0
-        return (len(members), siv_full, executed,
+        return (self._honest_votes(members), siv_full, executed,
                 1 if "primary" in ids else 0,
                 1 if "baseline" in ids else 0)
 
@@ -3388,30 +3624,43 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
         )
 
         top_score = scored[0][0]
-        top_votes, top_siv_full = top_score[0], top_score[1]
-        if top_votes >= 2 or top_siv_full == 1:
+        top_votes = top_score[0]
+        # [v13.0] Corroboration = honest votes >= 2, FULL STOP. siv_full no
+        # longer qualifies a lone group on its own (measured: verified with
+        # a disagreeing baseline was right 2/14 — SIV certifies blueprint-
+        # internal consistency and inherits the translation error). It
+        # still participates in the lexicographic score above, so between
+        # two corroborated groups it breaks the tie deterministically.
+        if top_votes >= 2:
             tied = [(rep, members) for score, rep, members in scored if score == top_score]
             if len(tied) == 1:
                 return _representative(tied[0][1]), [], note
             return None, [_representative(members) for _, members in tied], note
 
-        # No group is corroborated: every candidate is a lone, unverified
-        # voice. Deterministic evidence has nothing left to decide — send
-        # every group's representative to the judge.
-        return None, [_representative(members) for _, members in groups], note
+        # [v13.0] No group is corroborated. Under the do-no-harm invariant
+        # this is no longer the judge's problem: an uncorroborated field of
+        # lone voices contains no signal a 7B judge has ever been measured
+        # to extract (pilot free-form judge 15%; v12.1 constrained judge
+        # parsed 0/55 attempts on the mixed run). The caller falls back to
+        # the internal zero-shot baseline ('baseline_default').
+        return None, [], note + "; uncorroborated -> baseline_default"
 
     def _deterministic_fallback(self, candidates: List[HypothesisResult],
                                 siv_result: Optional[SIVResult]) -> HypothesisResult:
         """Last-resort pick when even the judge is unusable. Never scrapes
-        free text: preference is executed primary → baseline → any valid
-        candidate → primary object regardless."""
+        free text. [v13.0] Preference is baseline → executed primary → any
+        valid candidate → primary object regardless: the old primary-first
+        order was the v12.1 coin-flip bug's twin living in the one function
+        that fix never reached (it only fires when the judge fails, which
+        never happened before the mixed run — where it then fired 55 times
+        and picking the primary scored 8/55 against the baseline's 29/55)."""
         by_id = {c.hypothesis_id: c for c in candidates}
         primary = by_id.get("primary")
-        if primary is not None and primary.code_success and primary.parsed_answer is not None:
-            return primary
         baseline = by_id.get("baseline")
         if baseline is not None and baseline.parsed_answer is not None:
             return baseline
+        if primary is not None and primary.code_success and primary.parsed_answer is not None:
+            return primary
         for c in candidates:
             if c.code_success and c.parsed_answer is not None:
                 return c
@@ -3455,9 +3704,9 @@ Evaluation criteria (in order of importance):
 3. COMPLETENESS: Does the approach account for ALL conditions in the problem?
 
 OUTPUT FORMAT (strict):
-First explain your comparison briefly (2-3 sentences).
-Then write EXACTLY one line: SELECTED_CANDIDATE: [[k]]
+The VERY FIRST line of your reply must be EXACTLY: SELECTED_CANDIDATE: [[k]]
 where k is the number (1 to {len(judgeable)}) of the candidate you select.
+After that line you may add a brief justification (2-3 sentences).
 Do NOT invent a new answer. You MUST pick one of the presented candidates."""
 
         user_msg = f"""PROBLEM:
@@ -3503,8 +3752,16 @@ Select the most reliable candidate."""
                                        primary_blueprint: dict,
                                        programmer_response: AgentResponse,
                                        baseline_answer: str,
-                                       siv_result: Optional[SIVResult] = None) -> HypothesisLog:
-        """[v10.0] Enhanced with SIV: can skip SHT if proven, or pass error info to Critic."""
+                                       siv_result: Optional[SIVResult] = None,
+                                       pre_sht_calls: int = 3) -> HypothesisLog:
+        """[v10.0] Enhanced with SIV: can skip SHT if proven, or pass error info to Critic.
+
+        [v13.0] pre_sht_calls: actual LLM calls already spent before this
+        function runs (normally 3 — baseline, Mathematician, Programmer).
+        The caller bumps this by 2 when a blueprint-repair attempt fired
+        (see _attempt_blueprint_repair), so api_calls_used stays an honest
+        total instead of silently under-counting repaired problems.
+        """
         primary_answer = programmer_response.answer
         primary_num = _extract_last_number(primary_answer)
 
@@ -3588,12 +3845,12 @@ Select the most reliable candidate."""
             log.final_answer = primary_answer
             log.final_strategy = "primary_blueprint"
             log.hypothesis_testing_triggered = False
-            log.api_calls_used = 3
+            log.api_calls_used = pre_sht_calls
             return log
 
         logger.info(f"SHT triggered: {gate_reason}")
         log.hypothesis_testing_triggered = True
-        api_calls = 3
+        api_calls = pre_sht_calls
 
         # [FIX v7.2] Check if we can afford SHT calls (~4 more calls × 1500 tokens)
         sht_cost_estimate = 4 * 1500  # hypothesis gen + 2 programmer + maybe judge
@@ -3607,7 +3864,7 @@ Select the most reliable candidate."""
                 log.final_answer = baseline_answer
                 log.final_strategy = "baseline_budget_skip"
             log.triage_result = "budget_skip"
-            log.api_calls_used = 3
+            log.api_calls_used = pre_sht_calls
             return log
 
         # [v10.0] Generate SIV error report for targeted Critic
@@ -3665,24 +3922,45 @@ Select the most reliable candidate."""
             log.api_calls_used = api_calls
             return log
 
-        # [v12.0] LLM judge only as a tie-breaker among evidence-tied
-        # candidates, constrained to select by index. On any parse failure or
-        # out-of-set answer the deterministic fallback decides — the judge can
-        # no longer inject numbers that no solver produced.
-        judge_pool = tied_reps if tied_reps else [
-            c for c in log.candidates if c.parsed_answer is not None
-        ]
-        judge_pick, judge_reasoning = self._judge_hypotheses(problem, judge_pool)
-        api_calls += 1
+        # [v13.0] LLM judge ONLY between corroborated groups that tied on the
+        # full evidence score (rare). On parse failure the deterministic
+        # fallback decides. An empty tied_reps means NOTHING was corroborated
+        # — do-no-harm applies: the answer is the internal zero-shot baseline,
+        # with no judge call at all (the judge has never been measured to
+        # beat the baseline on uncorroborated sets: pilot 15%, constrained
+        # v12.1 parsed 0/55 on the mixed run).
+        if tied_reps:
+            judge_pick, judge_reasoning = self._judge_hypotheses(problem, tied_reps)
+            api_calls += 1
 
-        log.judge_reasoning = f"[{evidence_note}] {judge_reasoning}"[:500]
-        if judge_pick is not None:
-            log.triage_result = "judge"
-            log.final_answer = judge_pick.answer
-            log.final_strategy = judge_pick.strategy_name
+            log.judge_reasoning = f"[{evidence_note}] {judge_reasoning}"[:500]
+            if judge_pick is not None:
+                log.triage_result = "judge"
+                log.final_answer = judge_pick.answer
+                log.final_strategy = judge_pick.strategy_name
+            else:
+                fallback = self._deterministic_fallback(log.candidates, siv_result)
+                log.triage_result = "judge_fallback"
+                log.final_answer = fallback.answer
+                log.final_strategy = f"{fallback.strategy_name}_fallback"
+            log.api_calls_used = api_calls
+            return log
+
+        log.judge_reasoning = f"[{evidence_note}]"[:500]
+        baseline_c = next(
+            (c for c in log.candidates
+             if c.hypothesis_id == "baseline" and c.parsed_answer is not None),
+            None,
+        )
+        if baseline_c is not None:
+            log.triage_result = "baseline_default"
+            log.final_answer = baseline_c.answer
+            log.final_strategy = "baseline_do_no_harm"
         else:
+            # Baseline itself unusable — the invariant has no anchor; fall
+            # back deterministically (executed primary, then anything).
             fallback = self._deterministic_fallback(log.candidates, siv_result)
-            log.triage_result = "judge_fallback"
+            log.triage_result = "fallback"
             log.final_answer = fallback.answer
             log.final_strategy = f"{fallback.strategy_name}_fallback"
         log.api_calls_used = api_calls
@@ -3737,7 +4015,8 @@ Select the most reliable candidate."""
         verification_feedback = "Skipped"
         verification_confidence = 1.0
         siv_result = None  # [v10.0]
-        
+        blueprint_repaired = False  # [v13.0]
+
         if (programmer_response.confidence > 0.5
             and programmer_response.answer != "unknown"
             and programmer_response.reasoning_trace
@@ -3780,6 +4059,39 @@ Select the most reliable candidate."""
                         f"SIV EXECUTION ERROR: blueprint_answer={siv_result.blueprint_answer}, "
                         f"computed={answer_num}, rel_err={siv_result.execution_rel_error}"
                     )
+                    # [v13.0] One repair attempt targeting exactly this signal
+                    # (measured 80.3% recall / 0% false-alarm rate as a
+                    # wrong-blueprint detector — see _attempt_blueprint_repair).
+                    # Replaces blackboard_logic/programmer_response/siv_result
+                    # in place so the confidence gate and SHT below see the
+                    # repaired attempt, not the one that just failed audit.
+                    blackboard_logic, programmer_response, siv_result, blueprint_repaired = (
+                        self._attempt_blueprint_repair(
+                            problem, blackboard_logic, programmer_response, siv_result
+                        )
+                    )
+                    if blueprint_repaired:
+                        answer_num = _extract_last_number(programmer_response.answer)
+                        if siv_result is not None and siv_result.execution_audit_passed and siv_result.verified:
+                            logger.info(
+                                f"SIV EXECUTION CONSISTENT (post-repair): "
+                                f"{siv_result.givens_matched}/{siv_result.givens_total} givens localized "
+                                f"(conf={siv_result.confidence:.2f})"
+                            )
+                            if siv_result.confidence >= 0.90:
+                                verification_passed = True
+                                verification_confidence = siv_result.confidence
+                                verification_feedback = (
+                                    f"SIV_EXEC_AUDIT_PASS_POST_REPAIR ({siv_result.givens_matched}/"
+                                    f"{siv_result.givens_total} givens)"
+                                )
+                        elif siv_result is not None and not siv_result.execution_audit_passed:
+                            logger.info(
+                                f"SIV EXECUTION ERROR (post-repair, unresolved): "
+                                f"blueprint_answer={siv_result.blueprint_answer}, computed={answer_num}"
+                            )
+                        elif siv_result is not None:
+                            logger.info(f"SIV LOCALIZATION FAILED (post-repair): {siv_result.failed_givens}")
                 else:
                     logger.info(f"SIV LOCALIZATION FAILED: {siv_result.failed_givens}")
 
@@ -3825,7 +4137,10 @@ Select the most reliable candidate."""
             hypothesis_log = self._structured_hypothesis_testing(
                 problem, expected, blackboard_logic,
                 programmer_response, base_ans,
-                siv_result=siv_result  # [v10.0]
+                siv_result=siv_result,  # [v10.0]
+                # [v13.0] +2 real calls (Mathematician + Programmer) already
+                # spent above if a blueprint-repair attempt fired.
+                pre_sht_calls=3 + (2 if blueprint_repaired else 0),
             )
             mas_answer = hypothesis_log.final_answer
             used_baseline_fallback = False
@@ -3843,6 +4158,16 @@ Select the most reliable candidate."""
             # gsm-hard_1125 (rel_err=5.5e-4) anchored → correct; gsm-hard_542
             # (rel_err=0.0, blueprint answer == gold) NOT anchored → judge
             # emitted "3". Explicit None check below.
+            # [v13.0] Do-no-harm applies HERE too. A fully self-consistent
+            # blueprint (audit passed, all givens reconstruct, rel_err≈0)
+            # still only certifies that the equations are internally
+            # coherent, not that they faithfully translate the problem —
+            # exactly the scope limit the confidence gate's own criterion 7
+            # already respects (SIV-verified skip only when baseline agrees).
+            # Measured on the mixed run: siv_verified WITH baseline agreement
+            # = 22/22 correct; siv_verified WITH baseline disagreement =
+            # 2/14. Anchoring on this signal is safe only when the baseline
+            # is not itself a contradicting, independent vote.
             _siv_rel_err = (siv_result.execution_rel_error
                             if siv_result is not None else None)
             if (siv_result is not None
@@ -3854,16 +4179,30 @@ Select the most reliable candidate."""
                 _siv_str = str(siv_result.blueprint_answer)
                 _siv_num = _extract_last_number(_siv_str)
                 _mas_num = _extract_last_number(str(mas_answer))
+                _base_num = _extract_last_number(str(base_ans))
+                _base_failed = str(base_ans).strip().lower() == "unknown"
+                _baseline_disagrees = (
+                    not _base_failed and _base_num is not None and _siv_num is not None
+                    and abs(_base_num - _siv_num) > 1e-3
+                )
                 if _siv_num is not None and _mas_num is not None and abs(_siv_num - _mas_num) > 1e-3:
-                    logger.info(
-                        f"[v11.4] SIV-anchor override: SHT={mas_answer!r} → "
-                        f"SIV={_siv_str!r} "
-                        f"(audit_passed, all_givens_verified, "
-                        f"rel_err={siv_result.execution_rel_error:.2e})"
-                    )
-                    mas_answer = _siv_str
-                    if hypothesis_log is not None:
-                        hypothesis_log.final_answer = mas_answer
+                    if not _baseline_disagrees:
+                        logger.info(
+                            f"[v11.4] SIV-anchor override: SHT={mas_answer!r} → "
+                            f"SIV={_siv_str!r} "
+                            f"(audit_passed, all_givens_verified, "
+                            f"rel_err={siv_result.execution_rel_error:.2e})"
+                        )
+                        mas_answer = _siv_str
+                        if hypothesis_log is not None:
+                            hypothesis_log.final_answer = mas_answer
+                    else:
+                        logger.info(
+                            f"[v13.0] SIV-anchor SUPPRESSED: fully-verified blueprint="
+                            f"{_siv_str!r} disagrees with baseline={base_ans!r} — "
+                            f"do-no-harm invariant blocks the override "
+                            f"(keeping {mas_answer!r})"
+                        )
         else:
             mas_answer = programmer_response.answer
             used_baseline_fallback = False
@@ -3887,6 +4226,7 @@ Select the most reliable candidate."""
                 "used_baseline_fallback": used_baseline_fallback,
                 "local_hf_fallback": bool(blackboard_logic.get("_local_hf_fallback", False)),  # [v10.2]
                 "extracted_from_cot": bool(blackboard_logic.get("_extracted_from_cot", False)),  # [v11.0]
+                "blueprint_repaired": bool(blackboard_logic.get("_blueprint_repaired", False)),  # [v13.0]
                 "programmer_metrics": programmer_response.quality_metrics,
                 "verification": {
                     "passed": verification_passed,
