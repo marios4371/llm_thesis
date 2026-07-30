@@ -199,9 +199,24 @@ def siv_coverage(df: pd.DataFrame) -> pd.DataFrame:
     """The SIV input funnel — the prerequisite for everything else.
 
     SIV can only verify problems whose blueprint produced equations + numeric
-    givens. If the Mathematician returns an empty blueprint (the dominant
-    failure mode on hard benchmarks, per the paper), SIV never runs. This funnel
-    makes the available-evidence base explicit before any rate is reported.
+    givens, so this funnel makes the available-evidence base explicit before any
+    rate is reported.
+
+    [v14.0] The 'SIV did not run' stage used to be labelled 'blueprint_empty',
+    which was wrong and propagated a wrong number into the paper. Audited on the
+    v13.0 run (mas_full_20260712_02.csv): of the 41 rows where SIV never ran,
+    exactly ONE had an empty blueprint. The rest were 23 SymPy-symbolic-fallback
+    answers (deliberately excluded — auditing them is tautological, since
+    SymbolicSolver.solve_from_blueprint evaluates the very equations SIV would
+    check), 10 rows where the Programmer produced no answer to audit, and 7 whose
+    blueprint carried givens but no equations. Those are four different things and
+    only one of them is an empty blueprint.
+
+    [v14.0] Two new stages break out what happens AFTER SIV runs: rows whose
+    chain could not be evaluated because a name was never defined (Layer 0
+    structural defect — 30/109 on the v13.0 run, previously invisible), and rows
+    whose audit is tautological and must be excluded from detector statistics.
+    Both degrade gracefully to 0 on pre-v14.0 CSVs that lack the columns.
 
     Columns: stage, n, pct_of_total, pct_of_audited.
     """
@@ -229,6 +244,22 @@ def siv_coverage(df: pd.DataFrame) -> pd.DataFrame:
     n_genuine_verified = int((genuine & verified.fillna(False)).sum())
     n_degenerate_verified = int((ran & ~genuine & verified.fillna(False)).sum())
 
+    # [v14.0] Layer 0 / tautology breakouts. Absent on pre-v14.0 CSVs -> 0.
+    def _col_true(name):
+        if name not in df.columns:
+            return 0
+        return int((_to_bool(df[name]).fillna(False) & ran).sum())
+
+    def _col_nonempty_list(name):
+        if name not in df.columns:
+            return 0
+        s = df[name].astype(str).str.strip()
+        return int(((s != "") & (s != "[]") & (s.str.lower() != "nan") & ran).sum())
+
+    n_structural = _col_nonempty_list("siv_undefined_symbols") + \
+        _col_nonempty_list("siv_undeclared_given_keys")
+    n_tautological = _col_true("siv_tautological")
+
     def row(stage, k):
         return {
             "stage": stage,
@@ -239,10 +270,16 @@ def siv_coverage(df: pd.DataFrame) -> pd.DataFrame:
 
     return pd.DataFrame([
         row("total_problems", n),
-        row("blueprint_empty (SIV could not run)", n - n_audited),
+        # NOT "blueprint_empty" — see the docstring. This bucket mixes at least
+        # four distinct causes and must be broken down from solver_agent before
+        # any claim is made about empty blueprints.
+        row("siv_did_not_run (see docstring: NOT all empty blueprints)", n - n_audited),
         row("audited_by_siv", n_audited),
         row("  of which: genuine (>=2 used givens)", n_genuine),
         row("  of which: degenerate (1 given / tautological fallback)", n_degenerate),
+        row("  of which: structural defect (chain unevaluable) [v14.0]", n_structural),
+        row("  of which: tautological audit — EXCLUDE from detector stats [v14.0]",
+            n_tautological),
         row("invertible_chain", n_invertible),
         row("verified (all solvable givens matched)", n_verified),
         row("  of which: genuine-verified", n_genuine_verified),

@@ -1,5 +1,66 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
+VERSION 14.0: Structural Blueprint Repair (SIV Layer 0)
+
+CHANGELOG v14.0 (over v13.0) — driven by a full re-analysis of the v13.0 run
+AND its no-SIV ablation (`mas_full_20260712_02.csv` vs
+`mas_no_siv_20260719.csv`, both n=150, same problems, same preset). The
+ablation had already run but was never analysed: 72.67% with SIV vs 72.00%
+without, paired 3 wins / 2 losses, McNemar p~1.0. SIV was causally NEUTRAL.
+The diagnosis is not that SIV's logic is wrong — as a detector it is close
+to perfect (audit_passed=False implies a wrong blueprint answer 66/66 times,
+100% precision). The diagnosis is attrition, in three measured places:
+
+- [FIX] LAYER-0 STRUCTURAL DEFECTS WERE INVISIBLE. 30 of the 109 audited
+  problems returned blueprint_answer=None / invertible=False. Reproduced
+  locally: this is what happens when an equation's right-hand side names
+  something that is neither a declared given nor an earlier result
+  (`t = givens['a'] * rate`) — parse_expr mints a free Symbol, and the
+  defect only surfaces as a float() failure deep in forward substitution.
+  SIV now scans for this BEFORE the algebra (new SIVResult fields
+  `undefined_symbols`, `undeclared_given_keys`, `has_structural_defect`)
+  and reports the offending name.
+
+- [FIX] THE REPAIR LOOP SKIPPED EXACTLY THOSE 30 ROWS. The guard in
+  _attempt_blueprint_repair read `not siv_result.invertible -> return`,
+  so the worst blueprints in the run were the only ones never repaired.
+  A chain that cannot be evaluated is a STRONGER reason to repair, not a
+  reason to give up. Now gated on `not audit_passed and not skipped`, with
+  the new `skipped` flag separating "SIV had nothing to audit" from "SIV
+  audited and the audit failed" (previously conflated, since both left
+  execution_audit_passed=False).
+
+- [FIX] THE REPAIR PROMPT LED WITH SIV'S WEAKEST OUTPUT. It was built on
+  Layer 2's `failed_givens`, whose precision is 1/n_used (v12.2 finding) —
+  in effect telling the Mathematician "all your givens are suspect".
+  get_error_localization_report now leads with the named structural defect,
+  then Layer 1's concrete discrepancy (blueprint evaluates to X, code
+  produced Y), and demotes the implicated set to last. Measured motivation:
+  fix-rate was 6/39 (15.4%) despite 80.3% detection recall.
+
+- [DESIGN] TAUTOLOGICAL AUDITS ARE NOW FLAGGED, NOT SILENTLY COUNTED. When
+  the audited answer was itself produced by evaluating the blueprint's own
+  equations (SymPy symbolic fallback), Layer 1 passes by construction. The
+  main gate already excluded those rows by agent name; the repair path did
+  NOT, and 4/4 such rows in the v13.0 run came back verified=True while 2
+  of them were plainly wrong. New `tautological` flag marks them so they
+  can be excluded from detector statistics instead of inflating them.
+
+- [NEW] BLUEPRINT PROVENANCE LOGGING. givens/equations/provenance now reach
+  the result dict, so blueprint quality is measurable offline and SIV can be
+  replayed on past runs. Nothing about blueprint content was recorded before,
+  which is why every diagnosis to date had to be inferred from a single
+  numeric column.
+
+Deliberately NOT changed: the do-no-harm invariant and the selection layer.
+On this run the blueprint path is uniquely right on 2/150 problems while the
+baseline is uniquely right on 90, so oracle{baseline, blueprint} = 76.7% vs
+the baseline's 75.3% — any selection-layer work has a +1.4pp ceiling until
+blueprint quality itself improves. Also unchanged: check_correctness's
+absolute 1e-3 tolerance, which mis-grades ~5 gsm-hard rows (both systems
+nearly equally) — left alone deliberately for consistency with runs already
+reported.
+
 VERSION 13.0: Baseline-Anchored Selection (Do-No-Harm Invariant)
 
 CHANGELOG v13.0 (over v12.1) — driven by the first mixed-preset run
@@ -323,7 +384,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "13.0"
+SOLVER_VERSION = "14.0"
 import json
 import time
 import random
@@ -364,7 +425,22 @@ except ImportError:
     print("Warning: 'datasets' library not found. Standard curated set will be used.")
 
 # --- LLM Providers ---
-from openai import OpenAI
+# [v14.0] Guarded like every other provider import below. The only users are the
+# Groq and Together clients (both OpenAI-compatible endpoints); local_hf and the
+# offline test/analysis paths need none of it. Unguarded, this single line made
+# the whole module unimportable without the package, which blocked running the
+# offline test suites on a machine that has no API access.
+try:
+    from openai import OpenAI
+    OPENAI_SDK_AVAILABLE = True
+except ImportError:
+    OPENAI_SDK_AVAILABLE = False
+
+    def OpenAI(*_args, **_kwargs):  # noqa: N802 - stands in for the real class
+        raise ImportError(
+            "The 'openai' package is required for the groq/together providers "
+            "(pip install openai). Not needed for local_hf or offline analysis."
+        )
 
 try:
     import google.generativeai as genai
@@ -834,6 +910,26 @@ _BLUEPRINT_SCHEMA = {
     },
     "required": ["reasoning", "givens", "equations", "expected_answer"],
 }
+
+
+def _after_blueprint_marker(text: str) -> str:
+    """
+    [v14.0] Return only what follows the last 'BLUEPRINT:' marker.
+
+    In reasoning-first mode the Mathematician emits a plain-text derivation and
+    then the JSON. _extract_blueprint_json scans from the first '{' to the last
+    '}', so a derivation containing a brace (a set, an interval, LaTeX) would
+    swallow the whole reply and fail to parse. Slicing at the marker keeps that
+    from happening. No marker (or nothing after it) means the model ignored the
+    format or was truncated mid-derivation: return the text unchanged so the
+    normal extraction and the CoT->blueprint fallback still get their chance.
+    """
+    s = str(text)
+    idx = s.rfind("BLUEPRINT:")
+    if idx == -1:
+        return s
+    tail = s[idx + len("BLUEPRINT:"):]
+    return tail if "{" in tail else s
 
 
 # OPTIMIZED: Better blueprint extraction with structured fallback
@@ -2504,7 +2600,21 @@ class QualityEnhancedMultiAgentSolver:
         #     without SIV signal; baseline disagreement still triggers SHT.
         # This is what baselines.py B5 (MAS-NoSIV) flips.
         self.enable_siv = True
-        
+
+        # [v14.0] Blueprint reasoning mode. See run_mathematician_analysis.
+        #   True  — 'DERIVATION:' free text, then 'BLUEPRINT:' JSON, one call
+        #   False — v13.0 behaviour: JSON only, no scratchpad
+        # Diagnostic basis (v13.0 run, n=150): on gsm8k_test the same model
+        # answers 100% of problems correctly with free CoT, but only 41.7% of
+        # its blueprints evaluate to the gold answer. The prompt demanded
+        # "Return ONLY valid JSON, no preamble" AND "mentally trace through your
+        # equations" — contradictory instructions, since constrained decoding
+        # (which reserved a leading 'reasoning' field for exactly this) is
+        # disabled on the Kaggle transformers build. The model had nowhere to
+        # think. Zero extra LLM calls; falls back to the existing v11.0
+        # CoT->blueprint extraction if the JSON section never arrives.
+        self.math_reasoning_first = True
+
         # [v7.3] Log the configuration
         self._log_model_config()
     
@@ -2594,7 +2704,8 @@ class QualityEnhancedMultiAgentSolver:
     # Mathematician Agent (Architect)
     # -------------------------------------------------------------------------
     
-    def run_mathematician_analysis(self, problem: str, repair_context: str = "") -> dict:
+    def run_mathematician_analysis(self, problem: str, repair_context: str = "",
+                                   prior_blueprint: Optional[dict] = None) -> dict:
         """
         [v9.0] Enhanced Mathematician with:
         1. Self-verification: asks the LLM to mentally compute the answer
@@ -2606,6 +2717,14 @@ class QualityEnhancedMultiAgentSolver:
         report from a FAILED execution audit on this Mathematician's own
         prior blueprint), the user message asks for a corrected re-derivation
         instead of a first attempt. See _attempt_blueprint_repair, the caller.
+
+        [v14.0] prior_blueprint: the blueprint being repaired, echoed back into
+        the prompt. v13.0 sent only the error report, so the model was asked to
+        "re-derive from scratch" while being told which of its variables were
+        implicated — a correction request without the thing to correct. Showing
+        the givens/equations makes the repair a targeted edit, which is what the
+        Layer-0 structural reports (a single named undefined symbol) actually
+        call for.
         """
         
         sys_msg = """You are an expert Mathematician analyzing word problems.
@@ -2659,17 +2778,62 @@ Output:
   "distractor_check": "None"
 }
 """
-        
+
+        # [v14.0] Reasoning-first variant of the same contract. Rule 6 above
+        # ("Return ONLY valid JSON, no preamble") is what removed the model's
+        # scratchpad; here the derivation is explicitly requested FIRST and the
+        # JSON follows a marker, so structuring becomes transcription of a
+        # solution the model has already worked out rather than a single-shot
+        # act of formalisation. The JSON contract itself is unchanged, so
+        # everything downstream (_extract_blueprint_json, the Programmer's
+        # prompt, SIV) sees exactly the same object.
+        if self.math_reasoning_first and not repair_context:
+            sys_msg = sys_msg.replace(
+                "6. Return ONLY valid JSON, no preamble or explanation",
+                "6. OUTPUT IN TWO PARTS, in this order:\n"
+                "   DERIVATION:\n"
+                "   <solve the problem step by step in plain text, doing the actual\n"
+                "    arithmetic, until you reach the numeric answer. Be concise.>\n"
+                "   BLUEPRINT:\n"
+                "   <the JSON object above, and nothing after it>\n"
+                "   The JSON must reproduce the derivation you just wrote: its\n"
+                "   equations, evaluated in order, must yield the answer you reached."
+            ).replace(
+                "EXAMPLE:\nProblem:", "EXAMPLE (JSON part only):\nProblem:"
+            )
+
         if repair_context:
+            prior_txt = ""
+            if prior_blueprint:
+                prior_txt = (
+                    "\nYour PREVIOUS blueprint for this exact problem was:\n"
+                    + json.dumps(
+                        {
+                            "givens": prior_blueprint.get("givens", {}),
+                            "equations": prior_blueprint.get("equations", []),
+                        },
+                        ensure_ascii=False, indent=1,
+                    )[:1200]
+                    + "\n"
+                )
+            user_msg = (
+                f"Problem:\n{problem}\n"
+                f"{prior_txt}\n"
+                f"An automated symbolic checker rejected it:\n{repair_context}\n\n"
+                "Produce a CORRECTED JSON blueprint. Keep whatever was already right; "
+                "change what the report identifies. Requirements it must satisfy:\n"
+                "- every name on the right-hand side of an equation is either "
+                "givens['<key>'] with that key declared to a NUMBER in 'givens', or a "
+                "variable assigned by an EARLIER equation in the list;\n"
+                "- the last equation assigns to `answer`;\n"
+                "- the values in 'givens' are the numbers the problem text actually "
+                "states, used the way the problem describes them.\n"
+                "Return ONLY the corrected JSON blueprint."
+            )
+        elif self.math_reasoning_first:
             user_msg = (
                 f"Problem:\n{problem}\n\n"
-                f"Your PREVIOUS blueprint for this exact problem failed verification:\n"
-                f"{repair_context}\n\n"
-                "Re-read the problem and re-derive the blueprint from scratch. The "
-                "variables named above did not reconstruct correctly from your "
-                "equations -- re-check which numbers in the problem text are the "
-                "true givens, and that each equation uses them the way the problem "
-                "actually describes. Return the corrected JSON blueprint."
+                "Write DERIVATION: then BLUEPRINT: exactly as instructed."
             )
         else:
             user_msg = f"Problem:\n{problem}\n\nAnalyze and return the JSON blueprint."
@@ -2678,16 +2842,20 @@ Output:
             {"role": "system", "content": sys_msg},
             {"role": "user", "content": user_msg}
         ]
-        
+
         # [v11.2] Plain call — instruction-tuned models (Qwen2.5-7B-Instruct, API)
         # follow the JSON-blueprint prompt directly. Constrained decoding (json_schema)
         # is left available in call_model for CoT-only models, but lm-format-enforcer
         # is incompatible with the Kaggle transformers build, so we rely on the model.
         # max_tokens 1536: room for the full blueprint without mid-object truncation.
+        # [v14.0] reasoning-first needs room for the derivation AS WELL as the
+        # JSON; too small a budget truncates before the BLUEPRINT: section and
+        # silently sends every problem down the CoT-extraction fallback.
         res = self._get_client(AgentRole.MATHEMATICIAN).call_model(
-            msgs, temperature=self.math_temp, max_tokens=1536,
+            msgs, temperature=self.math_temp,
+            max_tokens=2304 if (self.math_reasoning_first and not repair_context) else 1536,
         )
-        blueprint = _extract_blueprint_json(str(res))
+        blueprint = _extract_blueprint_json(_after_blueprint_marker(str(res)))
 
         res2 = None  # [v10.2] kept for CoT fallback scoping below
         # [v9.0] If blueprint is empty (JSON parse failed), retry with simpler prompt.
@@ -2847,14 +3015,33 @@ Output ONLY this JSON, nothing else:
         ORIGINAL triple unchanged whenever repair wasn't attempted or didn't
         produce something usable, so the caller never needs a separate
         repaired/not-repaired branch.
+
+        [v14.0] The eligibility test changed. It used to be
+
+            if ... or not siv_result.invertible: return   # skip
+
+        which excluded every blueprint whose equation chain could not be
+        inverted — i.e. precisely the 30/109 rows of the v13.0 run whose chain
+        could not even be EVALUATED (undefined names on an equation's
+        right-hand side, blueprint_answer=None). Those are the most clearly
+        defective blueprints in the run and were the only ones never offered a
+        repair. An unevaluable chain is a stronger reason to re-derive, not a
+        reason to give up. Now: repair whenever the audit did not pass and SIV
+        actually ran (`skipped` distinguishes "nothing to audit" from
+        "audited and failed" — both leave execution_audit_passed=False).
         """
-        if siv_result is None or siv_result.execution_audit_passed or not siv_result.invertible:
+        if siv_result is None or siv_result.skipped or siv_result.execution_audit_passed:
             return blueprint, programmer_response, siv_result, False
 
         error_report = SymbolicInverseVerifier.get_error_localization_report(siv_result)
-        logger.info(f"Blueprint repair attempt — SIV error report: {error_report[:200]}")
+        _kind = "structural" if siv_result.has_structural_defect else "arithmetic"
+        logger.info(
+            f"Blueprint repair attempt ({_kind}) — SIV error report: {error_report[:300]}"
+        )
 
-        new_blueprint = self.run_mathematician_analysis(problem, repair_context=error_report)
+        new_blueprint = self.run_mathematician_analysis(
+            problem, repair_context=error_report, prior_blueprint=blueprint
+        )
         if not new_blueprint.get("equations") or not new_blueprint.get("givens"):
             logger.info("Blueprint repair: Mathematician returned nothing usable — keeping original")
             return blueprint, programmer_response, siv_result, False
@@ -2868,6 +3055,23 @@ Output ONLY this JSON, nothing else:
         new_siv_result = None
         if SYMPY_AVAILABLE and new_blueprint.get("equations"):
             new_siv_result = SymbolicInverseVerifier.verify(new_blueprint, new_answer_num)
+            # [v14.0] If the repaired blueprint's answer came from the SymPy
+            # symbolic fallback, that answer IS the evaluation of these same
+            # equations (SymbolicSolver.solve_from_blueprint execs them), so
+            # Layer 1 passes by construction and certifies nothing. The main SIV
+            # gate in solve() excludes such answers by agent name; this path did
+            # not, and on the v13.0 run all 4 rows that leaked through came back
+            # verified=True with 2 of the 4 blueprint answers plainly wrong.
+            # Flag rather than drop: the verdict stays visible in the logs and
+            # CSV, but it is excluded from the confidence boost below and can be
+            # filtered out of detector statistics.
+            if "SymPy" in (new_response.agent or ""):
+                new_siv_result.tautological = True
+                logger.info(
+                    "Post-repair audit marked TAUTOLOGICAL (answer produced by the "
+                    "blueprint's own equations via SymPy fallback) — carries no "
+                    "verification evidence."
+                )
 
         logger.info(
             f"Blueprint repair: original audit_passed={siv_result.execution_audit_passed} -> "
@@ -4078,7 +4282,9 @@ Select the most reliable candidate."""
                                 f"{siv_result.givens_matched}/{siv_result.givens_total} givens localized "
                                 f"(conf={siv_result.confidence:.2f})"
                             )
-                            if siv_result.confidence >= 0.90:
+                            # [v14.0] A tautological pass earns no confidence: the
+                            # audited answer was produced by these very equations.
+                            if siv_result.confidence >= 0.90 and not siv_result.tautological:
                                 verification_passed = True
                                 verification_confidence = siv_result.confidence
                                 verification_feedback = (
@@ -4227,6 +4433,20 @@ Select the most reliable candidate."""
                 "local_hf_fallback": bool(blackboard_logic.get("_local_hf_fallback", False)),  # [v10.2]
                 "extracted_from_cot": bool(blackboard_logic.get("_extracted_from_cot", False)),  # [v11.0]
                 "blueprint_repaired": bool(blackboard_logic.get("_blueprint_repaired", False)),  # [v13.0]
+                # [v14.0] Blueprint content + provenance. Until now NOTHING about the
+                # blueprint itself was recorded, so blueprint quality could only be
+                # inferred from siv_blueprint_answer and SIV could not be replayed
+                # offline on a finished run. These three fields are what make
+                # "did this change improve the blueprints?" a measurable question.
+                "blueprint_givens": json.dumps(
+                    blackboard_logic.get("givens", {}), ensure_ascii=False)[:1000],
+                "blueprint_equations": json.dumps(
+                    blackboard_logic.get("equations", []), ensure_ascii=False)[:1500],
+                "blueprint_provenance": (
+                    "tautological" if blackboard_logic.get("_local_hf_fallback")
+                    else "extracted_from_cot" if blackboard_logic.get("_extracted_from_cot")
+                    else "primary_json"
+                ),
                 "programmer_metrics": programmer_response.quality_metrics,
                 "verification": {
                     "passed": verification_passed,
@@ -4250,8 +4470,13 @@ Select the most reliable candidate."""
                 "invertible": siv_result.invertible if siv_result else None,
                 "failed_givens": siv_result.failed_givens if siv_result else [],
                 "unused_givens": siv_result.unused_givens if siv_result else [],
+                # Layer 0: structural defects [v14.0]
+                "undefined_symbols": siv_result.undefined_symbols if siv_result else [],
+                "undeclared_given_keys": siv_result.undeclared_given_keys if siv_result else [],
                 # Meta
                 "verifies_translation": False,  # Explicit limitation — always False
+                "skipped": siv_result.skipped if siv_result else None,          # [v14.0]
+                "tautological": siv_result.tautological if siv_result else None,  # [v14.0]
                 "trace": siv_result.trace[:400] if siv_result else "",
             },
         }
@@ -4287,7 +4512,8 @@ class QualityAwarePipeline:
                  enable_siv: bool = True,
                  enable_sht: bool = True,
                  evaluation_mode: bool = False,
-                 dataset_seed: Optional[int] = None):
+                 dataset_seed: Optional[int] = None,
+                 math_reasoning_first: bool = True):
         """
         [UPDATED v10.4] Supports heterogeneous model configuration + ablation flags
         + evaluation_mode safety net.
@@ -4371,6 +4597,10 @@ class QualityAwarePipeline:
         # [v10.2] Apply ablation flags from constructor.
         self.solver.enable_siv = enable_siv
         self.solver.enable_hypothesis_testing = enable_sht
+        # [v14.0] Blueprint reasoning mode — see QualityEnhancedMultiAgentSolver
+        # and pretest_blueprint_mode.py, which measures the two settings against
+        # each other on a handful of problems before a full run commits to one.
+        self.solver.math_reasoning_first = math_reasoning_first
         # Persist for logging/CSV.
         self.enable_siv = enable_siv
         self.enable_sht = enable_sht
@@ -4378,6 +4608,10 @@ class QualityAwarePipeline:
             logger.info(
                 f"[v10.2 ablation] enable_siv={enable_siv}, enable_sht={enable_sht}"
             )
+        logger.info(
+            f"[v14.0] blueprint mode: "
+            f"{'reasoning-first (DERIVATION -> BLUEPRINT)' if math_reasoning_first else 'json-only (v13.0)'}"
+        )
 
     def _extract_gold_answer(self, text: Any) -> Optional[float]:
         text = str(text)
@@ -4507,8 +4741,17 @@ class QualityAwarePipeline:
                 "siv_invertible": r.get("siv", {}).get("invertible", None),
                 "siv_failed_givens": str(r.get("siv", {}).get("failed_givens", [])),
                 "siv_unused_givens": str(r.get("siv", {}).get("unused_givens", [])),
+                # Layer 0 [v14.0]
+                "siv_undefined_symbols": str(r.get("siv", {}).get("undefined_symbols", [])),
+                "siv_undeclared_given_keys": str(r.get("siv", {}).get("undeclared_given_keys", [])),
                 # Meta
                 "siv_verifies_translation": False,  # Explicit limitation marker
+                "siv_skipped": r.get("siv", {}).get("skipped", None),
+                "siv_tautological": r.get("siv", {}).get("tautological", None),
+                # [v14.0] blueprint provenance — see solve()'s result dict
+                "blueprint_provenance": r.get("mas", {}).get("blueprint_provenance", ""),
+                "blueprint_givens": r.get("mas", {}).get("blueprint_givens", ""),
+                "blueprint_equations": r.get("mas", {}).get("blueprint_equations", ""),
                 **sht_data[i],
                 **r.get("model_config", {}),
             } for i, r in enumerate(detailed)

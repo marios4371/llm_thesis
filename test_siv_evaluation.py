@@ -86,7 +86,12 @@ def test_coverage():
     print("test_coverage")
     cov = se.siv_coverage(_make_full_df()).set_index("stage")["n"].to_dict()
     check("total = 10", cov["total_problems"] == 10)
-    check("empty blueprint = 2", cov["blueprint_empty (SIV could not run)"] == 2)
+    # [v14.0] renamed from "blueprint_empty (SIV could not run)": that label was
+    # wrong — the bucket mixes empty blueprints with tautologically-excluded
+    # SymPy answers, answerless rows and equation-less blueprints. See
+    # siv_coverage's docstring for the audited breakdown.
+    check("siv did not run = 2",
+          cov["siv_did_not_run (see docstring: NOT all empty blueprints)"] == 2)
     check("audited = 8", cov["audited_by_siv"] == 8)
     # invertible: p3,p4,p5,p6,p7,p8,p10 = 7 (p9 invertible=False)
     check("invertible = 7", cov["invertible_chain"] == 7)

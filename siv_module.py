@@ -138,8 +138,32 @@ class SIVResult:
                          of Layer 2's diagnostic value.
         invertible:      Whether the equation chain was symbolically invertible at all
 
+    Structural Defect Fields (Layer 0 — pre-algebraic, [v14.0]):
+        undefined_symbols:     Names appearing on the right-hand side of an equation
+                               that are neither a declared given nor assigned by an
+                               earlier equation. Their presence makes the chain
+                               unevaluable: forward substitution leaves a free symbol
+                               and float() raises. Measured on the v13.0 run, 30/109
+                               audited problems died exactly here (blueprint_answer
+                               None, invertible False) — the single largest silent
+                               SIV failure mode, and a precisely reportable one.
+        undeclared_given_keys: Keys used as givens['<key>'] that are absent from the
+                               blueprint's givens dict, or declared non-numerically.
+                               Detected by a deterministic pre-parse scan, so this is
+                               reported even when SymPy cannot parse the chain at all.
+
     Meta:
         verifies_translation: Always False. SIV cannot verify NL→math correctness.
+        skipped:              True when SIV never ran (no equations / no numeric
+                              givens / no SymPy). Distinguishes "SIV had nothing to
+                              audit" from "SIV audited and the audit failed" — the
+                              two are NOT interchangeable for repair triggering or
+                              for coverage statistics.
+        tautological:         True when the audited answer was itself produced by
+                              evaluating this blueprint's own equations (e.g. the
+                              SymPy symbolic fallback). Layer 1 then passes by
+                              construction and carries zero verification evidence;
+                              such rows must be excluded from detector statistics.
         trace:                Human-readable audit trace
     """
     # Layer 1: Execution audit
@@ -157,10 +181,21 @@ class SIVResult:
     unused_givens: List[str] = field(default_factory=list)
     invertible: bool = False
 
+    # Layer 0: Structural defects [v14.0]
+    undefined_symbols: List[str] = field(default_factory=list)
+    undeclared_given_keys: List[str] = field(default_factory=list)
+
     # Meta
     verifies_translation: bool = False   # Explicit limitation marker — always False
+    skipped: bool = False                # [v14.0] SIV had nothing to audit
+    tautological: bool = False           # [v14.0] answer came from these same equations
     computed_answer: Optional[float] = None  # The Programmer's answer that was audited
     trace: str = ""
+
+    @property
+    def has_structural_defect(self) -> bool:
+        """[v14.0] The blueprint is malformed as *code*, before any algebra."""
+        return bool(self.undefined_symbols or self.undeclared_given_keys)
 
 
 # =====================================================================
@@ -216,6 +251,7 @@ class SymbolicInverseVerifier:
             return SIVResult(
                 trace="SIV skipped: SymPy not available",
                 verifies_translation=False,
+                skipped=True,
             )
 
         givens = blueprint.get("givens", {})
@@ -231,12 +267,14 @@ class SymbolicInverseVerifier:
             return SIVResult(
                 trace="SIV skipped: no numeric givens in blueprint",
                 verifies_translation=False,
+                skipped=True,
             )
 
         if not equations:
             return SIVResult(
                 trace="SIV skipped: no equations in blueprint",
                 verifies_translation=False,
+                skipped=True,
             )
 
         trace_lines = ["[SIV] Symbolic Execution Audit"]
@@ -247,21 +285,67 @@ class SymbolicInverseVerifier:
             "Blueprint–problem translation errors are outside SIV's detection scope."
         )
 
-        # ── Step 1: Build the symbolic forward chain ──────────────────────────
-        symbolic_expr, given_symbols = SymbolicInverseVerifier._build_symbolic_chain(
-            equations, numeric_givens, trace_lines
+        # ── Step 0: Structural scan (pre-algebraic) [v14.0] ───────────────────
+        # Runs BEFORE SymPy so a malformed blueprint is reported precisely even
+        # when the chain cannot be parsed at all. Both defects below make the
+        # chain unevaluable, and both are mechanically fixable by the
+        # Mathematician if named — unlike Layer 2's implicated-variable set.
+        undeclared_keys = SymbolicInverseVerifier._scan_undeclared_given_keys(
+            equations, givens, numeric_givens
+        )
+        undefined_syms = SymbolicInverseVerifier._scan_undefined_names(
+            equations, numeric_givens
         )
 
+        # ── Step 1: Build the symbolic forward chain ──────────────────────────
+        symbolic_expr, given_symbols, residual_syms = \
+            SymbolicInverseVerifier._build_symbolic_chain(
+                equations, numeric_givens, trace_lines
+            )
+        # The source scan names the culprit; the SymPy residual only backs it up
+        # when the scan found nothing (see _scan_undefined_names on why the
+        # residual's names are unreliable under implicit multiplication).
+        if not undefined_syms and residual_syms:
+            undefined_syms = residual_syms
+
         if symbolic_expr is None:
+            if undeclared_keys:
+                trace_lines.append(
+                    f"  [Structural] Undeclared given keys referenced: {undeclared_keys}"
+                )
             return SIVResult(
                 trace="\n".join(trace_lines) + "\n  FAILED: Could not build symbolic chain",
                 execution_audit_passed=False,
                 verifies_translation=False,
                 givens_total=len(numeric_givens),
-                invertible=False
+                invertible=False,
+                undefined_symbols=undefined_syms,
+                undeclared_given_keys=undeclared_keys,
+                computed_answer=computed_answer,
             )
 
         trace_lines.append(f"  Symbolic blueprint expression: {symbolic_expr}")
+
+        # A stray free symbol makes forward substitution unevaluable, which in
+        # turn makes every inverse solve fail. Return the structural verdict
+        # directly instead of burning a SymPy solve per given to rediscover it.
+        if undefined_syms or undeclared_keys:
+            trace_lines.append(
+                f"  [Structural] ✗ Chain is not evaluable — undefined names: "
+                f"{undefined_syms or undeclared_keys}. "
+                "Every right-hand-side name must be a declared numeric given or a "
+                "variable assigned by an earlier equation."
+            )
+            return SIVResult(
+                trace="\n".join(trace_lines),
+                execution_audit_passed=False,
+                verifies_translation=False,
+                givens_total=len(numeric_givens),
+                invertible=False,
+                undefined_symbols=undefined_syms,
+                undeclared_given_keys=undeclared_keys,
+                computed_answer=computed_answer,
+            )
 
         # ── Step 2: Execution Audit (Layer 1 — forward) ───────────────────────
         # Substitute ALL numeric givens into symbolic expr and compare to computed_answer.
@@ -347,11 +431,103 @@ class SymbolicInverseVerifier:
             failed_givens=failed_names,
             unused_givens=unused_givens,
             invertible=solvable_count > 0,
+            # Layer 0 — empty by construction: a structural defect returns above
+            undefined_symbols=[],
+            undeclared_given_keys=[],
             # Meta
             verifies_translation=False,
             computed_answer=computed_answer,
             trace="\n".join(trace_lines),
         )
+
+    # =========================================================================
+    # Layer 0: Structural scan (pre-algebraic) [v14.0]
+    # =========================================================================
+
+    @staticmethod
+    def _scan_undeclared_given_keys(
+        equations: List[str],
+        givens: Dict[str, Any],
+        numeric_givens: Dict[str, float]
+    ) -> List[str]:
+        """
+        Deterministic pre-parse scan: every givens['<key>'] reference in the
+        equations whose key is not declared with a numeric value.
+
+        Two sub-cases, both fatal to evaluation and both worth naming in a repair
+        prompt: the key is absent from 'givens' entirely (hallucinated/typo'd), or
+        it is declared with a non-numeric value (a string slipped into givens).
+
+        Runs on the raw equation strings, so it works even when SymPy's parser
+        cannot get past the reference (parse_expr treats an unresolved `givens`
+        as a Symbol and raises "'Symbol' object is not subscriptable").
+        """
+        missing: List[str] = []
+        for eq in equations:
+            for key in re.findall(r"givens\[\s*['\"]([^'\"]+)['\"]\s*\]", str(eq)):
+                if key not in numeric_givens and key not in missing:
+                    suffix = "" if key not in givens else " (declared but not numeric)"
+                    missing.append(f"{key}{suffix}")
+        return missing
+
+    # Names an equation's right-hand side may use without declaring them: the
+    # callables _build_symbolic_chain injects into local_dict, plus the math
+    # names SymbolicSolver exposes and SymPy's own constants.
+    _ALLOWED_FREE_NAMES = frozenset({
+        "abs", "max", "min", "ceil", "floor", "sqrt", "round", "int", "float",
+        "sum", "len", "pow", "divmod", "log", "log10", "exp", "pi", "e", "E",
+        "Abs", "Max", "Min", "N", "Rational", "math",
+        "True", "False", "None", "and", "or", "not", "if", "else", "for", "in",
+    })
+
+    @staticmethod
+    def _scan_undefined_names(
+        equations: List[str],
+        numeric_givens: Dict[str, float]
+    ) -> List[str]:
+        """
+        [v14.0] Source-level scan for names used but never defined.
+
+        A name on an equation's right-hand side is legitimate only if it is a
+        declared numeric given (bare names resolve to the same Symbol the chain
+        builder creates), a variable assigned by an EARLIER equation, or one of
+        the callables/constants the evaluator injects. Anything else is a defect.
+
+        Why this is a source scan and not a SymPy free_symbols check: the chain
+        builder parses with `implicit_multiplication_application`, so an
+        undefined name like `rate` comes back as the product r*a*t*e and its
+        free symbols are the four letters. That is useless in a repair prompt —
+        the whole point is to hand the Mathematician the actual name it forgot to
+        define. The SymPy residual is kept in _build_symbolic_chain only as a
+        last-resort fallback for defects this scan does not catch.
+        """
+        defined = set(numeric_givens)
+        undefined: List[str] = []
+
+        for raw_eq in equations:
+            eq = str(raw_eq).strip()
+            if not eq or eq.startswith("#") or "=" not in eq:
+                continue
+            lhs, rhs = eq.split("=", 1)
+
+            # Drop givens[...] references (handled by the undeclared-key scan)
+            # and any string literals, so their contents are not read as names.
+            rhs = re.sub(r"givens\[\s*['\"][^'\"]*['\"]\s*\]", " ", rhs)
+            rhs = re.sub(r"'[^']*'|\"[^\"]*\"", " ", rhs)
+            # Drop attribute access (math.floor -> math) and call targets, so an
+            # unknown *function* name is not reported as an unknown *variable*.
+            rhs = re.sub(r"\.\s*[A-Za-z_][A-Za-z_0-9]*", " ", rhs)
+            rhs = re.sub(r"[A-Za-z_][A-Za-z_0-9]*\s*\(", " ( ", rhs)
+
+            for name in re.findall(r"[A-Za-z_][A-Za-z_0-9]*", rhs):
+                if (name not in defined
+                        and name not in SymbolicInverseVerifier._ALLOWED_FREE_NAMES
+                        and name not in undefined):
+                    undefined.append(name)
+
+            defined.add(lhs.strip())
+
+        return undefined
 
     # =========================================================================
     # Layer 1: Execution Audit (forward)
@@ -447,11 +623,19 @@ class SymbolicInverseVerifier:
         equations: List[str],
         numeric_givens: Dict[str, float],
         trace_lines: List[str]
-    ) -> Tuple[Optional[Any], Dict[str, Any]]:
+    ) -> Tuple[Optional[Any], Dict[str, Any], List[str]]:
         """
         Build a single SymPy expression for 'answer' in terms of given symbols.
 
-        Returns (answer_expression, given_symbols_dict), or (None, {}) on failure.
+        Returns (answer_expression, given_symbols_dict, undefined_symbols).
+        On failure the first element is None; undefined_symbols is still returned
+        so the caller can report *why* rather than a bare "could not build chain".
+
+        [v14.0] undefined_symbols are the free symbols left in the answer
+        expression that are not declared givens — i.e. names the blueprint used
+        without ever defining them. parse_expr silently mints a Symbol for such a
+        name, so the defect stays invisible until float() fails during forward
+        substitution; naming it here is what makes it repairable.
         """
         try:
             given_symbols = {}
@@ -527,16 +711,38 @@ class SymbolicInverseVerifier:
                             last_result = expr
                         else:
                             trace_lines.append(f"  Fallback parse also failed for: {eq_str}")
-                            return None, {}
+                            return None, {}, []
                     except Exception:
-                        return None, {}
+                        return None, {}, []
 
             answer_expr = computed.get("answer", last_result)
-            return answer_expr, given_symbols
+            undefined = SymbolicInverseVerifier._collect_undefined_symbols(
+                answer_expr, given_symbols
+            )
+            return answer_expr, given_symbols, undefined
 
         except Exception as e:
             trace_lines.append(f"  FATAL in _build_symbolic_chain: {type(e).__name__}: {e}")
-            return None, {}
+            return None, {}, []
+
+    @staticmethod
+    def _collect_undefined_symbols(
+        answer_expr: Any,
+        given_symbols: Dict[str, Any]
+    ) -> List[str]:
+        """
+        Free symbols in the built expression that are not declared givens.
+
+        A legitimately unused given is the opposite case (declared but absent from
+        the expression) and is reported separately by _find_unused_givens.
+        """
+        if answer_expr is None:
+            return []
+        try:
+            declared = set(given_symbols.values())
+            return sorted(str(s) for s in answer_expr.free_symbols - declared)
+        except Exception:
+            return []
 
     @staticmethod
     def _fallback_parse(
@@ -737,6 +943,34 @@ class SymbolicInverseVerifier:
         natural-language reasoning on whether the blueprint models the problem.
         """
         lines = ["SIV Fault Localization Report:"]
+
+        # [v14.0] Layer 0 FIRST. Ordering is deliberate: a structural defect is a
+        # single, named, mechanically fixable error, whereas Layer 2's implicated
+        # set is at best 1/n_used precise. Leading with the weaker signal (as this
+        # report did through v13.0) told the Mathematician "all your givens are
+        # suspect" even when the real problem was one undefined name — which is
+        # the diagnosed reason the repair loop's fix-rate sat at 6/39.
+        if result.has_structural_defect:
+            lines.append(
+                "  [Layer 0 — Structure] ✗ The equation chain cannot be evaluated at all:"
+            )
+            for sym in result.undefined_symbols:
+                lines.append(
+                    f"    ✗ '{sym}' is used on the right-hand side of an equation but is "
+                    f"never defined — it is not a key in 'givens' and no earlier equation "
+                    f"assigns it."
+                )
+            for key in result.undeclared_given_keys:
+                lines.append(
+                    f"    ✗ givens['{key}'] is referenced but not declared as a numeric given."
+                )
+            lines.append(
+                "    → FIX THIS FIRST: every name on the right-hand side of an equation must "
+                "be either givens['<key>'] with that key declared to a number, or a variable "
+                "assigned by an earlier equation in the list. Nothing else about the blueprint "
+                "could be checked until this is resolved."
+            )
+            return "\n".join(lines)
 
         # Layer 1: Execution audit
         if result.blueprint_answer is not None:
