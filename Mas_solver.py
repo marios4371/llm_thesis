@@ -1,5 +1,41 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
+VERSION 14.1: Candidate Telemetry + Configurable Do-No-Harm Anchor
+
+CHANGELOG v14.1 (over v14.0) — v14.0 was measured and did NOT move the needle:
+on the same 140 problems it scored 71.43% vs v13.0's 72.86% (12 wins / 14
+losses, noise), blueprint quality 31.9% vs 32.9%, repair fix-rate 18% vs 15.4%.
+Layer 0 detection worked (15 undefined symbols + 12 undeclared given keys named,
+all previously invisible) but detection did not convert into repair success. It
+also cost +27% runtime, which is what pushed the run past Kaggle's 12h wall at
+140/150. Conclusion: the verifier is not the bottleneck and cannot be made into
+one by more verifier engineering.
+
+What the numbers point at instead, from the v12.0 set (n=150, identical
+problems): PAL-style code 88.00%, zero-shot CoT 80.67%, MAS-SHT final 82.67% —
+the system loses 13 problems PAL gets right and wins 5, and oracle over its own
+candidates is 92.00%. The system already contains a component stronger than what
+it ships. v13.0's do-no-harm invariant anchors on the zero-shot baseline, i.e.
+the weaker of the two derivations.
+
+- [NEW] Candidate telemetry. solve() has always built result['sht']['candidates']
+  but nothing ever wrote it out, so the marginal accuracy of the Programmer/
+  primary — the one number needed to settle what to anchor on — was unmeasurable
+  in every run to date. The notebook now flattens each candidate to a cand_*
+  column, and replay_selection.py re-runs any selection policy offline against a
+  finished CSV. Counterfactuals now cost seconds, not a 12h commit.
+- [NEW] `do_no_harm_anchor` ('baseline' | 'primary'). NOT flipped by default:
+  the counter-evidence (primary 8/55 vs baseline 29/55 on the v12.2 mixed run)
+  is real but confounded — it covers only judge_fallback rows, a subset SELECTED
+  by primary-vs-baseline disagreement, which says nothing about marginal
+  accuracy. Measure first with the new columns, then flip.
+- [NEW] Cross-commit resume (notebook). A Kaggle commit starts with an empty
+  /kaggle/working, so a run that hit the 12h wall restarted from problem 0 —
+  the reason the same run kept dying in the same place. Completed problems are
+  now recovered from any attached CSV, matched on its 'system' column rather
+  than its filename (downloaded outputs get renamed by hand) and refused when
+  solver_version differs.
+
 VERSION 14.0: Structural Blueprint Repair (SIV Layer 0)
 
 CHANGELOG v14.0 (over v13.0) — driven by a full re-analysis of the v13.0 run
@@ -384,7 +420,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "14.0"
+SOLVER_VERSION = "14.1"
 import json
 import time
 import random
@@ -2615,6 +2651,12 @@ class QualityEnhancedMultiAgentSolver:
         # CoT->blueprint extraction if the JSON section never arrives.
         self.math_reasoning_first = True
 
+        # [v14.1] Which candidate the do-no-harm invariant falls back to when
+        # nothing is corroborated. "baseline" = v13.0 behaviour (zero-shot CoT);
+        # "primary" = the PAL-style Programmer. See _select_by_evidence's caller
+        # for the measured argument on each side.
+        self.do_no_harm_anchor = "baseline"
+
         # [v7.3] Log the configuration
         self._log_model_config()
     
@@ -4151,15 +4193,46 @@ Select the most reliable candidate."""
             return log
 
         log.judge_reasoning = f"[{evidence_note}]"[:500]
-        baseline_c = next(
+        # [v14.1] The do-no-harm ANCHOR is now configurable. v13.0 hardcoded it
+        # to the zero-shot CoT baseline, which caps the system at roughly the
+        # baseline's own accuracy plus whatever corroboration recovers. On the
+        # v12.0 problem set that anchor is measurably the WEAKER of the two
+        # available derivations: PAL-style code 88.0% vs zero-shot CoT 80.67%
+        # (n=150, identical problems), and MAS-SHT finished at 82.67% while
+        # losing 13 problems PAL got right and winning only 5 -- i.e. the
+        # invariant was protecting the wrong candidate.
+        #
+        # NOT flipped by default: the counter-evidence is real but confounded.
+        # On the v12.2 mixed run the primary scored 8/55 against the baseline's
+        # 29/55 -- but only on judge_fallback rows, a subset SELECTED by
+        # primary-vs-baseline disagreement, which says nothing about the
+        # primary's marginal accuracy. That number has never been measured
+        # because no run ever logged the primary's answer. The v14.1 candidate
+        # columns fix that; decide from the data, then flip this.
+        _anchor_id = getattr(self, "do_no_harm_anchor", "baseline")
+        anchor_c = next(
             (c for c in log.candidates
-             if c.hypothesis_id == "baseline" and c.parsed_answer is not None),
+             if c.hypothesis_id == _anchor_id and c.parsed_answer is not None),
             None,
         )
-        if baseline_c is not None:
-            log.triage_result = "baseline_default"
-            log.final_answer = baseline_c.answer
-            log.final_strategy = "baseline_do_no_harm"
+        if anchor_c is None and _anchor_id != "baseline":
+            anchor_c = next(
+                (c for c in log.candidates
+                 if c.hypothesis_id == "baseline" and c.parsed_answer is not None),
+                None,
+            )
+            if anchor_c is not None:
+                logger.info(
+                    f"do-no-harm anchor {_anchor_id!r} unusable on this problem "
+                    "— falling back to the baseline anchor"
+                )
+        if anchor_c is not None:
+            log.triage_result = (
+                "baseline_default" if anchor_c.hypothesis_id == "baseline"
+                else f"{anchor_c.hypothesis_id}_default"
+            )
+            log.final_answer = anchor_c.answer
+            log.final_strategy = f"{anchor_c.hypothesis_id}_do_no_harm"
         else:
             # Baseline itself unusable — the invariant has no anchor; fall
             # back deterministically (executed primary, then anything).
@@ -4513,7 +4586,8 @@ class QualityAwarePipeline:
                  enable_sht: bool = True,
                  evaluation_mode: bool = False,
                  dataset_seed: Optional[int] = None,
-                 math_reasoning_first: bool = True):
+                 math_reasoning_first: bool = True,
+                 do_no_harm_anchor: str = "baseline"):
         """
         [UPDATED v10.4] Supports heterogeneous model configuration + ablation flags
         + evaluation_mode safety net.
@@ -4601,6 +4675,12 @@ class QualityAwarePipeline:
         # and pretest_blueprint_mode.py, which measures the two settings against
         # each other on a handful of problems before a full run commits to one.
         self.solver.math_reasoning_first = math_reasoning_first
+        # [v14.1] "baseline" (v13.0 default) or "primary" (PAL-style Programmer)
+        if do_no_harm_anchor not in ("baseline", "primary"):
+            raise ValueError(
+                f"do_no_harm_anchor must be 'baseline' or 'primary', got {do_no_harm_anchor!r}"
+            )
+        self.solver.do_no_harm_anchor = do_no_harm_anchor
         # Persist for logging/CSV.
         self.enable_siv = enable_siv
         self.enable_sht = enable_sht
@@ -4608,6 +4688,7 @@ class QualityAwarePipeline:
             logger.info(
                 f"[v10.2 ablation] enable_siv={enable_siv}, enable_sht={enable_sht}"
             )
+        logger.info(f"[v14.1] do-no-harm anchor: {do_no_harm_anchor}")
         logger.info(
             f"[v14.0] blueprint mode: "
             f"{'reasoning-first (DERIVATION -> BLUEPRINT)' if math_reasoning_first else 'json-only (v13.0)'}"
