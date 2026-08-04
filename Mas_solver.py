@@ -1,5 +1,32 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
+VERSION 14.3: Dead-Agent Guard (solver-side)
+
+CHANGELOG v14.3 (over v14.2) — a second full 150-problem run (2026-08-04) was
+burned exactly as the 2026-07-31 one was: the Mathematician errored on every
+call, so every blueprint was empty, SIV never ran, and SHT returned the baseline
+verbatim on all 150 rows. The CSV looks like a finished MAS run whose accuracy
+happens to equal the baseline's to the decimal.
+
+The cell-level fail-fast added after the first incident did not fire, and the
+reason matters: the Kaggle notebook's `git pull` refreshes the .py files but NOT
+the notebook's own cells. That run carried solver_version 14.2 from git while
+still executing v14.0 cell code — every notebook-side guard, column and resume
+path was absent. Guards therefore belong in the solver, not in a cell.
+
+- [NEW] DeadAgentError + DEAD_AGENT_THRESHOLD (5 consecutive failures).
+  Deliberately derived from BaseException, not Exception: every runner wraps its
+  per-problem call in `except Exception` so one bad problem cannot kill a
+  multi-hour job, which is right for a problem-level failure and fatal for a
+  run-level one. Inheriting from BaseException lets this pass through those
+  handlers the way KeyboardInterrupt does, because it means the same thing.
+  Counts CONSECUTIVE failures and resets on any success, so a transient hiccup
+  or one pathological problem cannot trip it. Cost of a dead run drops from
+  ~5-8 GPU-hours to ~10 minutes.
+- Each failed Mathematician call now logs the raw error text, so the underlying
+  cause (OutOfMemoryError, load failure) is visible in the log instead of being
+  inferred from an all-empty CSV afterwards.
+
 VERSION 14.2: Deterministic Blueprint Repair
 
 CHANGELOG v14.2 (over v14.1) — the v14.0 run was the first to record blueprint
@@ -463,7 +490,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "14.2"
+SOLVER_VERSION = "14.3"
 import json
 import time
 import random
@@ -1421,6 +1448,36 @@ class SymbolicSolver:
 # ==========================================================================
 # [FIX v7.1] Custom Exception for API Failures
 # ==========================================================================
+
+class DeadAgentError(BaseException):
+    """
+    [v14.3] An agent has failed on every one of its last N calls: the run is
+    producing garbage and must stop, not limp on.
+
+    Deliberately derived from BaseException, NOT Exception. Every runner wraps
+    its per-problem call in `except Exception` so that one bad problem cannot
+    kill a multi-hour job — correct for a problem-level failure, fatal for a
+    run-level one. Twice now (2026-07-31 and 2026-08-04) the Mathematician
+    errored on all 150 problems and the job ran to completion anyway, burning
+    5-8 GPU-hours to produce a CSV where every blueprint was empty and the
+    "MAS" answer was the baseline verbatim. Inheriting from BaseException makes
+    this pass straight through those handlers, the same way KeyboardInterrupt
+    and SystemExit do, because it carries the same meaning: stop the run.
+
+    It lives here, in the solver, rather than in the notebook on purpose. The
+    Kaggle notebook's `git pull` refreshes the .py files but NOT the notebook's
+    own cells, so guards written into a cell do not reach a running notebook
+    until it is manually re-imported. The 2026-08-04 run had solver_version
+    14.2 from git while still executing v14.0 cell code, which is exactly why
+    the cell-level fail-fast never fired.
+    """
+
+
+# How many consecutive all-error calls from one agent mean the run is dead.
+# Small enough to cost minutes rather than hours; large enough that a transient
+# API hiccup or one pathological problem cannot trip it.
+DEAD_AGENT_THRESHOLD = 5
+
 
 class LLMCallError(Exception):
     """Raised when all retries for an LLM API call are exhausted."""
@@ -2943,6 +3000,37 @@ Output:
             msgs, temperature=self.math_temp,
             max_tokens=2304 if (self.math_reasoning_first and not repair_context) else 1536,
         )
+
+        # [v14.3] Liveness guard. A Mathematician that errors on every call
+        # yields an empty blueprint every time, which the pipeline degrades
+        # around silently: the Programmer gets nothing, SIV never runs, and SHT
+        # returns the baseline verbatim. The CSV then looks like a completed
+        # MAS run whose accuracy happens to equal the baseline's exactly. That
+        # has now happened twice for a full 150 problems (2026-07-31,
+        # 2026-08-04). Counting CONSECUTIVE failures — reset on any success —
+        # so a single bad problem cannot trip it.
+        if _is_error_response(res):
+            self._math_dead_streak = getattr(self, "_math_dead_streak", 0) + 1
+            logger.error(
+                f"Mathematician call FAILED "
+                f"({self._math_dead_streak}/{DEAD_AGENT_THRESHOLD} consecutive): "
+                f"{str(res)[:400]}"
+            )
+            if self._math_dead_streak >= DEAD_AGENT_THRESHOLD:
+                raise DeadAgentError(
+                    f"Mathematician returned an error on {self._math_dead_streak} "
+                    f"consecutive calls — the last was: {str(res)[:400]}\n"
+                    "Every blueprint will be empty, so this run would produce a "
+                    "MAS answer identical to the baseline on every problem while "
+                    "still costing full GPU-hours. Aborting.\n"
+                    "Most likely cause on a mixed preset: the SECOND model failed "
+                    "to load or was OOM-killed (look above for 'OutOfMemoryError' "
+                    "or 'load FAILED'). Free VRAM before Cell 3, or switch to the "
+                    "homogeneous preset."
+                )
+        else:
+            self._math_dead_streak = 0
+
         blueprint = _extract_blueprint_json(_after_blueprint_marker(str(res)))
 
         res2 = None  # [v10.2] kept for CoT fallback scoping below
