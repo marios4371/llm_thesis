@@ -1,5 +1,48 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
+VERSION 14.2: Deterministic Blueprint Repair
+
+CHANGELOG v14.2 (over v14.1) — the v14.0 run was the first to record blueprint
+CONTENTS, and reading its 25 structurally-broken blueprints overturned the
+assumption behind both previous repair designs. Almost none were reasoning
+errors. They were transcription defects, each with one mechanically correct
+answer:
+
+  ~9   unbalanced subscript   givens['hotel_nights'] * givens['hotel_cost'
+  ~10  near-miss name         givens['peach_bought'] vs declared peaches_bought
+                              givens['monthly_hanger'] vs declared honthly_hanger
+                              total_cost_pick        vs computed total_cost_picking
+  ~3   computed variable read back through givens[...]
+  ~2   numeric value stored as a string  {"number_of_houses": "3"}
+
+v13.0/v14.0 answered all of these by asking the Mathematician to re-derive from
+scratch (fix-rate 6/39 then 9/51) — throwing away a conceptually sound
+derivation over a missing bracket.
+
+- [NEW] blueprint_repair.repair_blueprint(): deterministic, no LLM, applied at
+  the END of blueprint generation so the Programmer's cross-check draft and
+  SIV's audit both see the corrected version. Measured on those exact 25
+  blueprints: 19 repaired (76%), zero cost. The 6 refusals are correct — an
+  ambiguous reference sitting equidistant between two givens, a genuinely
+  absent given, and values like '5 pm' that need semantics. Those still reach
+  the LLM repair path, which is now reserved for defects that actually need it.
+  Name resolution demands both a high similarity score AND a unique winner,
+  because a wrong fuzzy match converts a loudly-broken blueprint into a
+  silently-wrong one — strictly worse than leaving it broken.
+
+- [FIX] SYMBOL IDENTITY BUG, present since v10.0. _build_symbolic_chain created
+  givens as Symbol(name, real=True) but parse_expr mints Symbol(name), and SymPy
+  treats those as DIFFERENT symbols. So for any blueprint referencing a given
+  bare ("answer = total_bumps - total_heads") instead of through givens[...],
+  _forward_audit's .subs() matched nothing, free symbols survived, float()
+  raised, and the row was logged blueprint_answer=None / invertible=False —
+  indistinguishable from a genuinely broken blueprint. Every bare-name blueprint
+  in every run to date was silently unauditable. Fixed by binding the plain name
+  to the same Symbol object in local_dict.
+
+- [NEW] CSV column blueprint_deterministic_fixes — what was changed, so no
+  repair happens invisibly.
+
 VERSION 14.1: Candidate Telemetry + Configurable Do-No-Harm Anchor
 
 CHANGELOG v14.1 (over v14.0) — v14.0 was measured and did NOT move the needle:
@@ -420,7 +463,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "14.1"
+SOLVER_VERSION = "14.2"
 import json
 import time
 import random
@@ -439,6 +482,9 @@ from dotenv import load_dotenv
 from siv_module import (
     SymbolicInverseVerifier, SIVResult, GivenReconstruction
 )
+
+# --- [NEW v14.2] Deterministic blueprint repair (no LLM) ---
+from blueprint_repair import repair_blueprint
 
 # --- Statistical Libraries Check ---
 try:
@@ -3010,6 +3056,27 @@ Output ONLY this JSON, nothing else:
                         f" | raw head: {raw_cot[:220]!r}"
                     )
 
+        # [v14.2] Deterministic repair pass — mechanical transcription defects
+        # only, no LLM. Classifying every structural failure in the v14.0 run
+        # (25 rows) found almost none of them were reasoning errors: unbalanced
+        # givens['x' subscripts, near-miss names (peach_bought vs the declared
+        # peaches_bought), computed variables read back through givens[...], and
+        # numeric values stored as strings. Measured on those exact 25
+        # blueprints, this fixes 19 (76%) at zero cost and correctly refuses the
+        # rest (ambiguous references, genuinely absent givens, '5 pm' as a
+        # value) so they still reach the LLM repair path.
+        #
+        # Placed HERE, at the end of blueprint generation, so the fixed version
+        # is what the Programmer receives as its cross-check draft and what SIV
+        # audits — not just what the repair loop sees after a failure.
+        if blueprint.get("equations"):
+            blueprint, _fixes = repair_blueprint(blueprint)
+            if _fixes:
+                logger.info(
+                    f"Deterministic blueprint repair applied {len(_fixes)} fix(es): "
+                    + "; ".join(_fixes[:4])
+                )
+
         # [v11.3] Log the final blueprint content so we can SEE what the model
         # produced (givens + equations) — the key diagnostic for whether the
         # structured pipeline is receiving real material or just falling back.
@@ -4515,6 +4582,9 @@ Select the most reliable candidate."""
                     blackboard_logic.get("givens", {}), ensure_ascii=False)[:1000],
                 "blueprint_equations": json.dumps(
                     blackboard_logic.get("equations", []), ensure_ascii=False)[:1500],
+                # [v14.2] What the deterministic repairer changed, if anything.
+                "blueprint_deterministic_fixes": json.dumps(
+                    blackboard_logic.get("_deterministic_fixes", []), ensure_ascii=False)[:600],
                 "blueprint_provenance": (
                     "tautological" if blackboard_logic.get("_local_hf_fallback")
                     else "extracted_from_cot" if blackboard_logic.get("_extracted_from_cot")

@@ -674,6 +674,17 @@ class SymbolicInverseVerifier:
                 for gname, gsym in given_symbols.items():
                     safe = re.sub(r'[^a-zA-Z0-9_]', '_', gname)
                     local_dict[f"__given_{safe}__"] = gsym
+                    # [v14.2] Bind the PLAIN name to the same Symbol object too.
+                    # Blueprints that reference a given bare ("answer = total_bumps
+                    # - total_heads") instead of via givens['...'] were silently
+                    # unauditable before this: parse_expr mints Symbol('total_bumps')
+                    # while given_symbols holds Symbol('total_bumps', real=True), and
+                    # SymPy treats those as DIFFERENT symbols -- so _forward_audit's
+                    # .subs() matched nothing, the expression kept its free symbols,
+                    # float() raised, and the row came back blueprint_answer=None /
+                    # invertible=False, indistinguishable from a genuinely broken
+                    # blueprint. Binding the plain name makes the two the same object.
+                    local_dict[safe] = gsym
                 for var_name, var_expr in computed.items():
                     local_dict[f"__computed_{var_name}__"] = var_expr
 
