@@ -1,5 +1,41 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
+VERSION 14.4: Per-Model GPU Pinning (root cause of the OOM, found)
+
+CHANGELOG v14.4 (over v14.3) — v14.3's DeadAgentError worked exactly as
+designed (a 613s failure instead of a 5-8h one) and, critically, its logging
+finally captured the real error text. It reads:
+
+    OutOfMemoryError: CUDA out of memory. Tried to allocate 130.00 MiB.
+    GPU 1 has a total capacity of 14.56 GiB of which 12.81 MiB is free.
+
+Tracing the full sequence (2026-08-05, T4 x2, mixed preset) showed
+device_map="auto" was never the right tool: it does not fill GPU 0 before
+touching GPU 1, it SHARDS each model's own layers across every visible GPU per
+accelerate's internal balancing heuristic. The first (~5 GB, 4-bit) model left
+GPU 1 with only ~7.4 GB free just from being loaded plus one generation call.
+The second model's own auto-placement then tried to use that shrinking budget,
+and 4-bit dequantization's transient scratch memory (needed on top of the final
+resident size, per layer, during materialization) pushed it over on every
+retry -- a structural collision, not a fluke, which is why it reproduced
+identically across two separate full-run attempts.
+
+Two ~5 GB 4-bit models on two ~14.5 GB GPUs need ZERO sharding if each gets a
+GPU to itself.
+
+- [NEW] UnifiedLLMClient(device_index=...): when set, pins the model entirely
+  to one GPU (device_map={"": device_index}) instead of "auto" + a computed
+  max_memory budget. The budget approach (added in v13.0 for a different OOM)
+  is kept as the fallback for single-GPU/homogeneous presets, where there is
+  nothing to pin against.
+- [NEW] QualityAwarePipeline assigns each DISTINCT local_hf model its own GPU,
+  round-robin, when building its client cache. Same-model roles still share one
+  client (and therefore one GPU) as before; only genuinely different models get
+  separated.
+- New test_gpu_pinning.py (14 checks, offline: mocks torch.cuda, no models, no
+  GPU) verifies the assignment logic for 2-GPU/1-GPU/no-GPU and
+  mixed/homogeneous presets.
+
 VERSION 14.3: Dead-Agent Guard (solver-side)
 
 CHANGELOG v14.3 (over v14.2) — a second full 150-problem run (2026-08-04) was
@@ -490,7 +526,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "14.3"
+SOLVER_VERSION = "14.4"
 import json
 import time
 import random
@@ -1493,11 +1529,16 @@ class UnifiedLLMClient:
     HF_ROUTER_PROVIDERS = ["together", "nebius", "fireworks-ai", "hf-inference"]
 
     def __init__(self, provider: str = "groq", use_cache: bool = False,
-                 model_override: Optional[str] = None, load_4bit: bool = False):
+                 model_override: Optional[str] = None, load_4bit: bool = False,
+                 device_index: Optional[int] = None):
         """
         [UPDATED v10.3] Supports five providers: groq, google, huggingface,
         together, local_hf. Backwards-compatible with v7.3+ (groq, google).
         load_4bit: [v10.3] local_hf only — loads model in 4-bit NF4 via BitsAndBytes.
+        device_index: [v14.4] local_hf only. When set, pins this model ENTIRELY to
+            one GPU (device_map={"": device_index}) instead of letting accelerate's
+            device_map="auto" shard it across every visible GPU. See the loading
+            code for why this replaced the max_memory-budget approach.
 
         Provider semantics:
             groq:        OpenAI-compatible at api.groq.com, 12 RPM, 100K TPD.
@@ -1513,6 +1554,7 @@ class UnifiedLLMClient:
         self.model_name = "unknown"
         self.load_4bit = load_4bit  # [v10.3]
         self.load_4bit = load_4bit  # [v10.3] 4-bit NF4 quantization for local_hf 7B models
+        self.device_index = device_index  # [v14.4] local_hf: pin to one GPU
         # [v10.2] Pick the right limiter; local_hf gets a no-op limiter.
         self.limiter = {
             "groq":        groq_limiter,
@@ -1899,28 +1941,41 @@ class UnifiedLLMClient:
                         bnb_4bit_compute_dtype=dtype,   # [v10.7] bf16 — avoid fp16 overflow
                         bnb_4bit_use_double_quant=True,
                     )
-                    # [v13.0] On multi-GPU boxes, hand accelerate an explicit
-                    # free-memory-aware max_memory map. Observed 2026-07-12
-                    # (T4 x2, mixed preset): with Math-7B already resident,
-                    # "auto" placed the ENTIRE second model onto one GPU and
-                    # its load transient filled all 14.5 GB → OOM on every
-                    # retry, so the Mathematician never loaded. Capping each
-                    # GPU at ~85% of its CURRENTLY-free memory forces the
-                    # placement (and its materialization) to shard across
-                    # devices that actually have room.
                     _load_kwargs = dict(
                         quantization_config=bnb_cfg,
-                        device_map="auto", low_cpu_mem_usage=True, **_lkw,
+                        low_cpu_mem_usage=True, **_lkw,
                     )
-                    if torch.cuda.device_count() > 1:
-                        _mm = {}
-                        for _gi in range(torch.cuda.device_count()):
-                            _free_b, _ = torch.cuda.mem_get_info(_gi)
-                            _mm[_gi] = int(_free_b * 0.85)
-                        _mm["cpu"] = "24GiB"
-                        _load_kwargs["max_memory"] = _mm
-                        logger.info(f"local_hf: multi-GPU max_memory map = "
-                                    f"{ {k: (v if isinstance(v, str) else f'{v/1e9:.1f}GB') for k, v in _mm.items()} }")
+                    # [v14.4] Pin the WHOLE model to one GPU when the caller gave
+                    # us a device_index, instead of device_map="auto" + a computed
+                    # max_memory budget (the v13.0 approach). Root cause found from
+                    # a real OOM trace (2026-08-05, T4 x2, mixed preset): "auto"
+                    # does not greedily fill GPU 0 before touching GPU 1 — it
+                    # SHARDS layers of EACH model across every visible GPU per its
+                    # own balancing heuristic, regardless of whether the model
+                    # would fit on one device alone. The first (~5 GB, 4-bit) model
+                    # left GPU 1 with only ~7.4 GB free just from being loaded, and
+                    # the second model's own share-of-both-GPUs placement then
+                    # collided with 4-bit dequantization's transient scratch memory
+                    # there, OOMing on every retry. Two ~5 GB models on two ~14.5 GB
+                    # GPUs need zero sharding if each gets its own GPU outright —
+                    # this is simpler than budget math and removes the interaction
+                    # between models entirely. Falls back to "auto"+budget only
+                    # when no device_index was supplied (single-GPU / homogeneous
+                    # presets, where there is nothing to pin against).
+                    if self.device_index is not None:
+                        _load_kwargs["device_map"] = {"": self.device_index}
+                        logger.info(f"local_hf: pinned entirely to cuda:{self.device_index}")
+                    else:
+                        _load_kwargs["device_map"] = "auto"
+                        if torch.cuda.device_count() > 1:
+                            _mm = {}
+                            for _gi in range(torch.cuda.device_count()):
+                                _free_b, _ = torch.cuda.mem_get_info(_gi)
+                                _mm[_gi] = int(_free_b * 0.85)
+                            _mm["cpu"] = "24GiB"
+                            _load_kwargs["max_memory"] = _mm
+                            logger.info(f"local_hf: multi-GPU max_memory map = "
+                                        f"{ {k: (v if isinstance(v, str) else f'{v/1e9:.1f}GB') for k, v in _mm.items()} }")
                     mdl = AutoModelForCausalLM.from_pretrained(
                         self.model_name, **_load_kwargs,
                     )
@@ -1932,11 +1987,19 @@ class UnifiedLLMClient:
                     ).to("cuda")
             else:
                 # Standard fp16 path.
-                # [v10.6] device_map="auto" shards weights across ALL visible GPUs —
-                # required for 7B fp16 on Kaggle T4 x2 (14.2 GB over 2×15 GB cards).
-                # Same dispatch machinery as the 4-bit path (proven on this env),
-                # eager attention already prevents the FA2 kernel mismatch.
-                if use_cuda:
+                if use_cuda and self.device_index is not None:
+                    # [v14.4] Same pinning as the 4-bit path — see its comment.
+                    mdl = AutoModelForCausalLM.from_pretrained(
+                        self.model_name, torch_dtype=dtype,
+                        device_map={"": self.device_index},
+                        low_cpu_mem_usage=True, **_lkw,
+                    )
+                    logger.info(f"local_hf: pinned entirely to cuda:{self.device_index}")
+                elif use_cuda:
+                    # [v10.6] device_map="auto" shards weights across ALL visible GPUs —
+                    # required for 7B fp16 on Kaggle T4 x2 (14.2 GB over 2×15 GB cards).
+                    # Same dispatch machinery as the 4-bit path (proven on this env),
+                    # eager attention already prevents the FA2 kernel mismatch.
                     n_gpu = torch.cuda.device_count()
                     max_mem = {
                         g: f"{max(1, int(torch.cuda.get_device_properties(g).total_memory / 2**30) - 2)}GiB"
@@ -4807,19 +4870,47 @@ class QualityAwarePipeline:
         # This avoids creating duplicate clients for the same model
         self._client_cache: Dict[str, UnifiedLLMClient] = {}
         clients: Dict[AgentRole, UnifiedLLMClient] = {}
-        
+
+        # [v14.4] Assign each DISTINCT local_hf model its own GPU, round-robin,
+        # instead of letting every model use device_map="auto" (which shards
+        # each one across all visible GPUs — see UnifiedLLMClient's loading code
+        # for the OOM this caused under the mixed preset). Two ~5 GB 4-bit models
+        # on two ~14.5 GB GPUs need zero sharding if kept apart. Harmless when
+        # there is only one GPU or one local model: falls back to the previous
+        # "auto" + budget behaviour.
+        _n_gpu = 0
+        try:
+            import torch as _torch
+            if _torch.cuda.is_available():
+                _n_gpu = _torch.cuda.device_count()
+        except Exception:
+            pass
+        self._local_hf_device_assignment: Dict[str, int] = {}
+
         for role, mc in role_config.items():
             # [v10.3] Include load_4bit in cache key so 4-bit and fp16 variants
             # of the same model don't share a single client instance.
             cache_key = f"{mc.provider}:{mc.model_name or 'default'}:4bit={getattr(mc, 'load_4bit', False)}"
             if cache_key not in self._client_cache:
+                _dev_idx = None
+                if mc.provider == "local_hf" and _n_gpu > 1:
+                    _dev_idx = len(self._local_hf_device_assignment) % _n_gpu
+                    self._local_hf_device_assignment[cache_key] = _dev_idx
                 self._client_cache[cache_key] = UnifiedLLMClient(
                     provider=mc.provider,
                     use_cache=use_cache,
                     model_override=mc.model_name,
                     load_4bit=getattr(mc, 'load_4bit', False),  # [v10.3]
+                    device_index=_dev_idx,  # [v14.4]
                 )
             clients[role] = self._client_cache[cache_key]
+
+        if self._local_hf_device_assignment:
+            logger.info(
+                "[v14.4] local_hf GPU pinning: "
+                + ", ".join(f"{k.split(':')[1]}->cuda:{v}"
+                           for k, v in self._local_hf_device_assignment.items())
+            )
         
         # Store primary client for validation
         self.client = clients[AgentRole.MATHEMATICIAN]  # Use mathematician for validation
