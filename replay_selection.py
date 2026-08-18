@@ -56,6 +56,133 @@ def eq(a, b, rel=1e-6):
             np.abs(a - b) <= rel * np.maximum(np.abs(b), 1.0))
 
 
+def _route_report(d, gold, pred_ok):
+    """[v14.6] Per-stratum value of the compute router, replayed offline.
+
+    Mirrors `_route_compute`: tier A when a free candidate corroborates the
+    baseline, B when nothing corroborates and the SIV execution audit FAILED,
+    C when nothing corroborates and the audit passed or never ran. Rows where
+    SHT never triggered are reported separately -- the router never sees them.
+
+    Shipped accuracy is compared against returning the baseline verbatim, so
+    a negative delta on a stratum means SHT spent budget to lose problems.
+    """
+    need = {"cand_primary", "cand_baseline", "cand_blueprint_eval",
+            "siv_execution_audit_passed", "sht_triggered"}
+    if not need.issubset(d.columns):
+        return
+
+    p = d.cand_primary.map(to_num).values
+    b = d.cand_baseline.map(to_num).values
+    be = d.cand_blueprint_eval.map(to_num).values
+    audit = d.siv_execution_audit_passed
+    trig = d.sht_triggered.astype(str).str.lower().isin(["true", "1", "1.0"]).values
+    base_ok = eq(b, gold)
+
+    def close(x, y):
+        with np.errstate(invalid="ignore"):
+            return (~np.isnan(x)) & (~np.isnan(y)) & (
+                np.abs(x - y) < np.maximum(1e-3, 1e-9 * np.maximum(np.abs(x), np.abs(y))))
+
+    corrob = close(p, b) | close(be, b)
+    audit_failed = (audit == False).values          # NaN -> False, as the router sees it
+    tier = np.where(~trig, "-", np.where(corrob, "A", np.where(audit_failed, "B", "C")))
+
+    hours = d.time_s.values / 3600.0 if "time_s" in d.columns else np.zeros(len(d))
+    print(f"\n  [v14.6] COMPUTE ROUTING BY STRATUM")
+    print(f"    {'tier':<16}{'n':>4}{'shipped':>10}{'baseline':>10}{'delta':>9}{'hours':>8}")
+    for t, label in [("-", "- no SHT"), ("A", "A corroborated"),
+                     ("B", "B audit failed"), ("C", "C audit passed")]:
+        m = tier == t
+        if not m.any():
+            continue
+        print(f"    {label:<16}{int(m.sum()):>4}{100*pred_ok[m].mean():>9.1f}%"
+              f"{100*base_ok[m].mean():>9.1f}%"
+              f"{100*(pred_ok[m].mean()-base_ok[m].mean()):>+8.1f}p{hours[m].sum():>7.1f}")
+
+    skip = np.isin(tier, ["A", "C"])
+    routed = np.where(skip, base_ok, pred_ok)
+    print(f"    => routing A and C to the anchor: {100*pred_ok.mean():.2f}%"
+          f" -> {100*routed.mean():.2f}%")
+    if hours.sum():
+        print(f"       wall time reclaimed: {hours[skip].sum():.1f} h of {hours.sum():.1f} h"
+              f" ({100*hours[skip].sum()/hours.sum():.0f}%)")
+
+
+def _alt_dedup_report(d, gold, pred_ok):
+    """[v14.5] Counterfactual for collapsing the Critic's alt_* family.
+
+    The alternatives come from ONE `generate_alternative_hypotheses` call
+    against the same primary blueprint and the same SIV error report, so
+    agreeing alts are one derivation observed n times rather than n
+    corroborations. This replays `_triage_candidates` with and without the
+    collapse and reports which rows change hands.
+
+    Approximation: a candidate counts as valid here when its `cand_*` column
+    parses, since the CSV carries no per-candidate `code_success`. Rows whose
+    real triage never reached majority are unaffected either way.
+    """
+    ids = ["primary", "baseline", "blueprint_eval", "alt_1", "alt_2"]
+    have = [i for i in ids if f"cand_{i}" in d.columns]
+    if "alt_1" not in have or "alt_2" not in have or "cand_baseline" not in d.columns:
+        return
+
+    def votes(group, dedup):
+        v = len(group)
+        if "primary" in group and "blueprint_eval" in group:
+            v -= 1
+        if dedup:
+            n = sum(1 for i in group if i.startswith("alt_"))
+            if n >= 2:
+                v -= n - 1
+        return v
+
+    def triage(row, dedup):
+        cands = [(i, to_num(row[f"cand_{i}"])) for i in have]
+        cands = [(i, a) for i, a in cands if not np.isnan(a)]
+        groups = []
+        for i, a in cands:
+            for g in groups:
+                if abs(a - g[0]) < max(1e-3, 1e-9 * max(abs(a), abs(g[0]))):
+                    g[1].append(i)
+                    break
+            else:
+                groups.append([a, [i]])
+        if not groups:
+            return None, "none"
+        groups.sort(key=lambda g: votes(g[1], dedup), reverse=True)
+        if len(groups) == 1:
+            return groups[0][0], "unanimous"
+        top, runner = votes(groups[0][1], dedup), votes(groups[1][1], dedup)
+        if top >= 2 and top > runner:
+            return groups[0][0], "majority"
+        return None, "no_majority"
+
+    base_ok = eq(d.cand_baseline.map(to_num).values, gold)
+    lost = kept_ok = base_rescue = gained = 0
+    for k, (_, row) in enumerate(d.iterrows()):
+        old_a, old_m = triage(row, False)
+        _, new_m = triage(row, True)
+        if old_m == "majority" and new_m != "majority":
+            lost += 1
+            if old_a is not None and bool(eq(np.array([old_a]), gold[k:k + 1])[0]):
+                kept_ok += 1
+            if base_ok[k]:
+                base_rescue += 1
+        elif old_m != "majority" and new_m == "majority":
+            gained += 1
+
+    print(f"\n  [v14.5] ALT-FAMILY VOTE DEDUP ({lost} rows lose a pseudo-majority,"
+          f" {gained} gain one)")
+    if lost:
+        delta = base_rescue - kept_ok
+        print(f"    the pseudo-majority answer was right on : {kept_ok}/{lost}")
+        print(f"    the baseline it displaced was right on  : {base_rescue}/{lost}")
+        print(f"    => {delta:+d} problems, {100.0*pred_ok.mean():.2f}%"
+              f" -> {100.0*(pred_ok.sum()+delta)/len(d):.2f}%")
+        print("       (assumes the freed rows fall through to the baseline anchor)")
+
+
 def replay(path):
     d = pd.read_csv(path)
     print("=" * 74)
@@ -126,6 +253,10 @@ def replay(path):
                 print(f"       shipped accuracy {100.0*pred_ok.mean():.2f}% "
                       f"-> projected {proj:.2f}%")
                 print("       (exact for these rows: every other triage path is untouched)")
+
+        # [v14.5] What the alt_* vote-dedup is worth, replayed exactly.
+        _alt_dedup_report(d, gold, pred_ok)
+        _route_report(d, gold, pred_ok)
 
         print("\n  ORACLE CEILINGS")
         allc = [d[c].map(to_num).values for c in cand_cols]

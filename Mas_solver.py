@@ -1,6 +1,135 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 14.4: Per-Model GPU Pinning (root cause of the OOM, found)
+VERSION 14.8: Blueprint coverage - evaluate the blueprint, always
+
+CHANGELOG v14.8 (over v14.6) — with the zero-shot baseline taken out of the
+candidate pool entirely, the technique's own oracle on mas_full_20260817 is
+55.33% (primary 50.0%, blueprint_eval 20.7%, alt_1 12.0%, alt_2 9.3%). Every
+conceivable selection-layer gain is therefore capped at +5.33pp: arbitration is
+not where this system is decided. The binding constraint is one step earlier
+and it is sharp —
+
+    blueprint correct -> the Programmer is right 96.8% of the time
+    blueprint wrong   -> the Programmer is right 43.3% of the time
+    blueprints correct: 31/150 (20.7%)
+    a correct blueprint destroyed by transcription: 1 problem
+
+so primary_accuracy ~= 0.433 + 0.535 * blueprint_accuracy, and blueprint
+accuracy has to reach ~64% before the technique clears the CoT baseline on its
+own. The Programmer is not the problem; the Critic is worthless.
+
+- [FIX] BLUEPRINT COVERAGE WAS 65.3%, AND MOST OF THE LOSS WAS PLUMBING. Only
+  98/150 problems ever produced a blueprint value. 28 of the 52 misses had a
+  blueprint that evaluates perfectly well offline, and every one of them was
+  blocked by the SIV block sitting inside `... and "SymPy" not in agent`: when
+  the SymPy fallback answered, the blueprint was never evaluated at all, and
+  the free `blueprint_eval` candidate went with it. That gate is right for the
+  AUDIT (it would be tautological) but the blueprint's CAS value is a property
+  of the BLUEPRINT. It is now computed unconditionally, with `tautological`
+  set whenever the answer came from those same equations.
+
+- [FIX] TWO MORE DETERMINISTIC DEFECT CLASSES (blueprint_repair.py). Verified
+  against the real failing blueprints: +3 recovered, ZERO regressions on the 98
+  that already worked.
+    * sibling exclusion — a one-character-corrupted key inside an indexed
+      family (`pages_chaptert`, `snails_aquariumt`) resolves when every sibling
+      but one is already referenced in the SAME equation. v14.2 refused these
+      as coin flips on string distance alone; context settles them, because the
+      competing reading is a degenerate `x - x`. The refusal boundary moved
+      accordingly and `test_blueprint_repair.py` still refuses the genuinely
+      undisambiguated case. NB this buys EVALUABILITY, not correctness.
+    * normalisation — statement blocks stuffed into one equation string
+      (`import math` + newline), stray apostrophes welded to identifiers,
+      markdown fences, list bullets. The stray-apostrophe regex NEEDS its
+      lookbehind, or it eats the closing quote of every `givens[key]`.
+  Together with the coverage fix: projected coverage 65.3% -> 86.0%.
+
+- [NEW, OFF BY DEFAULT] BLUEPRINT ENSEMBLING. `run_mathematician_ensemble(p, k)`
+  derives k blueprints along the reasoning routes in `BLUEPRINT_STRATEGY_HINTS`,
+  CAS-evaluates each for zero LLM calls, and keeps the value the most routes
+  agree on, reporting `support` / `n_distinct`. Diversity must come from the
+  prompt: local_hf decodes greedily (`do_sample=False`, v10.3 fixed an fp16
+  probability overflow) and math_temp is 0.0, so an identical prompt returns an
+  identical blueprint. `run_mathematician_analysis` gained `strategy_hint` for
+  this; it is ignored during repair.
+  **`blueprint_samples` defaults to 1** — byte-identical to v14.7 — because
+  this is exactly the assumption that failed for alt_1/alt_2, which agreed with
+  each other on all 5 rows where they won triage and were wrong on all 5. Run
+  `pretest_blueprint_consistency.py` first; it measures the decorrelation
+  directly. Enable with `MAS_BLUEPRINT_SAMPLES=k` or the pipeline argument.
+  Guarded by `test_blueprint_ensemble.py`.
+
+CHANGELOG v14.6 (over v14.5) — SIV is a good detector of a broken blueprint
+(98.1% precision, 81% recall for "blueprint is wrong", on the 94 genuine rows
+of mas_full_20260817). What it is NOT is an arbiter, and the reason is a
+confound worth stating plainly:
+
+    on the 42 rows SIV certified, the certified blueprint was right 71.4%
+    of the time while the plain zero-shot baseline was right 88.1% on those
+    SAME rows -- so overriding the baseline there costs -16.7pp
+    (95% bootstrap CI [-31.0, -2.4], McNemar exact p=0.065)
+
+The certificate is evidence that the PROBLEM IS EASY, not that the derivation
+is correct. A verifier may override a baseline only when its positive
+predictive value exceeds the baseline's accuracy ON THE CERTIFIED SUBSET, not
+against the global base rate. Here it does not, which is a sufficient
+explanation for v14.4 shipping 2pp below its own baseline.
+
+- [NEW] COMPUTE ROUTING. The same signal is an excellent free difficulty
+  estimator -- baseline accuracy 88.1% certified vs 61.5% not, +26.6pp,
+  95% CI [+10.3, +42.9] -- and it is known BEFORE the expensive stage runs.
+  `_route_compute` therefore spends the SHT budget instead of arbitrating
+  with it. Measured per stratum on mas_full_20260817 (post-v14.5):
+
+      tier                                  n   shipped  baseline   delta  hours
+      A  free candidates corroborate       21     90.5%     90.5%   +0.0     1.6
+      B  no corroboration, audit FAILED    28     39.3%     32.1%   +7.1     2.9
+      C  no corroboration, audit passed    64     71.9%     73.4%   -1.6     5.2
+
+  A is already settled (SHT changed the answer on 0/21). C is where the
+  confound bites. B is the only stratum that pays. Routing A and C straight
+  to the do-no-harm anchor and spending only on B: 75.33% -> 76.00% while
+  reclaiming 6.8 of 10.8 wall-clock hours (63%). Higher accuracy, 37% of the
+  compute. Guarded by `test_compute_routing.py`; replayable offline via the
+  `COMPUTE ROUTING BY STRATUM` section of `replay_selection.py`.
+
+- [ABLATION] `enable_routing` (pipeline) / `enable_compute_routing` (solver),
+  default True. False restores v14.5 behaviour exactly, giving MAS-NoRouting
+  from the same code path.
+
+- [TELEMETRY] The routing decision reaches the CSV as `sht_triage` =
+  `route_A_skip` / `route_C_skip`, which flows from this .py file and needs
+  no notebook cell change (see the v14.4 sync incident below).
+  `final_strategy` stays `baseline_do_no_harm` so existing analysis holds.
+
+CHANGELOG v14.5 (over v14.4) — v14.4 was the first run whose CSV actually
+carried the v14.1 `cand_*` telemetry (`mas_full_20260804.csv`, labelled
+v14.2, was the old notebook code: byte-identical predictions to the v14.0
+run and no candidate columns at all). Two things fell out of it.
+
+- [SETTLED] THE DO-NO-HARM ANCHOR IS ON THE RIGHT CANDIDATE. Marginal
+  accuracy, n=150, rel 1e-6: zero-shot CoT baseline 77.2%, primary
+  Programmer 52.1%, blueprint_eval 31.6%. `replay_selection.py` puts the
+  exact cost of flipping `do_no_harm_anchor` to 'primary' at 75.3% ->
+  56.0% (29 problems). The v14.1 comment block below speculated the
+  opposite from the v12.0 problem set; that speculation is now dead and
+  the anchor stays on the baseline. Do not re-open without new `cand_*`.
+
+- [FIX] PSEUDO-VOTES, SECOND FAMILY. v13.0 deduped {primary,
+  blueprint_eval} but left the Critic's `alt_*` family counting once per
+  member. `generate_alternative_hypotheses` emits alt_1..alt_n from a
+  SINGLE call against the same primary blueprint and the same SIV error
+  report, so agreeing alts are one derivation observed n times. Measured:
+  alt_1 == alt_2 on ALL 5 rows where a correction_of_* strategy won
+  triage, and those rows scored 0/5 while the discarded baseline held
+  4/5. Across all 41 majority rows the split is stark — alt_1 == alt_2
+  (n=21) shipped 52.4% against the baseline's 76.2%, alt_1 != alt_2
+  (n=20) shipped 85.0% against 75.0%. `_honest_votes` now collapses the
+  family, which fixes `_triage_candidates` and `_evidence_score` at once.
+  Offline replay over the same run: exactly those 5 rows lose the
+  majority, none gains one, +4 problems (72.67% -> 75.33%, first
+  configuration measured above the 74.67% baseline). Guarded by
+  `test_honest_votes.py`.
 
 CHANGELOG v14.4 (over v14.3) — v14.3's DeadAgentError worked exactly as
 designed (a 613s failure instead of a 5-8h one) and, critically, its logging
@@ -526,7 +655,33 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "14.4"
+SOLVER_VERSION = "14.8"
+
+# [v14.8] Reasoning ROUTES for blueprint ensembling. Index 0 must stay the
+# untouched production prompt so single-sample behaviour is unchanged and its
+# accuracy stays comparable across runs. Diversity has to come from the prompt:
+# the local_hf backend decodes greedily by design (do_sample=False, v10.3 fixed
+# an fp16 probability overflow that crashed sampling) and math_temp is 0.0, so
+# re-calling with an identical prompt returns an identical blueprint. Varying
+# the route rather than the token noise is also what error decorrelation needs.
+# `pretest_blueprint_consistency.py` imports this list.
+BLUEPRINT_STRATEGY_HINTS = [
+    ("v0_production", "", False),
+    ("v1_reasoning_first", "", True),
+    ("v2_backward",
+     "Work BACKWARDS. Start from the quantity the question asks for, express it "
+     "in terms of intermediate quantities, and only then bind those intermediate "
+     "quantities to the numbers given in the problem.", False),
+    ("v3_inventory",
+     "Before writing any equation, list EVERY number that appears in the problem "
+     "text together with what it counts or measures. Then decide which ones are "
+     "relevant and which are distractors, and build the equations from that list.",
+     False),
+    ("v4_minimal",
+     "Use the smallest possible number of equations. Prefer a single compound "
+     "expression over several intermediate steps, as long as it stays correct.",
+     False),
+]
 import json
 import time
 import random
@@ -2756,6 +2911,7 @@ class HypothesisLog:
     judge_reasoning: Optional[str] = None
     final_answer: str = "unknown"
     final_strategy: str = "none"
+    route_tier: str = "none"          # [v14.6] compute-routing decision
     hypothesis_testing_triggered: bool = False
     api_calls_used: int = 3
 
@@ -2802,6 +2958,13 @@ class QualityEnhancedMultiAgentSolver:
         #     without SIV signal; baseline disagreement still triggers SHT.
         # This is what baselines.py B5 (MAS-NoSIV) flips.
         self.enable_siv = True
+        # [v14.6] Compute routing. False restores v14.5 behaviour (always
+        # generate alternatives) for the MAS-NoRouting ablation.
+        self.enable_compute_routing = True
+        # [v14.8] Blueprint ensembling. 1 = single production prompt, i.e. the
+        # v14.7 pipeline byte for byte. Raise only after
+        # pretest_blueprint_consistency.py shows the routes' errors decorrelate.
+        self.blueprint_samples = 1
 
         # [v14.0] Blueprint reasoning mode. See run_mathematician_analysis.
         #   True  — 'DERIVATION:' free text, then 'BLUEPRINT:' JSON, one call
@@ -2913,7 +3076,8 @@ class QualityEnhancedMultiAgentSolver:
     # -------------------------------------------------------------------------
     
     def run_mathematician_analysis(self, problem: str, repair_context: str = "",
-                                   prior_blueprint: Optional[dict] = None) -> dict:
+                                   prior_blueprint: Optional[dict] = None,
+                                   strategy_hint: str = "") -> dict:
         """
         [v9.0] Enhanced Mathematician with:
         1. Self-verification: asks the LLM to mentally compute the answer
@@ -2933,6 +3097,16 @@ class QualityEnhancedMultiAgentSolver:
         the givens/equations makes the repair a targeted edit, which is what the
         Layer-0 structural reports (a single named undefined symbol) actually
         call for.
+
+        [v14.7] strategy_hint: an extra directive appended to the system
+        message, used to obtain STRUCTURALLY different derivations of the same
+        problem. The local_hf backend decodes greedily by design (do_sample is
+        False — v10.3 fixed an fp16 probability overflow that crashed sampling),
+        and math_temp is 0.0, so re-calling with an identical prompt returns an
+        identical blueprint. Prompt-level variation is therefore the only
+        available source of diversity, and it varies the reasoning ROUTE rather
+        than token noise, which is what error decorrelation needs. Ignored
+        during repair, where the prompt is already a targeted correction.
         """
         
         sys_msg = """You are an expert Mathematician analyzing word problems.
@@ -3008,6 +3182,14 @@ Output:
                 "   equations, evaluated in order, must yield the answer you reached."
             ).replace(
                 "EXAMPLE:\nProblem:", "EXAMPLE (JSON part only):\nProblem:"
+            )
+
+        if strategy_hint and not repair_context:
+            sys_msg = sys_msg + (
+                "\n\nADDITIONAL REQUIREMENT FOR THIS ATTEMPT:\n"
+                + strategy_hint.strip()
+                + "\nThe output format and the CRITICAL RULES above still apply "
+                  "exactly as written."
             )
 
         if repair_context:
@@ -3902,6 +4084,143 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
 
         return alternatives
 
+    # -------------------------------------------------------------------------
+    # [v14.8] Blueprint ensembling: agreement between independent derivations
+    # -------------------------------------------------------------------------
+
+    def run_mathematician_ensemble(self, problem: str, k: int) -> Tuple[dict, dict]:
+        """Generate k blueprints along different reasoning routes and pick one.
+
+        The CAS evaluation of a blueprint costs ZERO LLM calls, so k blueprints
+        yield k candidate answers for the price of the k generations alone. The
+        correct answer is one value while wrong answers scatter, so "two
+        independently-derived blueprints landed on the same number" is intended
+        as a high-precision correctness filter rather than a majority vote.
+
+        Returns (chosen_blueprint, telemetry). Telemetry carries `support` (how
+        many routes produced the chosen value), `n_evaluable`, and `n_distinct`,
+        which is what downstream confidence should key off.
+
+        UNVALIDATED as of v14.8 -- this is exactly the assumption that failed
+        for the Critic's alt_1/alt_2 (they agreed with each other on all 5 rows
+        where they won triage, and were wrong on all 5, because they shared one
+        call and one parent blueprint). If the Mathematician's errors are
+        correlated the same way, k>1 buys nothing. Run
+        `pretest_blueprint_consistency.py` before enabling this in a real run;
+        it measures the decorrelation directly.
+        """
+        routes = BLUEPRINT_STRATEGY_HINTS[:max(1, min(k, len(BLUEPRINT_STRATEGY_HINTS)))]
+        produced = []
+        for name, hint, reasoning_first in routes:
+            prev = self.math_reasoning_first
+            self.math_reasoning_first = reasoning_first
+            try:
+                bp = self.run_mathematician_analysis(problem, strategy_hint=hint)
+            except Exception as exc:
+                logger.warning(f"[v14.8] route {name} failed: "
+                               f"{type(exc).__name__}: {str(exc)[:100]}")
+                bp = {}
+            finally:
+                self.math_reasoning_first = prev
+            value = None
+            if bp.get("equations") and bp.get("givens") and SYMPY_AVAILABLE:
+                try:
+                    value = SymbolicInverseVerifier.verify(bp, 0.0).blueprint_answer
+                except Exception:
+                    value = None
+            produced.append((name, bp, value))
+
+        evaluable = [(n, b, v) for n, b, v in produced if v is not None]
+        groups: List[List[Any]] = []
+        for name, bp, val in evaluable:
+            for g in groups:
+                if self._answers_match(val, g[0]):
+                    g[1].append((name, bp))
+                    break
+            else:
+                groups.append([val, [(name, bp)]])
+        groups.sort(key=lambda g: -len(g[1]))
+
+        if groups:
+            value, members = groups[0][0], groups[0][1]
+            chosen = members[0][1]
+            support = len(members)
+            routes_agreeing = [n for n, _ in members]
+        else:
+            # Nothing evaluated. Fall back to the production route's blueprint
+            # so behaviour degrades to exactly what v14.7 would have done.
+            chosen = produced[0][1] if produced else {}
+            value, support, routes_agreeing = None, 0, []
+
+        telemetry = {
+            "k": len(routes),
+            "n_evaluable": len(evaluable),
+            "n_distinct": len(groups),
+            "support": support,
+            "value": value,
+            "routes_agreeing": routes_agreeing,
+            "all_values": {n: v for n, _, v in produced},
+        }
+        logger.info(f"[v14.8] blueprint ensemble: {len(evaluable)}/{len(routes)} evaluable, "
+                    f"{len(groups)} distinct values, support={support} "
+                    f"({','.join(routes_agreeing)})")
+        return chosen, telemetry
+
+    # -------------------------------------------------------------------------
+    # [v14.6] Compute routing: the audit allocates budget, it never arbitrates
+    # -------------------------------------------------------------------------
+
+    def _route_compute(self, candidates: List[HypothesisResult],
+                       siv_result: Optional["SIVResult"]) -> Tuple[str, str]:
+        """Decide whether generating Critic alternatives is worth paying for.
+
+        Everything this reads is already free at call time: the primary, the
+        zero-shot baseline, the CAS evaluation of the blueprint, and the SIV
+        execution audit. The expensive part still ahead is one Critic call
+        plus one Programmer run per alternative.
+
+        Three outcomes, measured on mas_full_20260817 (n=150, post-v14.5):
+
+          A  free candidates already corroborate -> the answer is settled;
+             SHT changed it on 0/21 rows (90.5% either way) and cost 1.6 h
+          B  no corroboration AND the execution audit FAILED -> the blueprint
+             is provably broken and the baseline is weak here (32.1%); this
+             is the only stratum where SHT earns its keep, +7.1pp on 28 rows
+          C  no corroboration AND the audit passed (or never ran) -> the
+             certificate marks an EASY problem, not a correct derivation:
+             baseline 73.4% against SHT's 71.9%, i.e. -1.6pp for 5.2 h
+
+        Routing A and C straight to the do-no-harm anchor and spending only
+        on B moves the run to 76.00% on 37% of the wall time. This is the
+        operational form of the certificate-difficulty confound: a certificate
+        whose positive predictive value (71.4%) sits below the baseline's
+        accuracy on the very rows it certifies (88.1%) is inadmissible as an
+        arbiter, but it is a strong and free difficulty signal (+26.6pp
+        separation in baseline accuracy, 95% CI [+10.3, +42.9]).
+        """
+        by_id = {c.hypothesis_id: c for c in candidates
+                 if c.parsed_answer is not None}
+        base = by_id.get("baseline")
+        if base is None:
+            # No anchor to fall back on — SHT is the only thing left to try.
+            return "B", "no_baseline_anchor"
+
+        prim = by_id.get("primary")
+        bp = by_id.get("blueprint_eval")
+        # Corroboration is judged the same way _honest_votes counts: the
+        # {primary, blueprint_eval} pair is one derivation, so only a pair
+        # that INCLUDES the independent baseline counts as corroboration.
+        if prim is not None and self._answers_match(prim.parsed_answer, base.parsed_answer):
+            return "A", "primary_corroborates_baseline"
+        if bp is not None and self._answers_match(bp.parsed_answer, base.parsed_answer):
+            return "A", "blueprint_corroborates_baseline"
+
+        if siv_result is not None and not siv_result.execution_audit_passed:
+            return "B", "audit_failed_baseline_weak"
+
+        return "C", ("audit_passed_certificate_is_difficulty"
+                     if siv_result is not None else "no_audit_signal")
+
     def _triage_candidates(self, candidates: List[HypothesisResult]) -> Tuple[Optional[str], Optional[str], str]:
         valid = [c for c in candidates if c.code_success and c.parsed_answer is not None]
 
@@ -3973,11 +4292,32 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
         pair answer right 24/36). blueprint_eval still counts as a full vote
         in any group NOT containing the primary (e.g. agreeing with the
         baseline against a deviant program — genuinely independent there).
+
+        [v14.5] The same rule now applies to the Critic's `alt_*` family:
+        alternatives emitted by one `generate_alternative_hypotheses` call
+        share a parent blueprint and a generating call, so n agreeing alts
+        contribute a single honest vote.
         """
         ids = {m.hypothesis_id for m in members}
         votes = len(members)
         if "primary" in ids and "blueprint_eval" in ids:
             votes -= 1
+        # [v14.5] The Critic's alternatives are ONE derivation family, not N.
+        # `generate_alternative_hypotheses` emits alt_1..alt_n from a SINGLE
+        # call, conditioned on the same primary blueprint and the same SIV
+        # error report, so when they agree they are one line of reasoning
+        # observed n times -- exactly the pseudo-vote the {primary,
+        # blueprint_eval} rule above already fixes for the other pair.
+        # Counting them separately let two correlated alts manufacture a
+        # 2-vote 'majority' that outranked the independent zero-shot baseline.
+        # Measured on mas_full_20260817 (v14.4): alt_1 == alt_2 on ALL 5 rows
+        # where a correction_of_* strategy won triage; those rows scored 0/5
+        # while the discarded baseline held 4/5. Offline replay of this rule
+        # over that run: exactly those 5 rows lose the majority, none gains
+        # one, +4 problems (72.67% -> 75.33%, above the 74.67% baseline).
+        n_alts = sum(1 for i in ids if i.startswith("alt_"))
+        if n_alts >= 2:
+            votes -= (n_alts - 1)
         return votes
 
     def _group_valid_candidates(self, candidates: List[HypothesisResult]
@@ -4331,6 +4671,41 @@ Select the most reliable candidate."""
             log.api_calls_used = pre_sht_calls
             return log
 
+        # [v14.6] COMPUTE ROUTING — decide before paying, not after.
+        # Everything the router reads is already free here; what follows is
+        # one Critic call plus one Programmer run per alternative. See
+        # _route_compute for the per-stratum measurements.
+        route_tier, route_reason = (
+            self._route_compute(log.candidates, siv_result)
+            if getattr(self, "enable_compute_routing", True) else ("B", "routing_disabled")
+        )
+        log.route_tier = route_tier
+        if route_tier in ("A", "C"):
+            anchor_c = next(
+                (c for c in log.candidates
+                 if c.hypothesis_id == "baseline" and c.parsed_answer is not None),
+                None,
+            )
+            if anchor_c is not None:
+                logger.info(
+                    f"[v14.6] route {route_tier} ({route_reason}) — skipping "
+                    "alternative generation, returning the do-no-harm anchor"
+                )
+                # triage_result carries the routing decision into the CSV
+                # (it flows from this .py through `sht_triage`, so no notebook
+                # cell has to change — see the v14.4 sync incident). The
+                # strategy name stays `baseline_do_no_harm` because that is
+                # exactly what happened, keeping existing analysis code valid.
+                log.triage_result = f"route_{route_tier}_skip"
+                log.final_answer = anchor_c.answer
+                log.final_strategy = "baseline_do_no_harm"
+                log.judge_reasoning = f"[route {route_tier}] {route_reason}"[:500]
+                log.api_calls_used = api_calls
+                return log
+            # _route_compute only returns A/C when a baseline anchor exists;
+            # if it vanished between then and here, fall through to SHT.
+            logger.warning(f"[v14.6] route {route_tier} but no baseline anchor — running SHT")
+
         # [v10.0] Generate SIV error report for targeted Critic
         siv_error_report = ""
         if siv_result and not siv_result.verified and siv_result.invertible:
@@ -4500,7 +4875,16 @@ Select the most reliable candidate."""
         base_ans, _ = self.extract_answer(base_raw)
 
         # Step 2: Architect
-        blackboard_logic = self.run_mathematician_analysis(problem)
+        # [v14.8] blueprint_samples > 1 derives the blueprint along several
+        # reasoning routes and keeps the value the most routes agree on; at 1
+        # (the default) this is byte-identical to the single-prompt path.
+        _bp_ensemble = None
+        if getattr(self, "blueprint_samples", 1) > 1:
+            blackboard_logic, _bp_ensemble = self.run_mathematician_ensemble(
+                problem, self.blueprint_samples
+            )
+        else:
+            blackboard_logic = self.run_mathematician_analysis(problem)
 
         # Step 3: Engineer (with SymPy fallback built-in)
         programmer_response = self.run_programmer_solver(problem, blackboard_logic)
@@ -4626,6 +5010,42 @@ Select the most reliable candidate."""
                 logger.info(
                     f"Process verification FAILED (conf={verification_confidence:.2f}). "
                     f"Keeping Programmer answer; blueprint CAS value arbitrates in SHT."
+                )
+
+        # [v14.8] COVERAGE. The blueprint's CAS value is a property of the
+        # BLUEPRINT, not of the Programmer -- but the gate above (which exists
+        # so the *audit* stays meaningful) suppressed the evaluation too.
+        # Measured on mas_full_20260817: only 98/150 problems ever produced a
+        # blueprint value, and 28 of the 52 missing ones had a blueprint that
+        # evaluates perfectly well offline. Every one of those 28 was blocked
+        # by `"SymPy" not in agent` -- the SymPy fallback had answered, so the
+        # whole SIV block was skipped and the free `blueprint_eval` candidate
+        # was thrown away with it. That is 18.7pp of blueprint coverage lost to
+        # plumbing. Evaluate unconditionally here; the audit itself stays gated
+        # above, and `tautological` keeps the evidence accounting honest.
+        if (self.enable_siv and siv_result is None and SYMPY_AVAILABLE
+                and blackboard_logic.get("equations")
+                and blackboard_logic.get("givens")):
+            _num = _extract_last_number(programmer_response.answer)
+            try:
+                siv_result = SymbolicInverseVerifier.verify(
+                    blackboard_logic, _num if _num is not None else 0.0
+                )
+                # A pass here proves nothing: either the answer was produced BY
+                # these equations (SymPy fallback), or there was no answer to
+                # audit against and the comparison ran on a sentinel.
+                if _num is None or "SymPy" in str(programmer_response.agent):
+                    siv_result.tautological = True
+                logger.info(
+                    f"[v14.8] coverage evaluation: blueprint_answer="
+                    f"{siv_result.blueprint_answer} "
+                    f"(agent={programmer_response.agent}, "
+                    f"tautological={siv_result.tautological})"
+                )
+            except Exception as _cov_err:
+                logger.warning(
+                    f"[v14.8] coverage evaluation failed: "
+                    f"{type(_cov_err).__name__}: {str(_cov_err)[:120]}"
                 )
 
         # Step 4: Structured Hypothesis Testing (with SIV integration)
@@ -4775,6 +5195,9 @@ Select the most reliable candidate."""
             },
         }
 
+        if _bp_ensemble is not None:
+            result["blueprint_ensemble"] = _bp_ensemble
+
         if hypothesis_log:
             result["sht"] = {
                 "triggered": hypothesis_log.hypothesis_testing_triggered,
@@ -4805,6 +5228,8 @@ class QualityAwarePipeline:
                  custom_config: Optional[Dict[AgentRole, ModelConfig]] = None,
                  enable_siv: bool = True,
                  enable_sht: bool = True,
+                 enable_routing: bool = True,
+                 blueprint_samples: int = 1,
                  evaluation_mode: bool = False,
                  dataset_seed: Optional[int] = None,
                  math_reasoning_first: bool = True,
@@ -4920,6 +5345,8 @@ class QualityAwarePipeline:
         # [v10.2] Apply ablation flags from constructor.
         self.solver.enable_siv = enable_siv
         self.solver.enable_hypothesis_testing = enable_sht
+        self.solver.enable_compute_routing = enable_routing  # [v14.6]
+        self.solver.blueprint_samples = max(1, int(blueprint_samples))  # [v14.8]
         # [v14.0] Blueprint reasoning mode — see QualityEnhancedMultiAgentSolver
         # and pretest_blueprint_mode.py, which measures the two settings against
         # each other on a handful of problems before a full run commits to one.
@@ -4933,6 +5360,24 @@ class QualityAwarePipeline:
         # Persist for logging/CSV.
         self.enable_siv = enable_siv
         self.enable_sht = enable_sht
+        # [v14.6] Env override so the MAS-NoRouting ablation can be run from a
+        # notebook whose cells never sync with git (the v14.4 incident cost ~13
+        # GPU-hours to exactly this). MAS_DISABLE_ROUTING=1 forces it off.
+        if os.environ.get("MAS_DISABLE_ROUTING", "").strip() in ("1", "true", "True"):
+            enable_routing = False
+            self.solver.enable_compute_routing = False
+            logger.warning("[v14.6] MAS_DISABLE_ROUTING set — compute routing OFF")
+        self.enable_routing = enable_routing  # [v14.6]
+        self.blueprint_samples = max(1, int(blueprint_samples))  # [v14.8]
+        _env_k = os.environ.get("MAS_BLUEPRINT_SAMPLES", "").strip()
+        if _env_k.isdigit() and int(_env_k) >= 1:
+            self.blueprint_samples = int(_env_k)
+            self.solver.blueprint_samples = int(_env_k)
+            logger.warning(f"[v14.8] MAS_BLUEPRINT_SAMPLES={_env_k} - blueprint "
+                           "ensembling enabled from the environment")
+        if not enable_routing:
+            logger.warning("[v14.6 ablation] enable_routing=False — alternatives "
+                           "are generated on every SHT problem (v14.5 behaviour)")
         if not (enable_siv and enable_sht):
             logger.info(
                 f"[v10.2 ablation] enable_siv={enable_siv}, enable_sht={enable_sht}"

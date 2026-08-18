@@ -115,6 +115,86 @@ def _resolve_name(name: str, candidates: List[str]) -> Optional[str]:
     return best
 
 
+_FAMILY = re.compile(r"^(?P<stem>.*?)(?P<tail>[0-9A-Za-z])$")
+
+
+def _resolve_by_sibling_exclusion(name, candidates, already_used):
+    """[v14.8] Resolve a one-character-corrupted key inside an indexed family.
+
+    The run produces keys where a single trailing character is wrong:
+    'pages_chaptert' for 'pages_chapter2', 'snails_aquariumt' for
+    'snails_aquarium2'. v14.2 deliberately refused these -- 'snails_aquariumt'
+    is equidistant from 'snails_aquarium1' and 'snails_aquarium2', so fuzzy
+    matching alone is a coin flip dressed up as a repair, and _FUZZY_MARGIN
+    rejects it.
+
+    Context breaks the tie. If the corrupted name shares a stem with several
+    declared givens and all but ONE of those siblings is already referenced in
+    the same equation, the remaining sibling is the only reading that does not
+    duplicate a term. Real case: 'total_pages = givens[pages_chapter1] +
+    givens[pages_chaptert] + givens[pages_chapter3]' over a family of
+    {1,2,3} leaves exactly 'pages_chapter2'.
+
+    Returns the resolved name, or None when the family is absent, the stem does
+    not match, or more than one sibling is still free.
+    """
+    m = _FAMILY.match(name)
+    if not m:
+        return None
+    stem = m.group("stem")
+    if len(stem) < 3:
+        return None
+    family = [c for c in candidates
+              if c != name and c.startswith(stem) and len(c) == len(name)]
+    if len(family) < 2:
+        return None
+    free = [c for c in family if c not in already_used]
+    return free[0] if len(free) == 1 else None
+
+
+def _normalise_equations(equations):
+    """[v14.8] Strip mechanical noise before any semantic repair is attempted.
+
+    Three defects observed in mas_full_20260817 that make an otherwise sound
+    chain unevaluable:
+      * a whole statement block stuffed into one equation string, import and
+        all: 'import math\nrounded_packages = math.ceil(packages_needed)'
+      * a stray apostrophe welded to an identifier:
+        'total_cost = cost_for_11_hours + additional_cost''
+      * markdown fences and list bullets surviving JSON extraction
+    """
+    out, fixes = [], []
+    for idx, raw in enumerate(equations):
+        text = str(raw)
+        stripped = re.sub(r"^\s*```[a-zA-Z]*\s*|\s*```\s*$", "", text)
+        if stripped != text:
+            fixes.append(f"eq{idx}: removed markdown fence")
+        for part in stripped.split(chr(10)):
+            line = part.strip()
+            if not line:
+                continue
+            if re.match(r"^(import|from)\s+[A-Za-z_]", line):
+                fixes.append(f"eq{idx}: dropped {line!r} (evaluator injects math)")
+                continue
+            bullet = re.sub(r"^[-*]\s+", "", line)
+            if bullet != line:
+                fixes.append(f"eq{idx}: removed list bullet")
+                line = bullet
+            # The lookbehind is load-bearing: without it this eats the
+            # CLOSING quote of every givens['key'] reference, because the
+            # identifier there is also followed by a quote then ']'.
+            dequoted = re.sub(
+                r"(?<![A-Za-z_0-9'\"])([A-Za-z_][A-Za-z_0-9]*)'(?![A-Za-z_0-9])",
+                r"\1", line)
+            if dequoted != line:
+                fixes.append(f"eq{idx}: removed stray apostrophe on identifier")
+                line = dequoted
+            out.append(line)
+    if len(out) != len(equations):
+        fixes.append(f"split {len(equations)} equation strings into {len(out)}")
+    return out, fixes
+
+
 def repair_blueprint(blueprint: dict) -> Tuple[dict, List[str]]:
     """Return (repaired_blueprint, fixes). The input is never mutated.
 
@@ -127,6 +207,12 @@ def repair_blueprint(blueprint: dict) -> Tuple[dict, List[str]]:
         return blueprint, []
 
     fixes: List[str] = []
+
+    # ── 0. Mechanical noise: statement blocks, stray quotes, fences [v14.8] ──
+    equations, norm_fixes = _normalise_equations(equations)
+    fixes.extend(norm_fixes)
+    if not equations:
+        return blueprint, []
 
     # ── 1. Numeric values stored as strings ──────────────────────────────────
     # SIV filters givens to int/float, so {"number_of_houses": "3"} makes every
@@ -158,6 +244,11 @@ def repair_blueprint(blueprint: dict) -> Tuple[dict, List[str]]:
             continue
         lhs, rhs = eq.split("=", 1)
 
+        # [v14.8] Which declared givens this equation already reads, so
+        # sibling exclusion can tell a corrupted index from a fresh one.
+        used_here = {k for k in _GIVENS_REF.findall(rhs)
+                     for k in [k[1]] if k in numeric_keys}
+
         # 3. givens['key'] whose key is not a declared given.
         def _fix_ref(m):
             q, key = m.group(1), m.group(2)
@@ -175,6 +266,14 @@ def repair_blueprint(blueprint: dict) -> Tuple[dict, List[str]]:
             if tgt:
                 fixes.append(f"eq{idx}: givens[{key!r}] -> {tgt} (computed above)")
                 return tgt
+            # [v14.8] Fuzzy matching abstained. If the key belongs to an indexed
+            # family and every sibling but one is already referenced in THIS
+            # equation, the remaining sibling is the only non-duplicating read.
+            tgt = _resolve_by_sibling_exclusion(key, numeric_keys, used_here)
+            if tgt:
+                fixes.append(f"eq{idx}: givens[{key!r}] -> givens[{tgt!r}] "
+                             f"(only unused sibling of its family)")
+                return f"givens[{q}{tgt}{q}]"
             return m.group(0)
 
         rhs_new = _GIVENS_REF.sub(_fix_ref, rhs)

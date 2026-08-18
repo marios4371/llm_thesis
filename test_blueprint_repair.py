@@ -104,13 +104,34 @@ def part2_refusals():
     print("PART 2 — defects the repairer must NOT guess at")
     print("=" * 70)
 
-    # gsm-hard_1206 — 'snails_aquariumt' sits between aquarium1 and aquarium2.
-    # Either choice is a coin flip dressed up as a repair.
-    bp, fixes = case("ambiguous between two equally-close givens (gsm-hard_1206)",
+    # gsm-hard_1206 — 'snails_aquariumt' is equidistant from aquarium1 and
+    # aquarium2, so string distance alone IS a coin flip and v14.2 refused it.
+    # [v14.8] Context settles it without guessing: this equation already reads
+    # aquarium1, so resolving to aquarium1 would produce 'x - x', a degenerate
+    # reading no blueprint intends. aquarium2 is the only sibling that leaves
+    # the expression meaningful. The refusal boundary therefore moved from
+    # "string distance is ambiguous" to "string distance is ambiguous AND
+    # context does not disambiguate" — see the next case, which still refuses.
+    #
+    # NOTE: this recovers EVALUABILITY, not correctness. On the real
+    # gsm-hard_1206 the repaired chain evaluates to 13.5 against a gold of 7.0.
+    # A candidate SIV can then reject beats no candidate at all.
+    bp, fixes = case("one-char corruption, context disambiguates (gsm-hard_1206)",
                      {"givens": {"snails_aquarium1": 10.0, "snails_aquarium2": 20.0},
                       "equations": ["answer = givens['snails_aquariumt'] - givens['snails_aquarium1']"]},
-                     want_fixed=False)
-    check("ambiguous case rewrote nothing", not fixes, f"fixes={fixes}")
+                     want_fixed=True, expect_value=10.0)
+    check("sibling exclusion was the rule that fired",
+          any("unused sibling" in f for f in fixes), f"fixes={fixes}")
+
+    # The same corruption with NO sibling already referenced: exclusion cannot
+    # fire, both readings stay live, and the repairer must still keep its hands
+    # off. This is what v14.2's refusal was really protecting.
+    bp2, fixes2 = case("one-char corruption, nothing disambiguates it",
+                       {"givens": {"snails_aquarium1": 10.0, "snails_aquarium2": 20.0},
+                        "equations": ["answer = givens['snails_aquariumt'] * 2"]},
+                       want_fixed=False)
+    check("undisambiguated case rewrote nothing",
+          not any("unused sibling" in f for f in fixes2), f"fixes={fixes2}")
 
     # gsm8k_test_541 — the given is genuinely absent, not misspelled.
     case("genuinely missing given (gsm8k_test_541)",
