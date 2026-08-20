@@ -278,6 +278,113 @@ def part4_symbol_identity_bug():
           f"blueprint_answer={r.blueprint_answer}")
 
 
+def part6_v152_classes():
+    """[v15.2] Expression givens, long-operand snapping, misspelt accessor."""
+    print("\n" + "=" * 70)
+    print("PART 6 - [v15.2] repair classes the grounding pass could not reach")
+    print("=" * 70)
+
+    # gsm8k_test_457 (v3_inventory route, verbatim shape): a given declared as
+    # a FORMULA over another given, whose operand is itself misread. Snapping
+    # must fire first (55 -> 50), the expression second (50 / 2 = 25).
+    text457 = ("Katelyn saw 50 fairies flying above the nearby forest. One of "
+               "her friends saw half as many fairies as Katelyn saw come from "
+               "the east. Ten minutes later, 30 fairies flew away. How many "
+               "fairies are remaining?")
+    bp, fixes = repair_blueprint(
+        {"givens": {"initial_fairies": 55,
+                    "fairies_from_east": "initial_fairies / 2",
+                    "fairies_flew_ay": 31},
+         "equations": ["total_fairies = givens['initial_fairies'] + givens['fairies_from_east']",
+                       "answer = total_fairies - givens['fairies_flew_ay']"]},
+        problem_text=text457)
+    check("expression given evaluated AFTER its operand was snapped",
+          bp["givens"].get("fairies_from_east") == 25.0, f"got {bp['givens']}")
+    r = SIV.verify(bp, 45.0)
+    check("snap + expression compose to the gold answer",
+          r.blueprint_answer is not None and abs(r.blueprint_answer - 45.0) < 1e-6,
+          f"got {r.blueprint_answer}")
+
+    # gsm8k_test_501, verbatim shape: fraction strings as given values.
+    bp, fixes = repair_blueprint(
+        {"givens": {"skein_yards": 364, "mariah_used": "1/4", "grandma_used": "1/2"},
+         "equations": ["mariah_yards = givens['skein_yards'] * givens['mariah_used']",
+                       "grandma_yards = givens['skein_yards'] * givens['grandma_used']",
+                       "answer = mariah_yards + grandma_yards"]},
+        problem_text="Mariah used 1/4 of a skein. Her grandma used 1/2 of a "
+                     "skein. There are 364 yards in a skein.")
+    r = SIV.verify(bp, 273.0)
+    check("fraction-string givens evaluate ('1/4' -> 0.25)",
+          r.blueprint_answer is not None and abs(r.blueprint_answer - 273.0) < 1e-6,
+          f"got {r.blueprint_answer}, givens={bp['givens']}")
+
+    # A chain: one expression given reading another expression given.
+    bp, fixes = repair_blueprint(
+        {"givens": {"base": 10, "half": "base / 2", "quarter": "half / 2"},
+         "equations": ["answer = givens['base'] + givens['half'] + givens['quarter']"]})
+    r = SIV.verify(bp, 17.5)
+    check("chained expression givens resolve iteratively",
+          r.blueprint_answer is not None and abs(r.blueprint_answer - 17.5) < 1e-6,
+          f"got {r.blueprint_answer}, givens={bp['givens']}")
+
+    # gsm-hard_865 (v1 route, verbatim shape): a 7-digit operand with TWO
+    # mangled digits. The one-slip rule refuses; the long-operand rule snaps
+    # because the text contains exactly one number of that magnitude.
+    bp, fixes = repair_blueprint(
+        {"givens": {"total_shells": 9371084, "pct_alphas": 0.4, "pct_finders": 0.6},
+         "equations": ["by_alphas = givens['pct_alphas'] * givens['total_shells']",
+                       "remaining = givens['total_shells'] - by_alphas",
+                       "by_finders = givens['pct_finders'] * remaining",
+                       "answer = remaining - by_finders"]},
+        problem_text="Twenty tourists discovered 9370284 shells. Team Alphas "
+                     "found 40% of the shells, and team The finders found 60% "
+                     "of the remaining shells.")
+    check("two-digit mangling of a long operand snapped",
+          bp["givens"]["total_shells"] == 9370284.0, f"got {bp['givens']}")
+    r = SIV.verify(bp, 2248868.16)
+    check("and the chain reaches the gold answer",
+          r.blueprint_answer is not None and abs(r.blueprint_answer - 2248868.16) < 1e-2,
+          f"got {r.blueprint_answer}")
+
+    # TWO long candidates -> abstain, exactly like the short-number rule.
+    bp, fixes = repair_blueprint(
+        {"givens": {"x": 9371084},
+         "equations": ["answer = givens['x'] * 2"]},
+        problem_text="There were 9370284 shells on one beach and 9372184 on another.")
+    check("two long candidates within reach: refused",
+          bp["givens"]["x"] == 9371084, f"got {bp['givens']}")
+
+    # Short numbers must NOT gain the two-edit privilege: 47 is two edits from
+    # 12 in a text with only 12 -- snapping that would be pure invention.
+    bp, fixes = repair_blueprint(
+        {"givens": {"x": 47}, "equations": ["answer = givens['x'] * 2"]},
+        problem_text="She bought 12 eggs.")
+    check("short numbers keep the strict one-slip rule",
+          bp["givens"]["x"] == 47, f"got {bp['givens']}")
+
+    # gsm-hard_13 (v1 route, verbatim): the ACCESSOR is misspelt, not the key.
+    bp, fixes = repair_blueprint(
+        {"givens": {"spilled_orange_liters": 3.0, "initial_orange_liters": 10.0},
+         "equations": ["answer = givens['initial_orange_liters'] - givvens['spilled_orange_liters']"]})
+    r = SIV.verify(bp, 7.0)
+    check("misspelt accessor givvens[...] respelt",
+          r.blueprint_answer is not None and abs(r.blueprint_answer - 7.0) < 1e-6,
+          f"got {r.blueprint_answer}, fixes={fixes}")
+
+    # Refusals: values that need SEMANTICS still flow to the LLM repair path.
+    bp, fixes = repair_blueprint(
+        {"givens": {"cost_per_hour": 77.0, "start": "5 pm", "end": "10 am next morning"},
+         "equations": ["hours = givens['end'] - givens['start']",
+                       "answer = hours * givens['cost_per_hour']"]})
+    check("'5 pm' is not an expression: refused",
+          bp["givens"].get("start") == "5 pm", f"got {bp['givens']}")
+    bp, fixes = repair_blueprint(
+        {"givens": {"total": 100.0, "share": "total / n_people"},
+         "equations": ["answer = givens['share']"]})
+    check("expression with an unresolvable name: refused",
+          bp["givens"].get("share") == "total / n_people", f"got {bp['givens']}")
+
+
 if __name__ == "__main__":
     print("=" * 70)
     print("v14.2 — DETERMINISTIC BLUEPRINT REPAIR (offline, no models)")
@@ -287,6 +394,7 @@ if __name__ == "__main__":
     part3_no_false_repairs()
     part4_symbol_identity_bug()
     part5_text_snapping()
+    part6_v152_classes()
     print("\n" + "=" * 70)
     if failures:
         print(f"  {len(failures)} CHECK(S) FAILED:")

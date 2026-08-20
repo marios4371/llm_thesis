@@ -37,6 +37,7 @@ alone for the LLM path. Every repair is returned in a log so the CSV records wha
 was changed and nothing happens invisibly.
 """
 
+import ast
 import difflib
 import json
 import re
@@ -189,6 +190,19 @@ def _normalise_equations(equations):
             if dequoted != line:
                 fixes.append(f"eq{idx}: removed stray apostrophe on identifier")
                 line = dequoted
+            # [v15.2] A misspelt accessor -- givvens['x'], given['x'] -- makes
+            # the reference an undefined name even when the key is perfect.
+            # Only tokens one edit away from 'givens' AND used as a subscript
+            # with a quoted key are rewritten, so ordinary variables are safe.
+            def _fix_accessor(m):
+                name = m.group(1)
+                if name != "givens" and _edit_distance(name, "givens") <= 1:
+                    fixes.append(f"eq{idx}: misspelt accessor {name!r}[...] -> givens[...]")
+                    return "givens" + m.group(2)
+                return m.group(0)
+            respelt = re.sub(r"\b([A-Za-z_][A-Za-z_0-9]{3,7})(\[\s*['\"])",
+                             _fix_accessor, line)
+            line = respelt
             out.append(line)
     if len(out) != len(equations):
         fixes.append(f"split {len(equations)} equation strings into {len(out)}")
@@ -232,6 +246,20 @@ def _one_digit_apart(a, b):
     return any(long_[:i] + long_[i + 1:] == short for i in range(len(long_)))
 
 
+def _edit_distance(a: str, b: str) -> int:
+    """Plain Levenshtein distance. Operand strings are <= ~10 chars."""
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1,
+                           prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
 def _snap_givens_to_text(givens, problem_text):
     """[v15.0] Force every numeric given to be a number the problem ACTUALLY
     contains.
@@ -273,6 +301,18 @@ def _snap_givens_to_text(givens, problem_text):
             near = {t for t in text_nums
                     if _digits(t).endswith(_digits(v)) or _digits(v).endswith(_digits(t))}
             how = "shares digit suffix"
+        if len(near) != 1 and v.is_integer() and abs(v) >= 10000:
+            # [v15.2] gsm-hard's perturbed operands are 5-7 digit integers and
+            # the model's misreads of them often mangle TWO digits (9371084 for
+            # 9370284), which the single-slip rule above correctly refuses on
+            # short numbers. On long integers the text rarely contains more
+            # than one number of that magnitude, so a unique >=5-digit text
+            # number within two digit edits is safe to adopt; two candidates
+            # would still abstain.
+            near = {t for t in text_nums
+                    if t.is_integer() and abs(t) >= 10000
+                    and _edit_distance(_digits(v), _digits(t)) <= 2}
+            how = "within two digit edits"
         if len(near) != 1:
             continue                      # ambiguous or unrelated: leave it alone
         target = near.pop()
@@ -280,6 +320,84 @@ def _snap_givens_to_text(givens, problem_text):
         fixes.append(f"givens[{key!r}] {value} -> {target} (not in the problem "
                      f"text; {how} from a number that is)")
     return out, fixes
+
+
+_EXPR_BINOPS = {
+    ast.Add: lambda a, b: a + b,
+    ast.Sub: lambda a, b: a - b,
+    ast.Mult: lambda a, b: a * b,
+    ast.Div: lambda a, b: a / b,
+    ast.FloorDiv: lambda a, b: a // b,
+    ast.Mod: lambda a, b: a % b,
+    ast.Pow: lambda a, b: a ** b,
+}
+
+
+def _eval_expr_given(expr: str, numeric: Dict[str, float]) -> Optional[float]:
+    """[v15.2] Value of a given that was declared as an arithmetic EXPRESSION.
+
+    The Architect regularly stores a formula where a number belongs:
+
+        "fairies_from_east": "initial_fairies / 2"
+        "mariah_yarn_used":  "1/4"
+        "kim_raised":        "alexandra_raised + 311"
+
+    The blueprint's own equations then read givens['fairies_from_east'] and the
+    whole chain becomes unauditable, although the intent is explicit and
+    deterministic. This evaluates such strings with a restricted AST walk:
+    numeric literals, + - * / // % ** and parentheses, and names that resolve
+    to OTHER numeric givens (exactly, or through the same fuzzy rule the
+    equation repair uses). Anything else -- calls, attributes, strings like
+    '5 pm', names that resolve nowhere -- refuses, so values that genuinely
+    need semantics keep flowing to the LLM repair path.
+    """
+    s = str(expr).strip()
+    if not re.search(r"[+\-*/]", s):
+        return None                     # bare words and bare numbers are not ours
+    try:
+        tree = ast.parse(s, mode="eval")
+    except (SyntaxError, ValueError):
+        return None
+
+    def walk(node):
+        if isinstance(node, ast.Expression):
+            return walk(node.body)
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+                raise ValueError("non-numeric literal")
+            return float(node.value)
+        if isinstance(node, ast.BinOp) and type(node.op) in _EXPR_BINOPS:
+            return _EXPR_BINOPS[type(node.op)](walk(node.left), walk(node.right))
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+            v = walk(node.operand)
+            return -v if isinstance(node.op, ast.USub) else v
+        if isinstance(node, ast.Name):
+            if node.id in numeric:
+                return float(numeric[node.id])
+            tgt = _resolve_name(node.id, list(numeric))
+            if tgt:
+                return float(numeric[tgt])
+            raise ValueError(f"unresolvable name {node.id!r}")
+        if (isinstance(node, ast.Subscript)
+                and isinstance(node.value, ast.Name) and node.value.id == "givens"
+                and isinstance(node.slice, ast.Constant)
+                and isinstance(node.slice.value, str)):
+            key = node.slice.value
+            if key in numeric:
+                return float(numeric[key])
+            tgt = _resolve_name(key, list(numeric))
+            if tgt:
+                return float(numeric[tgt])
+            raise ValueError(f"unresolvable givens[{key!r}]")
+        raise ValueError(f"disallowed node {type(node).__name__}")
+
+    try:
+        v = walk(tree)
+    except (ValueError, ZeroDivisionError, OverflowError, TypeError):
+        return None
+    if v != v or v in (float("inf"), float("-inf")):
+        return None
+    return float(v)
 
 
 def repair_blueprint(blueprint: dict, problem_text: str = "") -> Tuple[dict, List[str]]:
@@ -301,20 +419,43 @@ def repair_blueprint(blueprint: dict, problem_text: str = "") -> Tuple[dict, Lis
     if not equations:
         return blueprint, []
 
-    # ── 0.5 Operands that the problem text does not contain [v15.0] ──────
-    if problem_text:
-        givens, snap_fixes = _snap_givens_to_text(givens, problem_text)
-        fixes.extend(snap_fixes)
-
     # ── 1. Numeric values stored as strings ──────────────────────────────────
     # SIV filters givens to int/float, so {"number_of_houses": "3"} makes every
     # equation touching it unauditable even though the value is perfectly usable.
+    # [v15.2] Runs BEFORE snapping so a misread operand stored as a string is
+    # still grounded against the problem text.
     for k, v in list(givens.items()):
         if not isinstance(v, (int, float)) or isinstance(v, bool):
             n = _coerce_number(v)
             if n is not None:
                 givens[k] = n
                 fixes.append(f"coerced givens[{k!r}] {v!r} -> {n}")
+
+    # ── 2. Operands that the problem text does not contain [v15.0] ──────────
+    if problem_text:
+        givens, snap_fixes = _snap_givens_to_text(givens, problem_text)
+        fixes.extend(snap_fixes)
+
+    # ── 2.5 Givens declared as arithmetic EXPRESSIONS over other givens [v15.2]
+    # Placed AFTER snapping so the referenced operands are already grounded
+    # ("initial_fairies / 2" must read the corrected 50, not the misread 55),
+    # and so the derived value itself is never snapped -- it is a computation,
+    # not a quote from the text. Iterated because an expression may reference
+    # another expression's result.
+    for _ in range(3):
+        progressed = False
+        numeric_now = {k: float(v) for k, v in givens.items()
+                       if isinstance(v, (int, float)) and not isinstance(v, bool)}
+        for k, v in list(givens.items()):
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                continue
+            val = _eval_expr_given(str(v), numeric_now)
+            if val is not None:
+                givens[k] = val
+                fixes.append(f"evaluated expression givens[{k!r}] {v!r} -> {val}")
+                progressed = True
+        if not progressed:
+            break
 
     numeric_keys = [k for k, v in givens.items()
                     if isinstance(v, (int, float)) and not isinstance(v, bool)]

@@ -1,6 +1,41 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 15.1: Ground the alternatives too, not just the primary
+VERSION 15.2: Repair what grounding cannot reach; promote the inventory prompt
+
+CHANGELOG v15.2 (over v15.1) — offline replay of the 125 pretest blueprints
+through the v15.0/15.1 grounding showed it composes with the prompt route
+instead of overlapping it, and left three mechanical defect classes standing.
+All numbers below are from that replay (zero LLM calls, zero GPU), measured
+with ZERO previously-correct blueprints broken:
+
+- [FIX] EXPRESSION-VALUED GIVENS. The Architect regularly declares a given as
+  a formula string — {"fairies_from_east": "initial_fairies / 2"},
+  {"yarn_used": "1/4"} — which made every equation reading it unauditable.
+  `repair_blueprint` now evaluates such strings with a restricted AST walk
+  (numeric literals, + - * / // % **, names resolving to other numeric givens)
+  AFTER text-snapping, so the referenced operands are already grounded and the
+  derived value is never itself snapped. Refuses anything needing semantics
+  ('5 pm', unresolvable names), which keeps those on the LLM repair path.
+- [FIX] LONG-OPERAND SNAPPING. gsm-hard's perturbed operands are 5-7 digit
+  integers and the model's misreads often mangle TWO digits (9371084 for
+  9370284), which the one-slip rule correctly refuses on short numbers. For
+  integer givens >= 10000 a unique >=5-digit text number within two digit
+  edits now snaps; two candidates still abstain.
+- [FIX] MISSPELT ACCESSOR. givvens['x'] / given['x'] left the whole reference
+  undefined; tokens one edit from 'givens' used as a quoted subscript are
+  respelt during normalisation.
+- [CHANGE] PRODUCTION BLUEPRINT PROMPT = v3_inventory. The 5-route pretest
+  scored the inventory route (list every number in the text with what it
+  counts, THEN decide relevance) at 44% raw vs 28% for the bare production
+  prompt; under the full v15.2 repair the gap is 60% vs 48%, and v3's
+  correct set nearly contains v0's (v3-only 4, v0-only 1). Selectable via
+  `blueprint_strategy` / MAS_BLUEPRINT_STRATEGY ("v0_production" reverts).
+  Replayed per-variant blueprint accuracy, raw -> v15.2-repaired:
+      v0_production   28% -> 48%      v3_inventory  44% -> 60%
+      oracle over the 5 repaired routes: 72%
+  Through primary = 0.433 + 0.535 * blueprint, blueprint 60% projects the
+  Programmer path to ~75% — at the zero-shot baseline BEFORE selection-layer
+  gains, for the first time.
 
 CHANGELOG v15.1 (over v15.0) — v15.0 fixed operand-grounding for the PRIMARY
 blueprint only. The Critic's alt_1/alt_2 went from generate_alternative_
@@ -708,11 +743,12 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "15.1"
+SOLVER_VERSION = "15.2"
 
-# [v14.8] Reasoning ROUTES for blueprint ensembling. Index 0 must stay the
-# untouched production prompt so single-sample behaviour is unchanged and its
-# accuracy stays comparable across runs. Diversity has to come from the prompt:
+# [v14.8] Reasoning ROUTES for blueprint ensembling. Index 0 is the bare
+# (hint-free) prompt; since v15.2 PRODUCTION uses the v3_inventory route (see
+# blueprint_strategy), so v0_production is now the name of the historical
+# baseline prompt, kept for ablation. Diversity has to come from the prompt:
 # the local_hf backend decodes greedily by design (do_sample=False, v10.3 fixed
 # an fp16 probability overflow that crashed sampling) and math_temp is 0.0, so
 # re-calling with an identical prompt returns an identical blueprint. Varying
@@ -735,6 +771,18 @@ BLUEPRINT_STRATEGY_HINTS = [
      "expression over several intermediate steps, as long as it stays correct.",
      False),
 ]
+
+
+def _blueprint_strategy_hint(name: str) -> str:
+    """[v15.2] The strategy-hint text for a named route, '' for unknown names.
+
+    Only the HINT is taken from the route tuple; math_reasoning_first stays an
+    independent knob (the notebook sets it explicitly, and the v14.8 pretest
+    already rejected reasoning-first on its own merits)."""
+    for nm, hint, _rfirst in BLUEPRINT_STRATEGY_HINTS:
+        if nm == name:
+            return hint
+    return ""
 import json
 import time
 import random
@@ -3018,6 +3066,12 @@ class QualityEnhancedMultiAgentSolver:
         # v14.7 pipeline byte for byte. Raise only after
         # pretest_blueprint_consistency.py shows the routes' errors decorrelate.
         self.blueprint_samples = 1
+        # [v15.2] Which reasoning route the production Mathematician call uses.
+        # The 5-route pretest scored v3_inventory at 44% raw / 60% repaired vs
+        # 28% / 48% for the bare prompt, with v3's correct set nearly
+        # containing v0's (v3-only 4, v0-only 1, n=25). "v0_production"
+        # restores the historical prompt for ablation/comparison.
+        self.blueprint_strategy = "v3_inventory"
 
         # [v14.0] Blueprint reasoning mode. See run_mathematician_analysis.
         #   True  — 'DERIVATION:' free text, then 'BLUEPRINT:' JSON, one call
@@ -4958,7 +5012,13 @@ Select the most reliable candidate."""
                 problem, self.blueprint_samples
             )
         else:
-            blackboard_logic = self.run_mathematician_analysis(problem)
+            # [v15.2] Production route defaults to v3_inventory (see
+            # blueprint_strategy in __init__); "" falls back to the bare prompt.
+            blackboard_logic = self.run_mathematician_analysis(
+                problem,
+                strategy_hint=_blueprint_strategy_hint(
+                    getattr(self, "blueprint_strategy", "v3_inventory")),
+            )
 
         # Step 3: Engineer (with SymPy fallback built-in)
         programmer_response = self.run_programmer_solver(problem, blackboard_logic)
@@ -5304,6 +5364,7 @@ class QualityAwarePipeline:
                  enable_sht: bool = True,
                  enable_routing: bool = True,
                  blueprint_samples: int = 1,
+                 blueprint_strategy: str = "v3_inventory",
                  evaluation_mode: bool = False,
                  dataset_seed: Optional[int] = None,
                  math_reasoning_first: bool = True,
@@ -5421,6 +5482,15 @@ class QualityAwarePipeline:
         self.solver.enable_hypothesis_testing = enable_sht
         self.solver.enable_compute_routing = enable_routing  # [v14.6]
         self.solver.blueprint_samples = max(1, int(blueprint_samples))  # [v14.8]
+        # [v15.2] Production blueprint route (see solver.blueprint_strategy).
+        # MAS_BLUEPRINT_STRATEGY overrides without a notebook edit — same
+        # rationale as MAS_DISABLE_ROUTING: git pull reaches the .py files,
+        # not the notebook cells.
+        _env_strategy = os.environ.get("MAS_BLUEPRINT_STRATEGY", "").strip()
+        self.solver.blueprint_strategy = _env_strategy or blueprint_strategy
+        if _env_strategy:
+            logger.warning(f"[v15.2] MAS_BLUEPRINT_STRATEGY={_env_strategy} — "
+                           "production blueprint route set from the environment")
         # [v14.0] Blueprint reasoning mode — see QualityEnhancedMultiAgentSolver
         # and pretest_blueprint_mode.py, which measures the two settings against
         # each other on a handful of problems before a full run commits to one.
@@ -5461,6 +5531,7 @@ class QualityAwarePipeline:
             f"[v14.0] blueprint mode: "
             f"{'reasoning-first (DERIVATION -> BLUEPRINT)' if math_reasoning_first else 'json-only (v13.0)'}"
         )
+        logger.info(f"[v15.2] blueprint strategy: {self.solver.blueprint_strategy}")
 
     def _extract_gold_answer(self, text: Any) -> Optional[float]:
         text = str(text)
