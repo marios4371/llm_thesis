@@ -1,6 +1,28 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 15.0: The operands, not the reasoning - snap givens to the text
+VERSION 15.1: Ground the alternatives too, not just the primary
+
+CHANGELOG v15.1 (over v15.0) — v15.0 fixed operand-grounding for the PRIMARY
+blueprint only. The Critic's alt_1/alt_2 went from generate_alternative_
+hypotheses's raw JSON parse straight to the Programmer, never through
+repair_blueprint, so they kept whatever digit-misread the Critic made.
+
+This matters specifically because of how corroboration works: a lone-correct
+primary is suppressed by the do-no-harm anchor unless a second independent
+derivation agrees (measured on full_mas_20260819: 13/16 correct-but-lone
+primary answers were overridden back to baseline). {primary, alt_1} is NOT
+subject to any vote-collapse rule (only {primary, blueprint_eval} and
+{alt_1, alt_2} collapse — see _honest_votes) and already counts as 2 honest
+votes, enough to clear the baseline. But alternatives are only spent in tier
+B (audit failed, no free corroboration -- see _route_compute), which is
+exactly the population where an ungrounded alt is worse than useless: it
+cannot corroborate a now-correct primary even when its own reasoning agrees,
+because its OWN operands are wrong.
+
+- [FIX] Alt blueprints now go through the same repair_blueprint(problem_text=)
+  pass as the primary, applied right before each is handed to the Programmer.
+  Guarded by test_honest_votes.py [3b], which confirms {primary, alt_1} scores
+  2 honest votes with no baseline present.
 
 CHANGELOG v15.0 (over v14.8) — the v14.8 run shipped 75.33% against a 74.67%
 baseline: above it for the first time, coverage 65.3% -> 86.0% exactly as
@@ -686,7 +708,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "15.0"
+SOLVER_VERSION = "15.1"
 
 # [v14.8] Reasoning ROUTES for blueprint ensembling. Index 0 must stay the
 # untouched production prompt so single-sample behaviour is unchanged and its
@@ -4757,6 +4779,20 @@ Select the most reliable candidate."""
         api_calls += 1
 
         for idx, alt_bp in enumerate(alt_blueprints[:2]):
+            # [v15.0] The Critic's alternatives went straight from
+            # generate_alternative_hypotheses's raw JSON parse to the
+            # Programmer, bypassing the same operand-grounding pass the
+            # primary blueprint gets in run_mathematician_analysis. Since
+            # tier B (where alternatives are ONLY spent since v14.6) is
+            # exactly the population where corroboration decides whether the
+            # do-no-harm anchor can be overridden, an alt blueprint with a
+            # misread digit is worse than useless here: it cannot corroborate
+            # a now-correct primary even when its own reasoning agrees.
+            if alt_bp.get("equations"):
+                alt_bp, _alt_fixes = repair_blueprint(alt_bp, problem_text=problem)
+                if _alt_fixes:
+                    logger.info(f"[v15.0] alt_{idx+1} operand repair: "
+                               f"{len(_alt_fixes)} fix(es): {_alt_fixes[0]}")
             alt_response = self.run_programmer_solver(problem, alt_bp, max_attempts=1)
             api_calls += 1
 

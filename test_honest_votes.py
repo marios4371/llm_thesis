@@ -82,6 +82,11 @@ check("alt_1 + alt_2", ["alt_1", "alt_2"], 1)
 check("alt_1 + alt_2 + alt_3", ["alt_1", "alt_2", "alt_3"], 1)
 check("alt_1 + alt_2 + baseline", ["alt_1", "alt_2", "baseline"], 2)
 
+print("\n[3b] [v15.0] primary + ONE alt is genuine 2-vote corroboration")
+check("primary + alt_1 (no baseline)", ["primary", "alt_1"], 2)
+check("primary + alt_1 + alt_2 (alt pair still collapses)",
+      ["primary", "alt_1", "alt_2"], 2)
+
 print("\n[4] Both rules compose")
 check("primary + blueprint_eval + alt_1 + alt_2",
       ["primary", "blueprint_eval", "alt_1", "alt_2"], 2)
