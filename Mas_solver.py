@@ -1,6 +1,37 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 14.8: Blueprint coverage - evaluate the blueprint, always
+VERSION 15.0: The operands, not the reasoning - snap givens to the text
+
+CHANGELOG v15.0 (over v14.8) — the v14.8 run shipped 75.33% against a 74.67%
+baseline: above it for the first time, coverage 65.3% -> 86.0% exactly as
+projected, and the harm gone (2 losses, down from 7). But 103/150 problems
+still returned the baseline verbatim, because the technique's own blueprint
+accuracy only moved 20.0% -> 24.0%. The 5-route pretest run the same week
+(pretest_blueprint_consistency.json, 25 problems x 5 reasoning routes) says
+why, and it is not what the architecture assumed.
+
+    35% of extracted numeric givens do not appear in the problem text at all
+    68% of those sit ONE DIGIT away from a number that does
+
+        "Katelyn saw 50 fairies ... 30 fairies flew away"   ->  55 and 31
+        "Kim raises $320 more than Alexandra, who raises $430" -> 321 and 431
+        "In a school there are 569 girls and 236 boys"      ->   69 and 36
+
+  The equations wrapped around those operands are frequently correct: across
+  variant pairs where one is right and the other wrong, 38% share the IDENTICAL
+  equation structure and differ only in a misread number. The Architect is not
+  failing to reason about the problem, it is failing to COPY the problem.
+
+- [FIX] SNAP GIVENS TO THE PROBLEM TEXT. `repair_blueprint` now takes the
+  problem statement and rewrites any numeric given the text does not contain,
+  but only when exactly ONE text number is a single-digit slip away (or,
+  failing that, exactly one shares its digit suffix, which catches a dropped
+  leading digit). Ambiguity abstains. Zero LLM calls.
+  Measured on those 125 blueprints: 37 correct -> 53 (+12.8pp) with ZERO
+  previously-correct blueprints broken. On the production prompt alone,
+  **28% -> 44%**. Through the fitted primary = 0.433 + 0.535 * blueprint that
+  projects the Programmer path from ~58% to ~67%.
+  Guarded by `test_blueprint_repair.py` PART 5, including the refusal cases.
 
 CHANGELOG v14.8 (over v14.6) — with the zero-shot baseline taken out of the
 candidate pool entirely, the technique's own oracle on mas_full_20260817 is
@@ -655,7 +686,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "14.8"
+SOLVER_VERSION = "15.0"
 
 # [v14.8] Reasoning ROUTES for blueprint ensembling. Index 0 must stay the
 # untouched production prompt so single-sample behaviour is unchanged and its
@@ -3403,7 +3434,14 @@ Output ONLY this JSON, nothing else:
         # is what the Programmer receives as its cross-check draft and what SIV
         # audits — not just what the repair loop sees after a failure.
         if blueprint.get("equations"):
-            blueprint, _fixes = repair_blueprint(blueprint)
+            # [v15.0] The problem text is passed so the repairer can force every
+            # numeric given to be a number the problem ACTUALLY contains. This
+            # is the single largest lever measured on this pipeline: 35% of
+            # extracted givens are absent from the text, and snapping the
+            # one-digit slips back took blueprint accuracy on the production
+            # prompt from 28% to 44% with zero previously-correct blueprints
+            # broken (pretest_blueprint_consistency.json, n=25 x 5 routes).
+            blueprint, _fixes = repair_blueprint(blueprint, problem_text=problem)
             if _fixes:
                 logger.info(
                     f"Deterministic blueprint repair applied {len(_fixes)} fix(es): "

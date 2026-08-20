@@ -99,6 +99,76 @@ def part1_real_defects():
          want_fixed=True, expect_value=12.0)
 
 
+def part5_text_snapping():
+    """[v15.0] Operands must be numbers the problem actually contains."""
+    print("\n" + "=" * 70)
+    print("PART 5 - [v15.0] snapping givens to numbers present in the text")
+    print("=" * 70)
+
+    # gsm8k_test_457, verbatim: the text says 50 and 30, the model wrote 55/31.
+    text457 = ("While playing with her friends in their school playground, "
+               "Katelyn saw 50 fairies flying above the nearby forest. After "
+               "about twenty minutes, one of her friends saw half as many "
+               "fairies as Katelyn saw come from the east and join the fairies "
+               "that were there. Ten minutes later, 30 fairies flew away. How "
+               "many fairies are remaining?")
+    bp, fixes = repair_blueprint(
+        {"givens": {"initial_fairies": 55, "fairies_flew_away": 31},
+         "equations": ["joined = givens['initial_fairies'] / 2",
+                       "total = givens['initial_fairies'] + joined",
+                       "answer = total - givens['fairies_flew_away']"]},
+        problem_text=text457)
+    check("misread operands snapped back to the text",
+          bp["givens"]["initial_fairies"] == 50.0
+          and bp["givens"]["fairies_flew_away"] == 30.0,
+          f"got {bp['givens']}")
+    r = SIV.verify(bp, 45.0)
+    check("and the chain now evaluates to the gold answer",
+          r.blueprint_answer is not None and abs(r.blueprint_answer - 45.0) < 1e-6,
+          f"got {r.blueprint_answer}")
+
+    # svamp_test_23: a dropped LEADING digit, caught by the suffix rule.
+    bp, fixes = repair_blueprint(
+        {"givens": {"girls": 69, "boys": 36},
+         "equations": ["answer = givens['girls'] - givens['boys']"]},
+        problem_text="In a school there are 569 girls and 236 boys. "
+                     "How many more girls than boys does the school have?")
+    check("dropped leading digit restored",
+          bp["givens"]["girls"] == 569.0 and bp["givens"]["boys"] == 236.0,
+          f"got {bp['givens']}")
+
+    # Values genuinely in the text must never move.
+    bp, fixes = repair_blueprint(
+        {"givens": {"a": 40, "b": 41},
+         "equations": ["answer = givens['a'] + givens['b']"]},
+        problem_text="He had 40 apples and 41 pears.")
+    check("grounded values are left alone", bp["givens"] == {"a": 40, "b": 41},
+          f"got {bp['givens']}")
+
+    # Ambiguity must abstain: 45 is one digit from BOTH 40 and 41.
+    bp, fixes = repair_blueprint(
+        {"givens": {"x": 45},
+         "equations": ["answer = givens['x'] * 2"]},
+        problem_text="He had 40 apples, 41 pears and 46 plums.")
+    check("ambiguous slip is refused, not guessed",
+          bp["givens"]["x"] == 45, f"got {bp['givens']}")
+
+    # Structural constants (percent divisor, halves) are not text operands.
+    bp, fixes = repair_blueprint(
+        {"givens": {"pct": 20, "half": 2},
+         "equations": ["answer = givens['pct'] / 100 * givens['half']"]},
+        problem_text="Enrolment rose by 20 percent.")
+    check("structural constants are not snapped",
+          bp["givens"]["half"] == 2, f"got {bp['givens']}")
+
+    # No text supplied -> the pass is inert (backwards compatible).
+    bp, fixes = repair_blueprint(
+        {"givens": {"x": 55}, "equations": ["answer = givens['x']"]})
+    check("no problem text -> snapping is a no-op",
+          bp["givens"]["x"] == 55 and not any("problem text" in f for f in fixes),
+          f"got {bp['givens']}, fixes={fixes}")
+
+
 def part2_refusals():
     print("\n" + "=" * 70)
     print("PART 2 — defects the repairer must NOT guess at")
@@ -216,6 +286,7 @@ if __name__ == "__main__":
     part2_refusals()
     part3_no_false_repairs()
     part4_symbol_identity_bug()
+    part5_text_snapping()
     print("\n" + "=" * 70)
     if failures:
         print(f"  {len(failures)} CHECK(S) FAILED:")
