@@ -127,7 +127,15 @@ We evaluate MAS-SHT on five established benchmarks---GSM8K, GSM-Hard, GSM-Plus, 
 On a challenging mixed-benchmark set, MAS-SHT achieves 56.8\% accuracy with Qwen3-32B via Groq, compared to 5.4\% for the zero-shot baseline---a gain of \textbf{+51.4 percentage points}---while recording zero ``damage'' cases where a correct baseline answer was overwritten with an incorrect one.
 A key finding is that when the Programmer successfully generates and executes code, it achieves 100\% accuracy; the entire performance gap is explained by blueprint construction failures.
 On a standard GSM8K subset, the framework achieves 100\% accuracy compared to 90\% for the standalone baseline.
-On a fully local, open-weight deployment (Qwen2.5-Math-7B, $n{=}150$, GSM8K/GSM-Hard/SVAMP), a first full run exposed a critical flaw isolated to the candidate-\emph{selection} layer---a free-form LLM judge that scored 15\% on the problems it arbitrated while discarding answers that were 42.5\% accurate---which we trace to a specific, independently verifiable bug and repair with a \emph{verification-weighted arbitration} scheme: candidate selection is resolved by deterministic evidence (cross-derivation agreement and SIV verification) with the LLM judge retained only as a constrained tie-breaker. Re-running the identical problem set after this fix raises accuracy from 74.0\% to \textbf{82.7\%} (+8.7 points) with no change to the underlying solvers, and confirms SIV's verification signal directly: SIV-verified answers are 100\% correct (12/12) versus 65.9\% for unverified ones.
+On a fully local, open-weight deployment (Qwen2.5-Math-7B, $n{=}150$, GSM8K/GSM-Hard/SVAMP), a first full run exposed a critical flaw isolated to the candidate-\emph{selection} layer---a free-form LLM judge that scored 15\% on the problems it arbitrated while discarding answers that were 42.5\% accurate---which we trace to a specific, independently verifiable bug and repair with a \emph{verification-weighted arbitration} scheme: candidate selection is resolved by deterministic evidence (cross-derivation agreement and SIV verification) with the LLM judge retained only as a constrained tie-breaker. Re-running the identical problem set after this fix raises accuracy from 74.0\% to \textbf{82.7\%} (+8.7 points) with no change to the underlying solvers, and confirms SIV's verification signal directly: SIV-verified answers are 100\% correct (12/12) versus 65.9\% for unverified ones (though 11 of the 12 fall in the degenerate single-given regime, so this figure alone does not yet certify the multi-variable case).
+To give SIV genuinely multi-variable material to be evaluated on, a subsequent coverage-oriented phase reweights the benchmark mix toward GSM-Hard (which yields $\sim$2.6$\times$ more genuine blueprints than SVAMP) and assigns an instruction-tuned sibling (Qwen2.5-7B-Instruct) to every parse-critical role while Math-7B keeps the compute roles: SIV audit coverage rises from 37\% to \textbf{73\%} of problems---but end-to-end accuracy collapses to 57.3\%, exposing a second family of selection-layer defects (a pseudo-vote that counted one derivation twice, SIV verification wielded as a standalone override authority, and a fallback that structurally preferred the primary).
+v13.0 closes all three with a \emph{do-no-harm invariant}---the system may override its own zero-shot baseline only when at least two honestly independent derivations agree; absent such corroboration the baseline answer is returned verbatim---plus an \emph{audit-triggered blueprint repair loop} that returns SIV's error report to the Mathematician for one re-derivation before the confidence gate.
+The v13.0 run measures \textbf{72.7\%} on the deliberately harder mix (86.7\% on its GSM8K/SVAMP portion, above the earlier, easier mix's 82.7\%; 58.7\% on GSM-Hard, above CoT's 56.0\% there), with the invariant's wiring verified exactly: all 51 uncorroborated problems returned the baseline answer verbatim.
+Diagnosing the collapse also yields the sharpest field characterization of SIV to date: verification is highly reliable as a \emph{cross-validator} (22/22 correct when the independent baseline agrees) but unreliable as a standalone authority (2/14 when it disagrees)---an empirical confirmation, with field numbers, of the math$\to$math scope boundary stated above.
+The MAS-NoSIV ablation then delivers a genuine negative---as an \emph{arbitration} signal SIV is causally neutral (72.0\% vs.\ 72.7\%, McNemar $p{\approx}1$)---whose diagnosis becomes a contribution in itself: SIV's certificate is confounded with problem \emph{difficulty} (on audit-passed rows the certified answer is 71.4\% correct but the baseline on those same rows is 88.1\%), so a verifier's precision must be judged against the baseline's accuracy \emph{conditioned on the certificate}, not the base rate.
+Repositioned as an a-priori \emph{compute router}---the free certificate separates baseline accuracy by +26.6 points and gates which problems receive the expensive Critic stage---the same signal yields the track's first above-baseline result: \textbf{75.3\% vs.\ 74.7\%} at 86\% blueprint coverage, with the routing tier's projected gain (+7.1) confirmed by measurement (+6.9).
+Finally, auditing the Architect's stored blueprints against the problem texts shows the dominant NL$\to$math defect at 7B scale is not reasoning but \emph{operand transcription}: 35\% of extracted givens appear nowhere in the problem text, and 68\% of those sit one digit from a number that does.
+A deterministic, zero-LLM grounding repair (snap a misread operand to the unique text number one digit-edit away; evaluate formula-valued givens; ambiguity abstains) raises blueprint accuracy on the stored pretest blueprints from 28\% to 48\% on the production prompt and to \textbf{60\%} on the best prompt route, breaking zero previously-correct blueprints---projecting the program-aided path to the baseline's level before any selection-layer gain.
 \end{abstract}
 \noindent\textbf{Keywords:} Large Language Models, Mathematical Reasoning, Multi-Agent Systems, Hypothesis Testing, Chain-of-Thought, Code Generation, Process Verification, Symbolic Reasoning, Backward Verification
 % ============================================================
@@ -158,6 +166,7 @@ We present \textbf{MAS-SHT} (Multi-Agent Solver with Structured Hypothesis Testi
     \item \textbf{Critic-based Structured Hypothesis Testing (SHT).} When the confidence gate detects uncertainty, a \emph{Critic} agent performs structured peer review: it diagnoses likely errors, generates a targeted correction (informed by the SIV fault localization report when available), and independently rederives a solution from scratch. This peer-review design avoids the correlated-error failure mode of naive parallel resampling.
     \item \textbf{Baseline as an active triage candidate.} The zero-shot baseline answer participates alongside the primary and critic-generated alternatives in majority-vote triage, providing an additional independent signal.
     \item \textbf{Verification-weighted arbitration (v12).} Candidate selection is evidence-first: the CAS evaluation of the Architect's blueprint enters the triage pool as a zero-cost candidate (yielding three \emph{independent} derivations---free program, declarative blueprint, zero-shot CoT), answer groups are ranked by deterministic evidence (votes, SIV verification, executed-code support), and the LLM Judge is demoted to a \emph{constrained tie-breaker} that must select one of the presented candidates by index. This redesign is directly motivated by an $n{=}150$ pilot in which a free-form 7B judge scored 15\% on the problems it arbitrated while the answers it discarded scored 42.5\% (\Cref{sec:pilot_diagnosis}).
+    \item \textbf{Baseline-anchored selection under a do-no-harm invariant (v13.0).} The system may override its own zero-shot baseline only when at least two \emph{honestly independent} derivations agree on a value (the \{primary, blueprint-eval\} pair counts as one derivation when the execution audit certifies they computed the same equations); with no such corroboration, the baseline answer is returned verbatim at zero additional cost. The invariant was motivated by a second measured selection-layer collapse (57.3\%, \Cref{sec:v13}) and its wiring is verified exactly in the v13.0 run (51/51 uncorroborated problems returned the baseline answer). v13.0 also adds an \emph{audit-triggered blueprint repair loop}: a failed SIV execution audit returns SIV's error-localization report to the Mathematician for one re-derivation before the confidence gate (trigger quality: 80.3\% recall, zero false alarms; fix success: 15.4\%---a distinction we report explicitly).
     \item \textbf{Blueprint-robust construction for non-JSON-native models.} Motivated by our finding that blueprint construction is the sole bottleneck, we introduce two mechanisms that target it directly. (i)~A \emph{two-step chain-of-thought-to-blueprint extraction} stage: when a model emits free-form reasoning instead of JSON (as reasoning-tuned math models such as Qwen2.5-Math and DeepSeek-Math do by construction), the system feeds the model its own worked solution and asks it to convert that derivation into structured givens and equations---a substantially easier task than generating structure \emph{ex nihilo}. (ii)~\emph{Token-level constrained decoding}: for locally hosted models, a JSON-schema grammar enforces a valid blueprint at the token level, with a leading free-text \texttt{reasoning} field that preserves the model's scratchpad while still guaranteeing parseable output.
     \item \textbf{Provider-agnostic execution and local open-weight deployment.} A unified client abstracts five backends---Groq, Google, Hugging Face Inference Providers, Together AI, and an in-process \texttt{local\_hf} backend built on \texttt{transformers}. The local backend supports 4-bit (NF4) quantization and multi-GPU sharding, enabling the entire multi-agent pipeline to run on small open-weight models (1.5B--7B) at zero API cost and without rate limits.
     \item \textbf{Component-level ablation infrastructure.} Pipeline-level switches (\texttt{enable\_siv}, \texttt{enable\_sht}) instantiate MAS-NoSIV and MAS-NoSHT variants from a single code path, permitting controlled attribution of the inspector and the hypothesis-testing stage without duplicating the pipeline.
@@ -202,6 +211,12 @@ First, verification is \emph{deterministic}: given the same blueprint and answer
 Second, verification is \emph{free}: zero additional API calls are consumed.
 Third, SIV is \emph{immune to correlated execution errors}: a model that consistently makes the same code-generation mistake will also make it during verification, whereas SymPy cannot.
 Our rule-based process verification component is additionally related to \emph{peer review} frameworks in NLP \citep{gero2023selfeval}, but applied to mathematical derivation: the Critic is explicitly asked to identify the most likely error category before generating corrections.
+
+Several 2025--2026 lines of work are adjacent to individual mechanisms of ours and are worth delimiting precisely.
+CAS-guarded, harm-aware selective replacement of answers \citep{guardedrepair2026} and estimation-verified symbolic solving \citep{evoss2025} occupy the same territory as our do-no-harm invariant and \texttt{expected\_answer} check respectively; LLM-based detection and correction of generated equations is developed in EDCIM \citep{edcim2025}, whereas our repair operator is deliberately deterministic and LLM-free.
+Adaptive allocation of verification compute at test time is an active area \citep{qu2026adaptive}; our routing differs in that the gating signal is a \emph{free symbolic audit of the intermediate representation} (the blueprint), not a learned scorer over candidate solutions, and in that we measure \emph{why} the naive use of the same signal as an override authority fails (the certificate--difficulty confound, \Cref{sec:v14_routing}).
+Digit-level corruption of operands has been used as a synthetic \emph{perturbation} to study error propagation \citep{misinfoprop2025}; our contribution runs in the opposite direction---measuring that such corruptions dominate a real pipeline's translation failures and \emph{repairing} them deterministically against the problem text.
+Aligning quantities in the problem text to equation slots is itself classical in pre-LLM template solvers \citep{kushman2014learning}; what is new here is its use as a conservative, abstention-first repair operator over an LLM's intermediate representation, and the measurement that transcription (not modelling) is the binding defect class at 7B scale.
 \subsection{Symbolic and Hybrid Solvers}
 Recent work has explored hybrid neural-symbolic approaches to improve numerical precision.
 \citet{cobbe2021gsm8k} showed that verifier-guided search substantially improves accuracy on GSM8K.
@@ -230,10 +245,11 @@ MAS-SHT processes each mathematical word problem through the pipeline illustrate
 (3)~\emph{Programmer} program-aided solving (PAL-style: the agent solves the problem directly in sandboxed Python, with the blueprint supplied as a cross-reference rather than as equations to transcribe), with execution and repair loop,
 (3b)~\emph{Rule-based process verification} (advisory: it adjusts confidence and annotates the run, but never overwrites the executed answer),
 (3c)~\emph{Symbolic Inverse Verification (SIV)}: a two-layer audit comprising a forward execution check (Layer~1) and an inverse implicated-variable/distractor-exclusion check (Layer~2), both using SymPy CAS at zero API cost,
+(3d)~\emph{Audit-triggered blueprint repair} (v13.0): if the execution audit fails, the Mathematician receives SIV's error-localization report and one chance to re-derive the blueprint before the gate ever sees the answer,
 (4)~\emph{Confidence Gate} evaluation,
 (5)~\emph{Critic-based Hypothesis Testing} with SIV-informed targeted correction and independent rederivation, and---if candidates disagree---
 (6)~\emph{verification-weighted arbitration}: majority voting over the candidate pool (which includes the CAS-evaluated blueprint answer as a zero-cost vote), then deterministic evidence ranking, with a \emph{constrained} LLM Judge consulted only on exact evidence ties.
-Stage~2b and the constrained-decoding option in Stage~2 (both detailed in \Cref{sec:blueprint_recovery}) are the v11 mechanisms that directly target the empty-blueprint failure mode identified in \Cref{sec:results}; the PAL-style Programmer and the arbitration redesign in Stage~6 are the v12 mechanisms that target the selection-layer failure mode identified in the $n{=}150$ pilot (\Cref{sec:pilot_diagnosis}).
+Stage~2b and the constrained-decoding option in Stage~2 (both detailed in \Cref{sec:blueprint_recovery}) are the v11 mechanisms that directly target the empty-blueprint failure mode identified in \Cref{sec:results}; the PAL-style Programmer and the arbitration redesign in Stage~6 are the v12 mechanisms that target the selection-layer failure mode identified in the $n{=}150$ pilot (\Cref{sec:pilot_diagnosis}); the repair loop in Stage~3d and the do-no-harm selection invariant inside Stage~6 (\Cref{sec:do_no_harm}) are the v13.0 mechanisms that target the second selection-layer failure mode exposed once blueprint coverage was raised (\Cref{sec:v13}).
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}[node distance=1.0cm and 1.9cm, auto]
@@ -276,7 +292,7 @@ Stage~2b and the constrained-decoding option in Stage~2 (both detailed in \Cref{
     \draw[arrow] (triage) -- node[left, font=\tiny]{Majority / Unanimous} (output2);
     \draw[arrow] (judge) |- (output2);
 \end{tikzpicture}
-\caption{MAS-SHT pipeline (v12.2). Solid arrows show the primary execution path; dashed arrows show recovery and fallback paths. The \emph{Blueprint Recovery} stage (2b, green) is engaged only when blueprint construction returns no equations: it converts the model's own chain-of-thought into a structured blueprint, supplying executable material to the downstream pipeline on models that do not natively emit JSON. SIV (green) performs a two-layer audit: Layer~1 (forward execution audit) cross-checks the PAL-style Programmer's answer against the independent blueprint evaluation; Layer~2 (inverse implicated-variable check) reports which given variables are implicated by an inconsistency---reliably excluding unused distractors, but (per \Cref{sec:siv}) not isolating a single culprit once 2+ givens are used. When the execution audit passes and all solvable givens reconstruct (confidence $\geq 0.90$), SHT is skipped; when inconsistencies are found, the implicated-variable report is forwarded to the Critic. \emph{Note:} SIV operates on the math$\to$math layer and cannot detect NL$\to$math translation errors. The triage pool contains the primary answer, the baseline (fixed confidence 0.5), the CAS-evaluated blueprint answer (zero-cost vote), and up to two Critic alternatives; ties surviving evidence ranking go to a Judge that is constrained to select one presented candidate by index.}
+\caption{MAS-SHT pipeline (v13.0). Solid arrows show the primary execution path; dashed arrows show recovery and fallback paths. Two v13.0 additions are described in the text rather than drawn: on an execution-audit failure, SIV's error-localization report is returned to the Mathematician for one blueprint re-derivation \emph{before} the confidence gate (Stage~3d, \Cref{sec:siv}); and triage obeys the do-no-harm invariant of \Cref{sec:do_no_harm}---with no corroborated candidate group, the final answer is the zero-shot baseline verbatim. The \emph{Blueprint Recovery} stage (2b, green) is engaged only when blueprint construction returns no equations: it converts the model's own chain-of-thought into a structured blueprint, supplying executable material to the downstream pipeline on models that do not natively emit JSON. SIV (green) performs a two-layer audit: Layer~1 (forward execution audit) cross-checks the PAL-style Programmer's answer against the independent blueprint evaluation; Layer~2 (inverse implicated-variable check) reports which given variables are implicated by an inconsistency---reliably excluding unused distractors, but (per \Cref{sec:siv}) not isolating a single culprit once 2+ givens are used. When the execution audit passes and all solvable givens reconstruct (confidence $\geq 0.90$), SHT is skipped; when inconsistencies are found, the implicated-variable report is forwarded to the Critic. \emph{Note:} SIV operates on the math$\to$math layer and cannot detect NL$\to$math translation errors. The triage pool contains the primary answer, the baseline (fixed confidence 0.5), the CAS-evaluated blueprint answer (zero-cost vote), and up to two Critic alternatives; ties surviving evidence ranking go to a Judge that is constrained to select one presented candidate by index.}
 \label{fig:architecture}
 \end{figure}
 % ----- 3.2 -----
@@ -533,6 +549,12 @@ SIV integrates at three points in the pipeline:
     Layer~1 tells the Critic whether the Programmer deviated from the blueprint.
     Layer~2 tells the Critic which variables are implicated (\Cref{sec:siv_fault_injection}: reliably the full used-variable set when 2+ givens are involved, not a single named culprit).
     This still narrows the Critic's first alternative from speculative re-derivation into a targeted repair over a smaller variable set, short of pinpointing a unique fault.
+
+    \item \textbf{Audit-triggered blueprint repair (v13.0).}
+    An \texttt{execution\_audit\_passed = False} verdict additionally triggers a single blueprint-repair attempt \emph{before} the confidence gate: the Mathematician receives SIV's own error-localization report together with the original problem and gets one chance to re-derive the blueprint, after which the Programmer and SIV re-run on the repaired artifact.
+    The trigger is empirically well-chosen: on the mixed-preset diagnostic run (\Cref{sec:v13}), a failed execution audit identified blueprints whose CAS answer was wrong with 80.3\% recall (49/61) and \emph{zero} false alarms on blueprints that were actually correct (0/25)---by far the strongest in-loop repair signal available.
+    Its \emph{fix} success is far more modest (6/39 repairs subsequently passed the audit; \Cref{sec:v13} discusses the distinction), so the mechanism is best read as SIV acting as an in-loop repair signal rather than a reliable self-correction step.
+    The two extra LLM calls a repair spends are charged to the per-problem call budget, and the attempt is logged in a dedicated \texttt{blueprint\_repaired} field.
 \end{enumerate}
 
 % ----- 3.7 -----
@@ -583,7 +605,7 @@ Each of the Critic's two alternative blueprints is passed to the Programmer for 
 Combined with the primary answer, the baseline, and the blueprint evaluation, this yields up to five candidates.
 \subsubsection{Triage (Majority Voting)}
 Candidates are filtered to those with \texttt{code\_success = True} and a non-null parsed numeric answer, then grouped by answer value (tolerance $\epsilon = 10^{-3}$).
-Groups are ranked by size, with average confidence as a tiebreaker.
+Groups are ranked by size, with average confidence as a tiebreaker; since v13.0, ``size'' means \emph{honest} votes---the \{primary, \texttt{blueprint\_eval}\} pair counts as one derivation when the execution audit certifies they computed the same equations (\Cref{sec:do_no_harm}).
 Three outcomes are possible:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
     \item \textbf{Unanimous}: all valid candidates share a single answer $\Rightarrow$ accepted directly.
@@ -600,12 +622,27 @@ When majority voting is inconclusive, answer groups are ranked by a lexicographi
     \item \textbf{primary support}, then \textbf{baseline support}, as final deterministic tie-breaks.
 \end{enumerate}
 A strict lexicographic winner is accepted directly (\texttt{triage\_result = evidence}).
+Since v13.0, auto-resolution additionally requires the winning group to be \emph{corroborated} (honest votes $\geq 2$); the SIV component of the tuple orders corroborated groups but can no longer qualify a lone group on its own, and a field with no corroborated group at all bypasses arbitration entirely in favor of the baseline (\Cref{sec:do_no_harm}).
 \subsubsection{Constrained LLM Judge (Tie-Break Only)}
 Only when two or more groups tie on the full evidence tuple is the LLM Judge consulted, and its authority is deliberately narrow: it receives one representative per tied group (strategy name, answer, equations, first 300 characters of code) and must reply with the \emph{index} of one presented candidate (\texttt{SELECTED\_CANDIDATE:~[[k]]}, $\tau=0.0$).
 A legacy \texttt{SELECTED\_ANSWER} tag is honored only if it numerically matches a presented candidate.
 Any other output---an out-of-range index, a novel number, unparseable text---is rejected, and a deterministic fallback selects the executed primary, then the baseline, then any valid candidate.
 The judge therefore \emph{cannot} introduce an answer that no solver produced.
 This design is a direct response to the pilot failure analysis (\Cref{sec:pilot_diagnosis}): the pre-v12 judge answered free-form, and when its output tag failed to parse, the last number in its rationale was scraped as the ``answer''---yielding candidate indexes and confidence values as final answers, and a 15\% accuracy on the 40 problems it arbitrated (its own discarded baseline: 42.5\%).
+\subsubsection{Baseline-Anchored Selection: The Do-No-Harm Invariant (v13.0)}
+\label{sec:do_no_harm}
+The mixed-preset run of \Cref{sec:v13} exposed three further selection-layer defects, each measured in that run's log; v13.0 responds by making a single invariant structural:
+\begin{quote}
+\emph{The system may override its own internal zero-shot baseline only when at least two honestly independent derivations agree on the same value. Absent such corroboration, the final answer is the baseline answer verbatim} (new triage outcome \texttt{baseline\_default}, at zero additional LLM calls).
+\end{quote}
+Three concrete changes implement it:
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Honest votes (pseudo-vote fix).} \texttt{blueprint\_eval} can only land in the same answer group as the primary when the SIV execution audit passed---which \emph{certifies} that the Programmer's code computed those very equations. That is one derivation observed twice, not two independent confirmations, yet both majority voting and the \texttt{votes} evidence component counted it as 2, letting the pair outvote the genuinely independent baseline. Measured: 36 such ``majority'' rows in the mixed run, on which the baseline was right 30/36 while the pair-vote answer was right 24/36. Vote counting now deduplicates the \{primary, \texttt{blueprint\_eval}\} pair everywhere; \texttt{blueprint\_eval} still carries a full vote in any group \emph{not} containing the primary (e.g.\ agreeing with the baseline against a deviant program, where it is genuinely independent).
+    \item \textbf{SIV verification is a cross-validator, not an authority.} Measured on the same run: SIV-verified answers were 22/22 correct when the baseline agreed, and 2/14 correct when the baseline disagreed. This is the paper's own scope claim (\Cref{sec:siv}) surfacing in field data---a verification that certifies blueprint-internal consistency inherits the blueprint's translation errors. Full SIV verification therefore no longer auto-resolves the evidence ranking on its own (v12.1 allowed it to); it remains a deterministic tie-breaker \emph{between already-corroborated groups}, and the same gating was applied to a second, previously unnoticed instance of the same bug (the v11.4 SIV-anchor override late in \texttt{solve()}, now suppressed whenever a live baseline disagrees). The confident-skip gate is untouched: it always required baseline agreement before any SIV skip (\Cref{sec:confidence_gate}) and remained 97.9\% accurate on the mixed run.
+    \item \textbf{Uncorroborated fields go to the baseline, not the judge.} When no group reaches two honest votes, the judge is not consulted at all: no LLM judge in any of our runs has extracted signal from a field of lone, unverified candidates (free-form pilot judge: 15\%; constrained v12.1 judge on the mixed run: 0/55 outputs parseable, because the Math-7B judge wrote chain-of-thought until its token cap and never reached the tag). The judge prompt is now \emph{tag-first} (\texttt{SELECTED\_CANDIDATE:~[[k]]} must be the first line, \Cref{app:prompts}) so truncation cannot destroy the tag, the judge is retained only for ties between corroborated groups, and the deterministic fallback on judge failure now prefers the baseline---the old primary-first fallback was the v12.1 coin-flip bug's twin living in the one function that fix never reached, and it fired 55 times on the mixed run at 8/55 accuracy against the discarded baseline's 29/55.
+\end{enumerate}
+All three changes were verified offline before any GPU run: 33 simulation checks built on real \texttt{SymbolicInverseVerifier} and \texttt{HypothesisResult} objects (no models, no network) cover every branch, and a counterfactual replay of the collapsed run's own rows under the new rules projected 75.3\%.
+\Cref{sec:v13} reports the subsequent measurement.
 \paragraph{API call budget.}
 \Cref{tab:api_calls} summarizes the API call budget across execution paths with observed frequencies from Experiment 1.
 The most frequent paths are SHT with no productive alternative blueprints (4 calls, 45.9\%) and SHT with Judge resolution (5 calls, 45.9\%), yielding an observed average of 4.46 calls per problem.
@@ -646,6 +683,7 @@ A second family of presets runs the entire pipeline on small open-weight models 
     \item \textit{tiny\_math\_homogeneous}: Qwen2.5-Math-1.5B-Instruct, small enough for a single entry-level GPU.
     \item \textit{qwen\_math\_7b\_local} / \textit{deepseek\_7b\_local}: Qwen2.5-Math-7B and DeepSeek-R1-Distill-7B in 4-bit NF4 quantization ($\sim$4\,GB VRAM), fitting a single 16\,GB GPU.
     \item \textit{qwen\_math\_7b\_fp16} / \textit{qwen\_7b\_instruct\_fp16}: full-precision 7B ($\sim$14\,GB), sharded across multiple GPUs via \texttt{device\_map="auto"}.
+    \item \textit{qwen\_math7b\_mixed} (v12.3, extended in v13.0): the first \emph{heterogeneous} local preset, splitting roles by what they are graded on. \textbf{Qwen2.5-7B-Instruct} serves every role whose output must be \emph{parsed} (Mathematician: JSON blueprints; Hypothesis Generator: alternative blueprints; Judge: the constrained selection tag), while \textbf{Qwen2.5-Math-7B} keeps the roles graded purely on answer quality (Baseline, Programmer). Client deduplication keeps this at exactly two resident 4-bit models, and multi-GPU loads pass an explicit free-memory-aware \texttt{max\_memory} map (a plain \texttt{device\_map="auto"} second load OOM'd on a T4$\times$2 by placing weights on a GPU whose free memory did not survive materialization).
 \end{itemize}
 For 4-bit presets, weights are materialized as NF4 via BitsAndBytes; for full-precision presets, \texttt{bfloat16} is used on GPU (not \texttt{float16}, which overflows on Qwen2.5 attention logits) with per-device memory caps reserving headroom for the KV cache.
 Client deduplication ensures that roles sharing the same (provider, model) pair share a single connection or a single resident model, avoiding redundant authentication and---critically for \texttt{local\_hf}---redundant GPU memory.
@@ -727,14 +765,18 @@ Groq provides low-latency access under a free-tier constraint of approximately 1
 \paragraph{Experiment 2 (Standard GSM8K, cloud).}
 A second run on 10 standard GSM8K problems (no distractor hardening) uses the SambaNova inference API, verifying that the framework generalizes across inference providers.
 \paragraph{Experiment 3 (Local Open-Weight Models).}
-A third evaluation track---enabled by the v11 blueprint-recovery mechanisms (\Cref{sec:blueprint_recovery}) and the \texttt{local\_hf} backend (\Cref{sec:heterogeneous})---runs the entire pipeline on small open-weight models at zero API cost.
-All agent roles use a single 7B model (Qwen2.5-Math-7B-Instruct in 4-bit, or Qwen2.5-7B-Instruct in \texttt{bfloat16}), hosted in-process on a Kaggle T4 GPU.
-In this configuration constrained decoding is not engaged (the \texttt{lm-format-enforcer} acceptor is incompatible with the Kaggle \texttt{transformers} build, \Cref{sec:blueprint_recovery}); blueprint validity instead rests on the instruction-tuned model following the JSON schema directly, backed by the extraction cascade and the post-generation CoT recovery.
-This track is sampled from the tractable end of the benchmark suite (GSM8K, GSM-Hard, SVAMP), where a 7B model produces blueprints frequently enough for SIV to have meaningful coverage---in contrast to competition-level sets (MATH-500, AIME), on which a 7B model exhibits a floor effect that masks any component-level delta.
-It is the designated track for the dedicated SIV evaluation, as it includes the MAS-NoSIV ablation (\Cref{sec:variants}) on a model that the pipeline can actually drive end-to-end.
+A third evaluation track---enabled by the v11 blueprint-recovery mechanisms (\Cref{sec:blueprint_recovery}) and the \texttt{local\_hf} backend (\Cref{sec:heterogeneous})---runs the entire pipeline on small open-weight models at zero API cost, hosted in-process on Kaggle T4 GPUs.
+It is sampled from the tractable end of the benchmark suite (GSM8K, GSM-Hard, SVAMP), where a 7B model produces blueprints frequently enough for SIV to have meaningful coverage---in contrast to competition-level sets (MATH-500, AIME), on which a 7B model exhibits a floor effect that masks any component-level delta.
+The track proceeds in two phases.
+\emph{Phase~A (homogeneous)}: all agent roles use a single Qwen2.5-Math-7B-Instruct (4-bit NF4) on a stratified $n{=}150$ sample drawn 50/50/50 from the three benchmarks (seed 42); this phase comprises the pilot and the v12.0/v12.1 validation runs (\Cref{sec:pilot_diagnosis,sec:v12_validation}).
+\emph{Phase~B (coverage-oriented, v12.2 onward)}: the draw is reweighted to 75 GSM-Hard / 50 GSM8K / 25 SVAMP---GSM-Hard yields roughly 2.6$\times$ more genuine multi-given blueprints than SVAMP (26\% vs.\ 10\%), so the reweighting buys SIV coverage at zero GPU cost---and the roles are split across two models via the \textit{qwen\_math7b\_mixed} preset (\Cref{sec:heterogeneous}).
+The reweighted draw is a \emph{different} 150-problem set than Phase~A's, so all systems (baselines included) are re-run on it, and the draw order is shuffled under the same seed so that a truncated GPU session leaves a stratified prefix rather than an all-GSM-Hard one.
+In both phases constrained decoding is not engaged (the \texttt{lm-format-enforcer} acceptor is incompatible with the Kaggle \texttt{transformers} build, \Cref{sec:blueprint_recovery}); blueprint validity instead rests on the extraction cascade and the post-generation CoT recovery, plus (Phase~B) the instruction-tuned Mathematician following the JSON schema directly.
+This is the designated track for the dedicated SIV evaluation, as it includes the MAS-NoSIV ablation (\Cref{sec:variants}) on a model that the pipeline can actually drive end-to-end.
 \paragraph{Note on SIV evaluation.}
 The experiments of \Cref{sec:results} were conducted under v9.1 of the pipeline, prior to the integration of SIV in v10.0; SIV metrics therefore appear as \texttt{null} in those logs.
-The two-layer impact of SIV---the execution-audit catch rate, the rate at which SIV correctly skips SHT on execution-consistent problems, the execution-layer-vs-translation-layer error decomposition, and the accuracy and cost delta against the MAS-NoSIV ablation---is the explicit object of Experiment~3 under v11.2.
+The two-layer impact of SIV---the execution-audit catch rate, the rate at which SIV correctly skips SHT on execution-consistent problems, the execution-layer-vs-translation-layer error decomposition, and the accuracy and cost delta against the MAS-NoSIV ablation---is the explicit object of Experiment~3.
+As of v13.0, Phase~B has closed the coverage precondition (SIV audits 72.7\% of problems, up from $\sim$37\%) and characterized the verification signal in the field (\Cref{sec:v13}); the MAS-NoSIV ablation on the Phase~B problem set is the remaining measurement for a causal, rather than correlational, SIV claim.
 A dedicated analysis module (\Cref{app:siv_eval}) computes these tables directly from the per-problem run logs.
 \subsection{Temperature and Token Settings}
 Role-specific temperatures: $\tau=0.0$ (Mathematician, Judge), $\tau=0.05$ (Programmer), $\tau=0.1$ (Baseline), $\tau=0.3$ (Critic).
@@ -976,8 +1018,119 @@ Of the 21 problems that reached the single most common no-majority configuration
 This was not evidence-driven: the \texttt{executed} scoring component in \Cref{sec:evidence_arbitration} treats ``a group contains an executed-code answer'' as evidence, but in this exact configuration the primary always has code and the baseline never does, so the component degenerates into an unconditional preference for the primary regardless of correctness.
 The data show this plainly: of the 21 tied problems, the primary was correct on 7 and the baseline was correct on a \emph{disjoint} other 7---a coin flip, not a signal---yet the deterministic rule always chose the primary, recovering its own 7 while converting all 7 baseline-correct cases into regressions (silently damaging already-correct answers, the outcome class this framework is designed to avoid).
 \paragraph{Fix (v12.1).} \texttt{\_select\_by\_evidence} now auto-resolves a group ranking only when the winning group carries genuine corroboration: either multiple independent derivations agree (\texttt{votes} $\geq 2$, reachable here only through a size-tied 2-vs-2 configuration) or SIV fully verified that exact value. A field of lone, unverified singletons---whichever candidates they happen to be---is no longer decided by a structural artifact; every one of them is escalated to the constrained Judge, the mechanism designed for genuine ties.
-\paragraph{Honest bound, not yet re-measured.} This fix responds to a defect discovered by analyzing the v12.0 run's own log, not to a second full execution; the next Kaggle run is the first empirical measurement of v12.1.
-We can, however, bound its effect from the same log: on the 21 affected problems, always keeping the primary (the v12.0 behavior) scores 7/21, and an oracle that always picks whichever of the two is actually correct scores 14/21---raising the overall total from 124/150 (82.7\%) to at most 131/150 (87.3\%), i.e.\ parity with PAL, if the constrained Judge resolves these ties as well as an oracle; the floor is the unchanged 82.7\% if the Judge does no better than the coin flip it replaces. Because the Judge sees the problem text, the candidate equations, and executed code rather than resolving structurally, we expect a result between these bounds, closer to the upper one.
+\paragraph{Honest bound, never directly re-measured.} This fix responds to a defect discovered by analyzing the v12.0 run's own log, not to a second full execution.
+We can bound its effect from the same log: on the 21 affected problems, always keeping the primary (the v12.0 behavior) scores 7/21, and an oracle that always picks whichever of the two is actually correct scores 14/21---raising the overall total from 124/150 (82.7\%) to at most 131/150 (87.3\%), i.e.\ parity with PAL, if the tie-resolution mechanism performs at oracle level; the floor is the unchanged 82.7\% if it does no better than the coin flip it replaces.
+This projection was never tested in isolation: rather than re-running the identical (easier) Phase~A mix, the evaluation moved directly to the coverage-oriented Phase~B configuration (\Cref{sec:v13}), which changes the benchmark mix and the model assignment simultaneously---and whose own selection-layer findings (\Cref{sec:do_no_harm}) superseded the v12.1 rule, replacing judge escalation of uncorroborated ties with a baseline default.
+The v12.1 bound therefore remains a bound; the closest available observation is that on Phase~B's GSM8K/SVAMP portion the v13.0 system measures 86.7\% (\Cref{sec:v13}), consistent with the upper half of the projected range, but on different problems and under a different preset, so it is corroborating context rather than a controlled measurement.
+\subsection{Raising SIV Coverage, a Second Collapse, and v13.0 Baseline-Anchored Selection}
+\label{sec:v13}
+The v12 validation run left SIV's dedicated evaluation starved: only 19.3\% of problems (29/150) produced a genuine multi-given blueprint for Layer~2 to audit, and 11 of the 12 SIV-verified answers sat in the degenerate single-given regime.
+Phase~B of Experiment~3 attacks this precondition with the two levers already identified in our own future-work analysis: the benchmark draw is reweighted toward GSM-Hard (75/50/25; \Cref{sec:experiments}), and the \textit{qwen\_math7b\_mixed} preset (\Cref{sec:heterogeneous}) assigns the instruction-tuned sibling to every parse-critical role.
+Because the reweighted draw is a different problem set, all baselines were re-run on it: direct answering scores 48.7\%, zero-shot CoT 74.7\% (down from 60.0\% and 80.7\% on the Phase~A mix, confirming the new mix is substantially harder); PAL completed only its GSM-Hard block (62.7\%, 75 problems) before a session interruption, so its full-mix figure is pending.
+
+\paragraph{The coverage goal was met immediately.}
+On the first Phase~B run, empty blueprints fell from 62.7\% to \textbf{27.3\%} of problems and SIV audited \textbf{109/150 (72.7\%)}, up from $\sim$37\%---the single largest coverage improvement in the project's history, and exactly the regime the SIV evaluation needs.
+
+\paragraph{End-to-end accuracy collapsed anyway.}
+The same run scored \textbf{57.3\%}---17.4 points below plain CoT on the identical problems---while its \emph{own internal zero-shot baseline} was right 75.3\% of the time.
+As in the pilot, the damage was localized to the selection layer, and the run's log identified three mechanisms, quantified in \Cref{sec:do_no_harm}: a pseudo-vote that let the \{primary, blueprint-eval\} pair outvote the independent baseline (baseline right 30/36 on those rows), SIV verification acting as a standalone override authority (22/22 correct with baseline agreement, 2/14 against it), and a judge-failure fallback that structurally preferred the primary (fired 55/150 because the Math-7B judge never emitted its tag before the token cap; 8/55 vs.\ the discarded baseline's 29/55).
+It is worth stating plainly why the defects surfaced only now: the mixed preset and the reweighted mix together made blueprints \emph{form} at roughly twice the old rate (37.3\% $\to$ 72.7\%), so arbitration paths that had almost never executed before (majority over blueprint votes, judge fallback) suddenly carried a third of the problems---coverage did not cause the collapse, it \emph{exposed} latent selection-layer bugs that thin coverage had been hiding.
+
+\paragraph{v13.0 measurement.}
+Under the do-no-harm invariant and the audit-triggered repair loop (\Cref{sec:do_no_harm,sec:siv}), re-running the identical Phase~B set measures \textbf{72.7\% (109/150)}, a +15.4-point recovery over the collapse with no change to the underlying solvers.
+The invariant's wiring is verified exactly, not just statistically: on all 51 problems that ended in \texttt{baseline\_default}, the final answer equals the internal baseline's answer verbatim (0 mismatches)---``never lose to your own zero-shot baseline for structural reasons'' now holds by construction.
+Decomposition explains most of the apparent regression against Phase~A's 82.7\%: the GSM8K/SVAMP portion of the mix scores \textbf{86.7\%} ($n{=}75$; above the 82.7\% measured on the easier Phase~A mix), while GSM-Hard scores 58.7\% ($n{=}75$; above CoT's 56.0\% and below PAL's 62.7\% on the same subset)---and GSM-Hard is now 50\% of the set rather than 33\%, precisely because it was upweighted for SIV coverage.
+The residual gap to CoT's full-mix 74.7\% is three problems (2.0 points); against its own internal baseline the system shows 8 losses and 4 gains through the corroborated (majority/evidence) paths, a difference that is not statistically significant (exact McNemar, $p=0.39$).
+The honest reading: corroboration fired exactly as designed, and corroboration itself is simply not infallible at this sample size.
+
+\paragraph{Repair loop: detection is not correction.}
+The blueprint repair loop fired on 39/150 problems, but only 6/39 (15.4\%) of repairs subsequently produced a clean execution-audit pass.
+This gap between the trigger's detection quality (80.3\% recall, zero false alarms) and the repair's fix rate is an instructive negative result: the audit reliably \emph{flags} a bad blueprint, but a second attempt by the same 7B Mathematician---even armed with SIV's localization report---usually cannot fix what it got wrong the first time.
+Net accuracy effect was roughly neutral (repaired blueprints appear in 3 of the 8 losses and 3 of the 4 gains), though the repaired path enabled most of the genuine value-added cases.
+For future write-ups we record the distinction explicitly: \emph{detection recall} and \emph{fix success rate} are different quantities, and measuring one licenses no assumption about the other.
+
+\paragraph{What this arc establishes about SIV.}
+Across the collapse diagnosis and the v13.0 run, SIV's role in the architecture has clarified into three validated uses and one prohibited one: (i)~a \emph{cross-validator} for the confident skip---jointly with baseline agreement it was 97.9\% accurate on the mixed run, and SIV-verified-plus-baseline-agreed answers were 22/22; (ii)~a deterministic \emph{tie-breaker} between corroborated candidate groups; (iii)~an in-loop \emph{repair trigger} with validated detection quality; and---prohibited---(iv)~a standalone override authority, because certifying blueprint-internal consistency inherits the blueprint's translation errors (2/14 against a disagreeing baseline), which is this paper's math$\to$math scope claim (\Cref{sec:siv}) measured in the field.
+
+\subsection{The MAS-NoSIV Ablation and the Certificate--Difficulty Confound (v14)}
+\label{sec:v14_routing}
+The causal measurement flagged throughout this paper as outstanding has now run: MAS-NoSIV on the identical Phase~B problem set, same preset, identical per-row baseline answers.
+The result is a genuine negative: \textbf{72.00\% without SIV vs.\ 72.67\% with it} (3 paired wins, 2 paired losses; exact McNemar $p \approx 1.0$).
+Used as an \emph{arbitration} signal, SIV is causally neutral on this configuration.
+We report this plainly and then explain it, because the explanation---not the null---is the finding.
+
+\paragraph{Why arbitration cannot be where SIV pays.}
+On the same run, the blueprint path is \emph{uniquely} right (correct where the baseline is wrong) on only 2/150 problems, so the oracle over \{baseline, blueprint\} is 76.7\% against the baseline's 75.3\%: every conceivable improvement to selection between them is capped at +1.4 points.
+Removing the baseline from the pool entirely makes the ceiling starker: the technique's own four candidates (primary, CAS-evaluated blueprint, two Critic alternatives) admit an oracle of 55.33\%, with blueprint accuracy at 20.7\% the binding term---the conditional structure is sharp (blueprint correct $\Rightarrow$ Programmer correct 96.8\%; blueprint wrong $\Rightarrow$ 43.3\%), and fitting it gives $\text{primary} \approx 0.433 + 0.535 \cdot \text{blueprint}$, which requires blueprint accuracy near 64\% before the technique clears its own zero-shot baseline unaided.
+No selection layer can manufacture that from 20.7\% material.
+
+\paragraph{The certificate is confounded with problem difficulty.}
+SIV's execution audit remains an excellent \emph{detector}: on the 94 genuinely audited rows of the v14.4 run, a FAILED audit implies the blueprint's answer is wrong with 98.1\% precision at 81\% recall.
+The failure is on the other side of the certificate.
+On the 42 audit-PASSED rows, the certified blueprint answer is 71.4\% correct---but the plain CoT baseline on those \emph{same} rows is 88.1\% correct, so overriding the baseline with the certified answer is worth $-16.7$ points (95\% bootstrap CI $[-31.0, -2.4]$).
+No subgroup reverses the sign (confidence $\geq 0.90$: $-17.5$; givens matched $\geq 2$: $-16.1$).
+The mechanism: a blueprint that survives a symbolic audit is disproportionately a blueprint of an \emph{easy} problem---and easy problems are exactly where the baseline is already strong.
+The methodological point generalizes beyond this system: \emph{a verifier's positive predictive value must be compared against the baseline's accuracy conditioned on the certificate}, $\Pr(\text{correct} \mid \text{certified})$, not against the unconditional base rate; by the unconditional comparison (71.4\% vs.\ 33\% base rate) the certificate looks strong, and acting on that comparison is precisely what the do-no-harm invariant had been silently absorbing.
+
+\paragraph{Verification as routing, not arbitration (v14.6).}
+The same certificate that fails as an override authority succeeds as a \emph{compute allocator}: it separates the baseline's own accuracy by +26.6 points (88.1\% on certified rows vs.\ 61.5\% on uncertified; 95\% CI $[+10.3, +42.9]$), it is available before the expensive Critic stage runs, and it costs nothing.
+Recoverable headroom concentrates exactly where the certificate is absent: oracle-minus-baseline is +17.3 points on uncertified rows against +4.8 on certified ones.
+v14.6 therefore routes: tier~A (a free candidate corroborates the baseline) and tier~C (audit passed or absent, no corroboration) return the do-no-harm anchor without spending Critic calls; only tier~B (audit FAILED and no corroboration) pays for hypothesis testing.
+On the v14.4 data this replay projects $75.33\%$ while reclaiming 63\% of wall time, with tier~B worth a projected +7.1 points on its stratum.
+
+\paragraph{v14.8 measurement.}
+With routing live, blueprint evaluation unconditional (a plumbing gate had silently excluded every SymPy-fallback row, 18.7 points of coverage), and two further deterministic repair classes, the next full run measures \textbf{75.33\% against its internal baseline's 74.67\%}---the first time in the local track the full system finishes above its own zero-shot baseline---with blueprint coverage 86.0\% (the projection said 129/150; the run produced 129/150), 3 paired wins against 2 losses, and tier~B delivering +6.9 points on its stratum against the +7.1 projected.
+We do not overclaim this margin: +0.67 points on $n{=}150$ is one problem and is not statistically significant.
+Its significance is structural: the coverage, routing, and repair projections made offline from stored run logs were each confirmed by the GPU run within a problem or two, which is the methodological pattern this project has converged on---\emph{measure on logged artifacts first, spend GPU hours only to confirm}.
+
+\subsection{The Architect Misreads the Operands, Not the Problem: Deterministic Operand Grounding (v15)}
+\label{sec:v15_grounding}
+With arbitration retired as a lever (\Cref{sec:v14_routing}), the binding constraint is blueprint accuracy itself.
+A 5-route pretest (25 problems $\times$ 5 prompt variants under greedy decoding, so all diversity is prompt-induced) was run to test blueprint ensembling---and rejected it (across variant pairs where both are wrong, 22.8\% land on the same wrong value, but the $\geq$2-agree rule nets +1 problem in 25 at $5\times$ Mathematician cost).
+The pretest's stored blueprints, however, admit a far more consequential diagnosis when checked against the problem texts:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{35\% of extracted numeric givens appear nowhere in the problem text.}
+    \item \textbf{68\% of those sit exactly one digit away from a number that does}: ``Katelyn saw 50 fairies \ldots 30 fairies flew away'' is extracted as 55 and 31; ``Kim raises \$320 more than Alexandra, who raises \$430'' becomes 321 and 431; ``569 girls and 236 boys'' becomes 69 and 36.
+    \item Across variant pairs where one is right and the other wrong, \textbf{38\% share the identical equation structure} and differ only in an operand.
+\end{itemize}
+The Architect, at this model scale, is predominantly not failing to \emph{reason} about the problem; it is failing to \emph{copy} it.
+This reframes the NL$\to$math translation layer that SIV's scope statement (\Cref{sec:siv}) declares out of reach: the dominant translation defect is not semantic modelling error but operand transcription---and transcription, unlike semantics, is mechanically checkable against the problem text.
+
+\paragraph{Deterministic repair of the transcription layer (v15.0--v15.2).}
+\texttt{repair\_blueprint} now receives the problem statement and applies, in order: (i)~\emph{operand grounding}---any numeric given absent from the text is rewritten \emph{only} when exactly one text number is a single digit-edit away, or exactly one shares its digit suffix (a dropped leading digit), or---for integers $\geq 10^4$, where gsm-hard's perturbed operands live and text numbers of that magnitude are rare---exactly one $\geq$5-digit text number is within two digit-edits; any ambiguity abstains; (ii)~\emph{expression-valued givens}---a given declared as a formula string (\texttt{"fairies\_from\_east": "initial\_fairies / 2"}, \texttt{"1/4"}) is evaluated by a restricted AST walk over arithmetic operators and names resolving to other numeric givens, after grounding, so the expression reads corrected operands and its result is never itself snapped; and (iii)~\emph{accessor respelling} (\texttt{givvens['x']} $\to$ \texttt{givens['x']}).
+Values requiring semantics (\texttt{"5 pm"}, names resolving nowhere) are refused and continue to the LLM repair path.
+Every rule is deterministic, zero-LLM, logged per fix, and guarded by refusal tests.
+
+\paragraph{Measured on the stored pretest blueprints (125 blueprints, zero GPU).}
+\Cref{tab:v15_grounding} shows per-route blueprint accuracy raw and under the full v15.2 repair.
+No previously-correct blueprint is broken by any rule on any route.
+The repair composes with the prompt route rather than duplicating it: the \emph{inventory} route (``list every number in the text with what it counts, then decide relevance'') is best both raw (44\% vs.\ 28\% for the production prompt) and repaired (60\% vs.\ 48\%), and its repaired correct-set nearly contains the production route's (4 problems only inventory gets; 1 only production gets).
+v15.2 accordingly promotes the inventory route to the production Mathematician prompt (env-revertible for ablation).
+Through the fitted $\text{primary} \approx 0.433 + 0.535 \cdot \text{blueprint}$, blueprint accuracy of 60\% projects the Programmer path alone to $\sim$75\%---at the zero-shot baseline before any selection-layer gain, for the first time.
+We flag the honest caveats explicitly: the route comparison rests on $n{=}25$ problems (the repair measurements rest on all 125 blueprints), the projection is a fitted conditional rather than a measurement, and the end-to-end GPU run of v15.2 is pending.
+\begin{table}[h]
+\centering
+\caption{Blueprint accuracy per prompt route on the 5-route pretest ($n{=}25$ problems), raw vs.\ under the deterministic v15.2 repair (operand grounding + expression givens + accessor respelling). Zero previously-correct blueprints are broken in any cell. The agreement-ensemble rule over repaired routes reaches only 56\%, below the best single route---the Architect's errors are systematic, not sampling noise, which is also why ensembling was rejected.}
+\label{tab:v15_grounding}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Prompt route} & \textbf{Raw} & \textbf{v15.2 repaired} & \textbf{Gained / broken} \\
+\midrule
+v0 production          & 28\% &  48\% & 5 / 0 \\
+v1 reasoning-first     & 16\% &  44\% & 7 / 0 \\
+v2 backward            & 32\% &  48\% & 4 / 0 \\
+v3 inventory           & 44\% &  \textbf{60\%} & 4 / 0 \\
+v4 minimal             & 28\% &  32\% & 1 / 0 \\
+\midrule
+Oracle over 5 repaired routes & --- & 72\% & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Benchmark label noise bounds the remaining headroom.}
+Auditing the problems no repaired route solves also surfaced ground-truth defects: GSM8K test item 1309's official solution is internally inconsistent (it totals $750+430+400+700$, substituting Maryam's \emph{increment} for Sarah's raised amount; the problem as stated yields 2180, the label says 2280), and several GSM-Hard items carry automatically-perturbed gold answers that are physically impossible for their own question (e.g.\ a negative weekly fuel cost).
+A system graded against such labels cannot reach them honestly; we report them as label noise rather than model failure.
+
 \subsection{API Cost Analysis}
 The observed average API call count per problem in Experiment 1:
 \begin{equation*}
@@ -995,15 +1148,18 @@ The 37.8\% empty-blueprint failure rate caps MAS-SHT's theoretical accuracy at a
 \paragraph{SIV evaluation in progress.}
 The Symbolic Inverse Verification module was integrated in v10.0, after the cloud experiments reported here, so SIV metrics are absent from the Experiment~1 and~2 logs.
 The $n{=}150$ pilot (\Cref{sec:pilot_diagnosis}) produced the first populated SIV telemetry (58/150 problems with audit data; SIV-verified answers 73.3\% accurate vs.\ 53.5\% for unverified), but under the pre-v12 selection layer this signal was frequently discarded before it could help.
-The v12.0 validation run (\Cref{sec:v12_validation}) confirms the signal is trustworthy once acted upon: SIV-verified answers were \textbf{100\% correct (12/12)} against 65.9\% for unverified answers.
-The dedicated empirical evaluation---execution-audit catch rate, SHT-trigger reduction, Critic correction quality, the execution-vs-translation error decomposition, and the accuracy/cost delta against MAS-NoSIV (the ablation run)---remains the object of Experiment~3 (\Cref{sec:experiments}), with the analysis pipeline already in place (\Cref{app:siv_eval}); the v12.0/v12.1 numbers reported here establish that the signal is directionally sound, while the full ablation-controlled measurement is the immediate next deliverable.
+The v12.0 validation run (\Cref{sec:v12_validation}) confirmed the signal is trustworthy once acted upon---SIV-verified answers were 100\% correct (12/12) against 65.9\% for unverified---though 11 of those 12 fall in the degenerate single-given regime, which is why the coverage push of Phase~B was necessary before the claim could carry weight.
+Phase~B (\Cref{sec:v13}) has since closed the coverage precondition (72.7\% of problems audited) and sharpened the signal's characterization with real multi-variable material: SIV verification is highly reliable as a cross-validator (22/22 with baseline agreement) and unreliable as a standalone authority (2/14 against it).
+The \emph{causal} measurement has since run (\Cref{sec:v14_routing}): as an arbitration signal SIV is causally neutral (72.0\% vs.\ 72.7\%, McNemar $p{\approx}1$), and the diagnosis---the certificate--difficulty confound---relocates SIV's measured value to compute routing (+6.9 points on the routed stratum, 63\% of wall time reclaimed) and to the in-loop repair trigger.
+The claims that remain correlational or projected are now explicitly marked as such where they appear: the v15 blueprint-accuracy gains are measured on stored blueprints offline, and their end-to-end effect awaits the v15.2 GPU run.
+Two further caveats: each full-run figure rests on a single run and seed, and the PAL baseline on the Phase~B mix is incomplete (its GSM-Hard block only), so the PAL comparison on that mix is provisional.
 \paragraph{Benchmark scope.}
 All five benchmarks are arithmetic word problems.
 Extension to algebra, geometry, combinatorics, probability, and calculus requires structural modifications to the blueprint schema (e.g., supporting inequality constraints, symbolic unknowns, or set-theoretic operations).
 \paragraph{Model coupling.}
 All Experiment 1 roles use Qwen3-32B.
-The heterogeneous configuration infrastructure is fully implemented but not systematically evaluated.
-Assigning a model with stronger JSON instruction following to the Mathematician role could substantially reduce the empty-blueprint rate.
+The prediction that a stronger JSON-following model in the Mathematician role would reduce the empty-blueprint rate has since been borne out in the local track: the \textit{qwen\_math7b\_mixed} preset (jointly with the reweighted mix) cut empty blueprints from 62.7\% to 27.3\% (\Cref{sec:v13}).
+That change, however, was deliberately bundled with the dataset reweighting, so the preset's isolated contribution is not separately measured; and the heterogeneous \emph{cloud} presets (\Cref{sec:heterogeneous}) remain systematically unevaluated.
 \paragraph{Metamorphic testing.}
 The optional metamorphic testing module (\Cref{app:metamorphic}) was disabled in all experiments to bound API costs.
 It supports three assertion types---delta, ratio, and monotonic---and could provide verifiable correctness guarantees on problems with clear monotonicity properties (e.g., ``more items $\Rightarrow$ higher total'').
@@ -1011,11 +1167,17 @@ It supports three assertion types---delta, ratio, and monotonic---and could prov
 \section{Conclusion}
 \label{sec:conclusion}
 % ============================================================
-We presented MAS-SHT (v12.0), a multi-agent mathematical reasoning framework combining Architect--Engineer decomposition, self-verified blueprint construction, PAL-style program-aided solving, advisory rule-based process verification, a SymPy symbolic fallback, Symbolic Inverse Verification (SIV), and confidence-gated critic-based Structured Hypothesis Testing resolved by verification-weighted arbitration.
+We presented MAS-SHT (v15.2), a multi-agent mathematical reasoning framework combining Architect--Engineer decomposition, self-verified blueprint construction, PAL-style program-aided solving, advisory rule-based process verification, a SymPy symbolic fallback, Symbolic Inverse Verification (SIV) with an audit-triggered blueprint repair loop, and confidence-gated critic-based Structured Hypothesis Testing resolved by verification-weighted, baseline-anchored arbitration.
 To extend the framework from cloud-scale models to small, locally hosted open-weight models, v11 adds two blueprint-recovery mechanisms that directly target the empty-blueprint bottleneck identified in our experiments---token-level constrained decoding and two-step chain-of-thought-to-blueprint extraction---alongside a provider-agnostic client with an in-process local-inference backend and component-level ablation switches.
 Motivated by an $n{=}150$ pilot in which a free-form LLM judge scored 15\% on the problems it arbitrated (\Cref{sec:pilot_diagnosis}), v12 re-architects the selection layer around deterministic evidence: the CAS-evaluated blueprint enters the candidate pool as a zero-cost independent vote, answer groups are ranked by verifiable evidence (agreement, SIV verification, executed-code support), and the LLM judge is retained only as a tie-breaker constrained to select one presented candidate by index---it can no longer emit an answer that no solver produced.
 Re-running the identical 150 problems under this redesign raised accuracy from 74.0\% to 82.7\% (+8.7 points) with the upstream solvers unchanged, and confirmed SIV's signal directly (100\% accuracy on SIV-verified answers vs.\ 65.9\% on unverified ones).
-Analyzing that run's own log surfaced a second, narrower selection-layer defect---a lone-primary-vs-lone-baseline tie was being resolved by a scoring artifact rather than evidence---which v12.1 fixes by escalating genuinely uncorroborated ties to the constrained judge instead of resolving them structurally (\Cref{sec:v12_validation}); a bounded estimate from the same log places the next run between 82.7\% (no worse) and 87.3\% (parity with PAL, if the judge resolves these ties as well as an oracle).
+Analyzing that run's own log surfaced a second, narrower selection-layer defect---a lone-primary-vs-lone-baseline tie was being resolved by a scoring artifact rather than evidence---which v12.1 fixes by refusing to resolve genuinely uncorroborated ties structurally (\Cref{sec:v12_validation}).
+The evaluation then moved to a deliberately harder, coverage-oriented configuration (GSM-Hard-weighted mix plus a heterogeneous local preset placing an instruction-tuned model on the parse-critical roles), which doubled blueprint formation and raised SIV audit coverage from $\sim$37\% to 72.7\% of problems---and thereby exposed a third round of selection-layer defects that collapsed accuracy to 57.3\% (\Cref{sec:v13}).
+v13.0 responds with the \emph{do-no-harm invariant}: the system may override its own zero-shot baseline only when at least two honestly independent derivations agree, with uncorroborated fields returning the baseline verbatim, and with an audit-triggered repair loop feeding SIV's error report back to the Mathematician.
+The measured result is 72.7\% on the harder mix (86.7\% on its GSM8K/SVAMP portion---above the earlier mix's 82.7\%---and 58.7\% on GSM-Hard, above CoT's 56.0\% there), with the invariant's wiring verified exactly (51/51 uncorroborated problems returned the baseline answer), and with the collapse diagnosis yielding the sharpest field characterization of SIV so far: 22/22 correct as a baseline-agreeing cross-validator, 2/14 as a standalone authority.
+The MAS-NoSIV ablation then closes the causal question with a negative that becomes a finding (\Cref{sec:v14_routing}): SIV is neutral as an \emph{arbiter} because its certificate is confounded with problem difficulty---on audit-passed rows the certified answer trails the baseline on those same rows by 16.7 points---so a verifier's precision must be judged against the baseline conditioned on the certificate, not the base rate.
+Repositioned as an a-priori compute router, the same free certificate gates the expensive Critic stage and yields the local track's first above-baseline result (75.3\% vs.\ 74.7\% at 86\% blueprint coverage), with the routed stratum's projected gain confirmed by measurement.
+Finally, v15 grounds the remaining bottleneck in a measured mechanism: the dominant NL$\to$math defect at 7B scale is operand \emph{transcription}, not reasoning---35\% of extracted givens appear nowhere in the problem text, 68\% of those one digit from a number that does---and a deterministic, abstention-first repair (operand grounding, formula-valued givens, accessor respelling) raises blueprint accuracy on stored pretest blueprints from 44\% to 60\% on the best prompt route with zero correct blueprints broken (\Cref{sec:v15_grounding}).
 SIV remains the novel verification contribution, operating in two complementary layers.
 \emph{Layer~1 (Execution Audit)} detects deviations between the Programmer's computed answer and the forward evaluation of the blueprint equations---establishing execution fidelity at zero API cost.
 \emph{Layer~2} inverts the symbolic chain to report which declared variables are implicated by an inconsistency, enabling Critic repair that is targeted at the load-bearing variables rather than blind re-generation.
@@ -1023,8 +1185,8 @@ A controlled fault-injection evaluation (\Cref{sec:siv_fault_injection}) establi
 An explicit, documented scope limitation distinguishes SIV from LLM-based backward verification \citep{jiang2024fobar}: SIV operates exclusively on the execution layer (math$\to$math) and cannot detect NL$\to$math translation errors. The two methods are orthogonal and complementary.
 On a challenging mixed-benchmark set where a 32B zero-shot baseline achieves only 5.4\% accuracy, MAS-SHT recovers 56.8\%---a gain of +51.4 percentage points---with zero damage cases and zero false regressions on easier problems.
 The most important empirical finding is that \emph{code execution success implies 100\% accuracy}: the entire performance gap between the framework and the baseline is explained by blueprint construction failures, pinpointing the Mathematician stage as the sole bottleneck.
-Future work should prioritize: (1)~running the MAS-NoSIV ablation on the same problem set to establish SIV's causal (not merely correlational) contribution, paired with a McNemar significance test (infrastructure already in place in \texttt{siv\_evaluation.py}); (2)~raising genuine (2+ given) blueprint coverage for SIV's evaluation, which stood at only 19.3\% (29/150) in our local open-weight run and directly limited how often Layer~2 could be exercised at all---we found gsm-hard yields roughly 2.6$\times$ more genuine blueprints than SVAMP (26\% vs.\ 10\%) and are reweighting the sampling mix accordingly, as a lower-cost complement to (4) below; (3)~combining SIV with an NL-layer verifier (e.g., FOBAR-style) to cover both error layers; (4)~systematic evaluation of heterogeneous agent configurations, particularly dedicating a stronger instruction-following model to the Mathematician role specifically, which our evidence suggests is the highest-leverage lever on blueprint yield; and (5)~larger-scale, multi-seed evaluation to establish statistical significance of the per-benchmark results and of Layer~2's genuine-case detector metrics, whose $n$ is currently too small (1 genuine SIV-verified case) to support a strong claim on its own.
-We believe that the three central design principles of MAS-SHT---program-aided solving cross-checked against an independently constructed declarative blueprint, critic-based peer review over parallel resampling, and deterministic CAS-based verification with evidence-first arbitration in which LLM judgment is confined to evidence ties---are broadly applicable beyond arithmetic word problems and represent a productive direction for LLM reasoning reliability research.
+Future work should prioritize: (1)~the end-to-end GPU measurement of v15.2 (inventory prompt route plus the full deterministic repair), whose offline projection places the program-aided path at the baseline's level before selection-layer gains---this is now the single most consequential pending run; (2)~closing the gap between the repair trigger's detection quality (80.3\% recall, zero false alarms) and its LLM fix success (15.4\%), for which the deterministic repair classes of \Cref{sec:v15_grounding} are the measured first installment (19/25 of the structural failures in the v14.0 run were mechanical, not conceptual); (3)~recovering partial fault \emph{isolation} in Layer~2 by grounding each \emph{reconstructed} given value against the problem text---the $1/n_{\text{used}}$ precision bound (\Cref{sec:siv_fault_injection}) arises from purely algebraic inversion, and v15's forward-direction grounding results make the backward-direction analogue considerably more promising than when first proposed; (4)~combining SIV with an NL-layer verifier (e.g., FOBAR-style) to cover both error layers; (5)~completing the PAL baseline on the Phase~B mix, isolating the mixed preset's contribution from the dataset reweighting (the two were deliberately bundled in Phase~B), and systematically evaluating the heterogeneous \emph{cloud} presets; and (6)~larger-scale, multi-seed evaluation to establish statistical significance of the per-benchmark results, of the +0.67-point v14.8 margin, and of the $n{=}25$ prompt-route comparison, all currently single-run and underpowered.
+We believe that the four central design principles of MAS-SHT---program-aided solving cross-checked against an independently constructed declarative blueprint, critic-based peer review over parallel resampling, deterministic CAS-based verification with evidence-first arbitration in which LLM judgment is confined to evidence ties, and a do-no-harm anchor under which no amount of internal self-consistency may override an independent baseline without corroboration---are broadly applicable beyond arithmetic word problems and represent a productive direction for LLM reasoning reliability research.
 % ============================================================
 \newpage
 \bibliography{references}
@@ -1155,7 +1317,7 @@ OUTPUT FORMAT (strict JSON):
 }
 \end{lstlisting}
 \subsection{Judge System Prompt}
-\begin{lstlisting}[caption={Constrained Judge system prompt (v12). The judge sees only evidence-tied candidates and must select one by index; any other output is rejected and a deterministic fallback decides. Temperature $\tau=0.0$.}]
+\begin{lstlisting}[caption={Constrained Judge system prompt (v13.0, tag-first). The judge sees only evidence-tied \emph{corroborated} candidates and must select one by index; any other output is rejected and a deterministic fallback (baseline-first) decides. The selection tag moved from last line (v12) to \emph{first} line in v13.0: on the mixed-preset run a CoT-tuned judge wrote reasoning until its token cap and reached the tag in 0/55 attempts, so truncation must not be able to destroy it. Temperature $\tau=0.0$.}]
 You are a mathematical reasoning Judge. Several solution attempts
 for the same problem produced DIFFERENT answers. Exactly one
 candidate must be selected.
@@ -1165,9 +1327,11 @@ Evaluation criteria (in order of importance):
 2. MATHEMATICAL CORRECTNESS: Are the equations and logic sound?
 3. COMPLETENESS: Does the approach account for ALL conditions?
 OUTPUT FORMAT (strict):
-First explain your comparison briefly (2-3 sentences).
-Then write EXACTLY one line: SELECTED_CANDIDATE: [[k]]
+The VERY FIRST line of your reply must be EXACTLY:
+SELECTED_CANDIDATE: [[k]]
 where k is the number (1 to N) of the candidate you select.
+After that line you may add a brief justification
+(2-3 sentences).
 Do NOT invent a new answer. You MUST pick one of the presented
 candidates.
 \end{lstlisting}
@@ -1224,7 +1388,7 @@ candidates.
 \section{Triage Algorithm}
 \label{app:triage}
 \begin{algorithm}[H]
-\caption{Majority-Vote Triage with Evidence Escalation (v12.0)}
+\caption{Majority-Vote Triage with Evidence Escalation and Baseline Anchor (v13.0). $\mathrm{hv}(G)$ denotes \emph{honest votes}: $|G|$, minus one when $G$ contains both \texttt{primary} and \texttt{blueprint\_eval}---one derivation observed twice, since they can only co-group when the execution audit certifies the code computed those very equations (\Cref{sec:do_no_harm}).}
 \label{alg:triage}
 \begin{algorithmic}[1]
 \Require Candidate list $C$ (primary, baseline at conf.~0.5, blueprint CAS evaluation, $\leq 2$ alternatives)
@@ -1234,18 +1398,25 @@ candidates.
     \State \Return (\textsc{None}, \textsc{None}, \texttt{no\_valid\_candidates})
 \EndIf
 \State Group $V$ by numeric answer value, tolerance $\epsilon = 10^{-3}$
-\State Sort groups by $\bigl(\text{size},\ \overline{\text{confidence}}\bigr)$ descending
-\State $G_1 \gets$ largest group; \quad $G_2 \gets$ second-largest (if exists)
+\State Sort groups by $\bigl(\mathrm{hv},\ \overline{\text{confidence}}\bigr)$ descending
+\State $G_1 \gets$ top group; \quad $G_2 \gets$ second (if exists)
 \If{only one group}
     \State \Return $\bigl(G_1[0].\texttt{answer},\ G_1[0].\texttt{strategy},\ \texttt{unanimous}\bigr)$
-\ElsIf{$|G_1| \geq 2$ \textbf{and} $|G_1| > |G_2|$}
+\ElsIf{$\mathrm{hv}(G_1) \geq 2$ \textbf{and} $\mathrm{hv}(G_1) > \mathrm{hv}(G_2)$}
     \State \Return $\bigl(G_1[0].\texttt{answer},\ G_1[0].\texttt{strategy},\ \texttt{majority}\bigr)$
 \Else
-    \State Rank groups by evidence tuple $\bigl(\text{votes},\ \text{SIV-verified},\ \text{executed},\ \text{primary},\ \text{baseline}\bigr)$
-    \If{strict lexicographic winner exists}
+    \State Rank groups by evidence tuple $\bigl(\mathrm{hv},\ \text{SIV-verified},\ \text{executed},\ \text{primary},\ \text{baseline}\bigr)$
+    \If{$\mathrm{hv}$ of top-ranked group $< 2$}
+        \Comment{No corroborated group anywhere: do-no-harm invariant}
+        \If{baseline candidate has a valid parsed answer}
+            \State \Return $\bigl(\text{baseline}.\texttt{answer},\ \texttt{baseline\_do\_no\_harm},\ \texttt{baseline\_default}\bigr)$
+        \Else
+            \State \Return deterministic fallback (executed primary $\to$ any valid), \texttt{fallback}
+        \EndIf
+    \ElsIf{strict lexicographic winner exists among corroborated groups}
         \State \Return $\bigl(G^{*}.\texttt{answer},\ G^{*}.\texttt{strategy},\ \texttt{evidence}\bigr)$
     \Else
-        \State Judge selects an \emph{index} among tied representatives; invalid output $\Rightarrow$ deterministic fallback (executed primary $\to$ baseline $\to$ any valid)
+        \State Judge selects an \emph{index} among tied corroborated representatives (tag-first contract); invalid output $\Rightarrow$ deterministic fallback (baseline $\to$ executed primary $\to$ any valid)
         \State \Return $\bigl(\text{selected}.\texttt{answer},\ \text{selected}.\texttt{strategy},\ \texttt{judge}\ \text{or}\ \texttt{judge\_fallback}\bigr)$
     \EndIf
 \EndIf
