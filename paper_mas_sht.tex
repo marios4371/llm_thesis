@@ -136,6 +136,8 @@ The MAS-NoSIV ablation then delivers a genuine negative---as an \emph{arbitratio
 Repositioned as an a-priori \emph{compute router}---the free certificate separates baseline accuracy by +26.6 points and gates which problems receive the expensive Critic stage---the same signal yields the track's first above-baseline result: \textbf{75.3\% vs.\ 74.7\%} at 86\% blueprint coverage, with the routing tier's projected gain (+7.1) confirmed by measurement (+6.9).
 Finally, auditing the Architect's stored blueprints against the problem texts shows the dominant NL$\to$math defect at 7B scale is not reasoning but \emph{operand transcription}: 35\% of extracted givens appear nowhere in the problem text, and 68\% of those sit one digit from a number that does.
 A deterministic, zero-LLM grounding repair (snap a misread operand to the unique text number one digit-edit away; evaluate formula-valued givens; ambiguity abstains) raises blueprint accuracy on the stored pretest blueprints from 28\% to 48\% on the production prompt and to \textbf{60\%} on the best prompt route, breaking zero previously-correct blueprints---projecting the program-aided path to the baseline's level before any selection-layer gain.
+The subsequent GPU run confirms the component projections---blueprint accuracy 20.7\%\,$\to$\,40.7\%, primary 50.0\%\,$\to$\,55.3\%, candidate-pool oracle 84.7\%---while the shipped 74.0\% localizes the giveback to one mechanism: on exactly 5 rows a Critic alternative seeded with the primary's own blueprint corroborated it against the baseline (2 wins, 3 losses, the run's entire paired delta).
+The two wins ride on fully text-grounded blueprints and all three losses do not, yielding v15.3's closing principle: \emph{agreement between derivations that share a premise counts as corroboration only when the shared premise is externally verified}---replayed over the run, 76.0\% vs.\ 74.7\%, pending GPU confirmation.
 \end{abstract}
 \noindent\textbf{Keywords:} Large Language Models, Mathematical Reasoning, Multi-Agent Systems, Hypothesis Testing, Chain-of-Thought, Code Generation, Process Verification, Symbolic Reasoning, Backward Verification
 % ============================================================
@@ -1131,6 +1133,26 @@ Oracle over 5 repaired routes & --- & 72\% & \\
 Auditing the problems no repaired route solves also surfaced ground-truth defects: GSM8K test item 1309's official solution is internally inconsistent (it totals $750+430+400+700$, substituting Maryam's \emph{increment} for Sarah's raised amount; the problem as stated yields 2180, the label says 2280), and several GSM-Hard items carry automatically-perturbed gold answers that are physically impossible for their own question (e.g.\ a negative weekly fuel cost).
 A system graded against such labels cannot reach them honestly; we report them as label noise rather than model failure.
 
+\subsection{Vote Independence Requires Grounded Premises (v15.3)}
+\label{sec:v153_grounded_votes}
+The v15.2 GPU run delivers the projected component gains and a top-line lesson about where they went.
+On the fixed 150-problem set, blueprint accuracy nearly doubles (20.7\% $\to$ 40.67\% of all problems; 49.2\% of the 124 covered), the program-aided primary rises 50.0\% $\to$ 55.33\%, and the oracle over the candidate pool reaches \textbf{84.67\%}---ten points above the baseline.
+The shipped answer, however, measures \textbf{74.00\% against 74.67\%}: arbitration returned the component gains, and one problem more.
+
+\paragraph{The gap is one mechanism, localized exactly.}
+Cross-referencing per-candidate correctness against triage outcomes shows the run's \emph{entire} paired win/loss set against the baseline---2 wins, 3 losses, no remainder---is the 5 rows where the Critic's first alternative numerically agreed with the primary and the pair's two ``honest'' votes overrode the baseline.
+This is the exemption v15.1 introduced deliberately: alternatives are repaired against the problem text, so an alternative that agrees with a correct lone primary was allowed to corroborate it (on the v14.8 run, 13 of 16 correct-but-lone primaries had been suppressed back to the baseline).
+The exemption is symmetric, and that is the defect: the Critic is seeded with the \emph{same} blueprint and the \emph{same} SIV error report as the primary, so when the Architect's original misread survives repair, the alternative reproduces it, and the agreement is one mistake observed twice.
+Conditional accuracy of the alternatives on this run: 4/10 and 2/10---not material fit to outvote an independent baseline unconditionally.
+
+\paragraph{A free discriminator separates the wins from the losses perfectly.}
+Both wins ride on blueprints whose every numeric given appears verbatim in the problem text; all three losses do not (one blueprint carries a non-numeric given \texttt{"t"}, one an operand found nowhere in the text, one a computed total stored as a given).
+v15.3 therefore makes premise quality a precondition for corroboration: when the primary blueprint fails \texttt{operands\_grounded}---some given is neither a text number, nor a structural constant, nor a value the expression pass itself derived---the whole derivation family \{primary, blueprint-eval, alternatives\} present in one answer group collapses to a \emph{single} honest vote, and the do-no-harm invariant returns the baseline.
+Grounded blueprints keep the v15.1 behaviour unchanged, and a group containing the baseline is unaffected.
+Replayed over every alternative-bearing row of the run, the rule keeps both wins, returns all three losses to the baseline, flips nothing else, and lands at \textbf{76.00\% (114/150)} against the 74.67\% baseline.
+We state the epistemic status plainly: the discriminator separates 5 of 5 rows on the run that motivated it, the rule is restriction-only (it removes override authority, never grants it, so its failure mode is the do-no-harm floor), and its end-to-end figure is an offline replay pending the next GPU run.
+The design principle it adds to the arc of \Cref{sec:do_no_harm,sec:v14_routing}: \emph{agreement between derivations that share a premise is admissible corroboration only when the shared premise is externally verified}---here, verified against the problem text at zero cost.
+
 \subsection{API Cost Analysis}
 The observed average API call count per problem in Experiment 1:
 \begin{equation*}
@@ -1178,6 +1200,7 @@ The measured result is 72.7\% on the harder mix (86.7\% on its GSM8K/SVAMP porti
 The MAS-NoSIV ablation then closes the causal question with a negative that becomes a finding (\Cref{sec:v14_routing}): SIV is neutral as an \emph{arbiter} because its certificate is confounded with problem difficulty---on audit-passed rows the certified answer trails the baseline on those same rows by 16.7 points---so a verifier's precision must be judged against the baseline conditioned on the certificate, not the base rate.
 Repositioned as an a-priori compute router, the same free certificate gates the expensive Critic stage and yields the local track's first above-baseline result (75.3\% vs.\ 74.7\% at 86\% blueprint coverage), with the routed stratum's projected gain confirmed by measurement.
 Finally, v15 grounds the remaining bottleneck in a measured mechanism: the dominant NL$\to$math defect at 7B scale is operand \emph{transcription}, not reasoning---35\% of extracted givens appear nowhere in the problem text, 68\% of those one digit from a number that does---and a deterministic, abstention-first repair (operand grounding, formula-valued givens, accessor respelling) raises blueprint accuracy on stored pretest blueprints from 44\% to 60\% on the best prompt route with zero correct blueprints broken (\Cref{sec:v15_grounding}).
+The v15.2 run confirms those component projections on GPU (blueprint 20.7\%\,$\to$\,40.7\%, primary 50.0\%\,$\to$\,55.3\%, oracle 84.7\%) and localizes its own 74.0\% top line to a single vote-independence defect, closed by v15.3's grounded-premise rule: corroboration between derivations sharing a blueprint is admitted only when that blueprint's operands are verified against the problem text---replayed, 76.0\% vs.\ 74.7\% (\Cref{sec:v153_grounded_votes}).
 SIV remains the novel verification contribution, operating in two complementary layers.
 \emph{Layer~1 (Execution Audit)} detects deviations between the Programmer's computed answer and the forward evaluation of the blueprint equations---establishing execution fidelity at zero API cost.
 \emph{Layer~2} inverts the symbolic chain to report which declared variables are implicated by an inconsistency, enabling Critic repair that is targeted at the load-bearing variables rather than blind re-generation.
