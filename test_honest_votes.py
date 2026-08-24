@@ -103,6 +103,43 @@ print(f"  {'✓' if ok else '✗'} svamp_test_217 shape: alts={av} vote(s) vs ba
 if not ok:
     _FAILURES.append("alt majority blocked")
 
+
+def check_g(label, members, grounded, expected):
+    got = _votes([_cand(m) for m in members], grounded)
+    ok = got == expected
+    print(f"  {'✓' if ok else '✗'} {label}: {members} grounded={grounded} -> {got} "
+          f"(expected {expected})")
+    if not ok:
+        _FAILURES.append(label)
+
+
+print("\n[6] [v15.3] Vote independence requires grounded premises")
+# mas_full_20260824 field shapes, verbatim. The 3 losses: ungrounded
+# blueprint, {primary, alt_1[, alt_2]} agreement overrode a correct baseline.
+check_g("gsm8k_test_541 loss shape (p+a1+a2, ungrounded)",
+        ["primary", "alt_1", "alt_2"], False, 1)
+check_g("gsm-hard_163 loss shape (p+a1, ungrounded)",
+        ["primary", "alt_1"], False, 1)
+# The 2 wins: grounded blueprint keeps the v15.1 corroboration.
+check_g("gsm-hard_541 win shape (p+a1+a2, grounded)",
+        ["primary", "alt_1", "alt_2"], True, 2)
+check_g("gsm8k_test_150 win shape (p+a1, grounded)",
+        ["primary", "alt_1"], True, 2)
+# The whole family, ungrounded, collapses to one vote.
+check_g("family quarantine (p+bp+a1+a2, ungrounded)",
+        ["primary", "blueprint_eval", "alt_1", "alt_2"], False, 1)
+check_g("bp_eval+alt is the same family (ungrounded)",
+        ["blueprint_eval", "alt_1"], False, 1)
+# A group containing the baseline keeps the baseline's vote separate.
+check_g("family + baseline (ungrounded): baseline still corroborates",
+        ["primary", "alt_1", "baseline"], False, 2)
+# Default argument stays byte-compatible with v15.1 behaviour.
+check_g("default (no flag) unchanged", ["primary", "alt_1"], True, 2)
+# Ungrounded but no family pair in the group: nothing to quarantine.
+check_g("lone primary unaffected by grounding", ["primary"], False, 1)
+check_g("primary+baseline unaffected by grounding",
+        ["primary", "baseline"], False, 2)
+
 print("\n" + "=" * 70)
 if _FAILURES:
     print(f"FAILED ({len(_FAILURES)}): {_FAILURES}")

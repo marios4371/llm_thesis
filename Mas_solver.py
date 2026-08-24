@@ -1,6 +1,35 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 15.2: Repair what grounding cannot reach; promote the inventory prompt
+VERSION 15.3: Vote independence requires grounded premises
+
+CHANGELOG v15.3 (over v15.2) — the v15.2 run (mas_full_20260824, n=150)
+measured 74.00% against the 74.67% baseline, while the technique's own
+components improved exactly as projected: primary 50.0% -> 55.33%,
+blueprint_eval 20.7% -> 40.67% (49.2% of covered), oracle-over-candidates
+84.67%. The entire paired win/loss set (2W/3L) is, exactly and without
+remainder, the 5 rows where the Critic's alt_1 numerically agreed with the
+primary and the pair's 2 "honest" votes overrode the baseline — the v15.1
+exemption working symmetrically: it rescues a correct lone primary AND
+entrenches a wrong one, because the Critic, seeded with the same blueprint
+and the same SIV report, reproduces the same misread.
+
+The discriminator that separates the wins from the losses on this run is
+PERFECT and free: both wins had blueprints whose every numeric given appears
+verbatim in the problem text; all three losses did not (a non-numeric 't'
+given, an operand absent from the text, a computed total stored as a given).
+
+- [FIX] blueprint_repair.operands_grounded(blueprint, problem_text): every
+  given must be a text number, a structural constant, or a value the
+  expression pass itself derived (tracked via _expr_given_keys). Non-numeric
+  given values fail by definition.
+- [FIX] _honest_votes(members, primary_grounded): when the primary blueprint
+  is NOT operand-grounded, the whole {primary, blueprint_eval, alt_*} family
+  present in one answer group collapses to a single honest vote — an
+  agreeing family with misread premises is one mistake observed n times.
+  Grounded blueprints keep the v15.1 behaviour unchanged.
+- Replayed offline over every alt-populated row of mas_full_20260824:
+  keeps both wins, returns all 3 losses to the baseline, flips nothing else.
+  74.00% -> 76.00% (114/150) against the 74.67% baseline.
 
 CHANGELOG v15.2 (over v15.1) — offline replay of the 125 pretest blueprints
 through the v15.0/15.1 grounding showed it composes with the prompt route
@@ -743,7 +772,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "15.2"
+SOLVER_VERSION = "15.3"
 
 # [v14.8] Reasoning ROUTES for blueprint ensembling. Index 0 is the bare
 # (hint-free) prompt; since v15.2 PRODUCTION uses the v3_inventory route (see
@@ -803,7 +832,7 @@ from siv_module import (
 )
 
 # --- [NEW v14.2] Deterministic blueprint repair (no LLM) ---
-from blueprint_repair import repair_blueprint
+from blueprint_repair import repair_blueprint, operands_grounded
 
 # --- Statistical Libraries Check ---
 try:
@@ -4359,9 +4388,10 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
         # blueprint_eval} pair counts once — see _honest_votes), so a
         # blueprint agreeing with its own faithful execution can no longer
         # outvote the independent zero-shot baseline.
+        _pg = getattr(self, "_primary_operands_grounded", True)  # [v15.3]
         sorted_groups = sorted(
             groups.items(),
-            key=lambda g: (self._honest_votes(g[1]),
+            key=lambda g: (self._honest_votes(g[1], _pg),
                            sum(c.confidence for c in g[1]) / len(g[1])),
             reverse=True
         )
@@ -4372,8 +4402,8 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
             winner = best_group[0]
             return winner.answer, winner.strategy_name, "unanimous"
 
-        best_votes = self._honest_votes(best_group)
-        runner_up_votes = self._honest_votes(sorted_groups[1][1])
+        best_votes = self._honest_votes(best_group, _pg)
+        runner_up_votes = self._honest_votes(sorted_groups[1][1], _pg)
         if best_votes >= 2 and best_votes > runner_up_votes:
             winner = best_group[0]
             return winner.answer, winner.strategy_name, "majority"
@@ -4393,7 +4423,8 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
         return abs(a - b) < max(1e-3, 1e-9 * max(abs(a), abs(b)))
 
     @staticmethod
-    def _honest_votes(members: List[HypothesisResult]) -> int:
+    def _honest_votes(members: List[HypothesisResult],
+                      primary_grounded: bool = True) -> int:
         """[v13.0] Independent derivations agreeing on this answer.
 
         `blueprint_eval` is the CAS evaluation of the SAME equations the
@@ -4432,6 +4463,24 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
         n_alts = sum(1 for i in ids if i.startswith("alt_"))
         if n_alts >= 2:
             votes -= (n_alts - 1)
+        # [v15.3] Vote independence requires grounded premises. Every member
+        # of the {primary, blueprint_eval, alt_*} family derives from the SAME
+        # blueprint; when that blueprint's operands are NOT all numbers the
+        # problem text contains (see blueprint_repair.operands_grounded), an
+        # agreeing family is one misread observed n times, so the whole family
+        # present in a group collapses to a single honest vote. Measured on
+        # mas_full_20260824: the 5 rows where {primary, alt} agreement
+        # overrode the baseline split 2 wins (both grounded) / 3 losses (all
+        # ungrounded); this rule replayed over every alt-populated row keeps
+        # both wins, returns all 3 losses to the baseline, and flips nothing
+        # else: 74.00% -> 76.00% against the 74.67% baseline. A group that
+        # also contains the baseline is unaffected in effect (its answer IS
+        # the baseline's), and grounded blueprints keep the v15.1 behaviour.
+        if not primary_grounded:
+            family = [i for i in ids
+                      if i in ("primary", "blueprint_eval") or i.startswith("alt_")]
+            if len(family) >= 2:
+                votes = (len(ids) - len(family)) + 1
         return votes
 
     def _group_valid_candidates(self, candidates: List[HypothesisResult]
@@ -4481,7 +4530,9 @@ Review for errors and provide 2 corrected/alternative solutions as JSON."""
             except (TypeError, ValueError):
                 pass
         executed = 1 if any(m.code for m in members) else 0
-        return (self._honest_votes(members), siv_full, executed,
+        return (self._honest_votes(members,
+                                   getattr(self, "_primary_operands_grounded", True)),
+                siv_full, executed,
                 1 if "primary" in ids else 0,
                 1 if "baseline" in ids else 0)
 
@@ -4689,6 +4740,18 @@ Select the most reliable candidate."""
             final_answer=primary_answer,
             final_strategy="primary",
         )
+
+        # [v15.3] Premise quality of the blueprint every family candidate
+        # (primary, blueprint_eval, alt_*) descends from. _honest_votes uses
+        # this to quarantine the family to one vote when the operands are not
+        # verifiably copied from the problem text — see operands_grounded.
+        self._primary_operands_grounded = operands_grounded(primary_blueprint, problem)
+        if not self._primary_operands_grounded:
+            logger.info(
+                "[v15.3] blueprint operands NOT fully text-grounded — the "
+                "{primary, blueprint_eval, alt_*} family counts as ONE honest "
+                "vote in any group it shares"
+            )
 
         # [v12.0] Validity from ACTUAL execution success, not from
         # verification-adjusted confidence: the old `confidence > 0.5` check

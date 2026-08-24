@@ -18,7 +18,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from blueprint_repair import repair_blueprint
+from blueprint_repair import repair_blueprint, operands_grounded
 from siv_module import SymbolicInverseVerifier as SIV
 
 failures = []
@@ -385,6 +385,63 @@ def part6_v152_classes():
           bp["givens"].get("share") == "total / n_people", f"got {bp['givens']}")
 
 
+def part7_operands_grounded():
+    """[v15.3] The premise-quality signal behind vote independence."""
+    print("\n" + "=" * 70)
+    print("PART 7 - [v15.3] operands_grounded (field shapes, mas_full_20260824)")
+    print("=" * 70)
+
+    # gsm-hard_541 (WIN): every given verbatim in the text -> grounded.
+    check("all givens in text -> grounded",
+          operands_grounded(
+              {"givens": {"dogs": 8, "cats": 5, "birds": 3, "horses": 3,
+                          "total_days_in_week": 7}},
+              "There are 8 dogs, 5 cats, 3 birds and 3 horses. Every 7 days...")
+          is True)
+
+    # gsm8k_test_541 (LOSS): 11111 is nowhere in a text that says 1125.
+    check("hallucinated operand -> NOT grounded",
+          operands_grounded({"givens": {"monthly_target": 11111}},
+                            "Alfred wants to save $1125 over the year.")
+          is False)
+
+    # gsm-hard_163 (LOSS): a non-numeric given fails by definition.
+    check("non-numeric given 't' -> NOT grounded",
+          operands_grounded(
+              {"givens": {"cost_per_hour": 3, "hours": "t"}},
+              "renting a canoe costs 3 dollars per hour")
+          is False)
+
+    # svamp_test_217 (LOSS): a computed total (16+71=87) stored as a given.
+    check("computed total stored as given -> NOT grounded",
+          operands_grounded(
+              {"givens": {"goldfish": 16, "catfish": 71, "total": 87}},
+              "There were 16 goldfish and 71 catfish in the pond.")
+          is False)
+
+    # Structural constants (percent divisor, weeks) do not need text support.
+    check("structural constants are exempt",
+          operands_grounded({"givens": {"pct": 20, "hundred": 100}},
+                            "Enrolment rose by 20 percent.")
+          is True)
+
+    # Values the expression pass derived are exempt via _expr_given_keys.
+    bp, _ = repair_blueprint(
+        {"givens": {"initial_fairies": 50,
+                    "fairies_from_east": "initial_fairies / 2"},
+         "equations": ["answer = givens['initial_fairies'] + givens['fairies_from_east']"]},
+        problem_text="Katelyn saw 50 fairies flying above the forest.")
+    check("expression-derived value (25.0) is exempt",
+          bp["givens"]["fairies_from_east"] == 25.0
+          and operands_grounded(bp, "Katelyn saw 50 fairies flying above the forest.")
+          is True, f"givens={bp.get('givens')}, keys={bp.get('_expr_given_keys')}")
+
+    # Degenerate inputs are conservative: not grounded.
+    check("empty givens -> NOT grounded", operands_grounded({"givens": {}}, "text") is False)
+    check("no problem text -> NOT grounded",
+          operands_grounded({"givens": {"a": 5}}, "") is False)
+
+
 if __name__ == "__main__":
     print("=" * 70)
     print("v14.2 — DETERMINISTIC BLUEPRINT REPAIR (offline, no models)")
@@ -395,6 +452,7 @@ if __name__ == "__main__":
     part4_symbol_identity_bug()
     part5_text_snapping()
     part6_v152_classes()
+    part7_operands_grounded()
     print("\n" + "=" * 70)
     if failures:
         print(f"  {len(failures)} CHECK(S) FAILED:")

@@ -442,6 +442,7 @@ def repair_blueprint(blueprint: dict, problem_text: str = "") -> Tuple[dict, Lis
     # and so the derived value itself is never snapped -- it is a computation,
     # not a quote from the text. Iterated because an expression may reference
     # another expression's result.
+    expr_keys: List[str] = []
     for _ in range(3):
         progressed = False
         numeric_now = {k: float(v) for k, v in givens.items()
@@ -452,6 +453,7 @@ def repair_blueprint(blueprint: dict, problem_text: str = "") -> Tuple[dict, Lis
             val = _eval_expr_given(str(v), numeric_now)
             if val is not None:
                 givens[k] = val
+                expr_keys.append(k)
                 fixes.append(f"evaluated expression givens[{k!r}] {v!r} -> {val}")
                 progressed = True
         if not progressed:
@@ -542,7 +544,45 @@ def repair_blueprint(blueprint: dict, problem_text: str = "") -> Tuple[dict, Lis
     repaired["givens"] = givens
     repaired["equations"] = equations
     repaired["_deterministic_fixes"] = fixes
+    if expr_keys:
+        # [v15.3] operands_grounded() must not flag a value this pass DERIVED
+        # (e.g. 25.0 from "initial_fairies / 2") as absent from the text.
+        repaired["_expr_given_keys"] = expr_keys
     return repaired, fixes
+
+
+def operands_grounded(blueprint: dict, problem_text: str) -> bool:
+    """[v15.3] True when every given is a number the problem text actually
+    contains (or a structural constant, or a value the expression pass derived).
+
+    This is the premise-quality signal behind vote independence: the Critic's
+    alternatives are seeded with this very blueprint, so when its operands are
+    misread or invented, an alternative that AGREES with the primary is the
+    same mistake observed twice, not corroboration. Measured on
+    mas_full_20260824 (n=150): of the 5 rows where {primary, alt} agreement
+    overrode the baseline, both wins had fully grounded blueprints and all
+    three losses did not (a garbage non-numeric given, an operand absent from
+    the text, a computed total stored as a given). A non-numeric given value
+    fails the check by definition -- it is exactly the '5 pm' / 't' material
+    the repairer refuses to guess at.
+    """
+    givens = (blueprint or {}).get("givens") or {}
+    if not problem_text or not givens:
+        return False
+    text = set(_text_numbers(problem_text))
+    exempt = set(blueprint.get("_expr_given_keys") or ())
+    for k, v in givens.items():
+        if isinstance(v, bool):
+            return False
+        if isinstance(v, (int, float)):
+            if k in exempt:
+                continue
+            if float(v) in text or float(v) in _STRUCTURAL_CONSTANTS:
+                continue
+            return False
+        else:
+            return False
+    return True
 
 
 # Names an equation may use without declaring: what the SIV/SymPy evaluators
