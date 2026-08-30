@@ -772,7 +772,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "15.3"
+SOLVER_VERSION = "15.4"
 
 # [v14.8] Reasoning ROUTES for blueprint ensembling. Index 0 is the bare
 # (hint-free) prompt; since v15.2 PRODUCTION uses the v3_inventory route (see
@@ -2175,6 +2175,28 @@ class UnifiedLLMClient:
             raise ImportError(f"local_hf provider needs transformers+torch: {e}")
 
         use_cuda = torch.cuda.is_available()
+        # [v15.4] Stamp the environment into the log BEFORE the first load. The
+        # 2026-08-29 run burned 11 GPU-hours on a silently-degraded model load;
+        # the one thing the log could not tell us afterwards was which package
+        # versions were actually in play. This costs nothing and makes the next
+        # such failure diagnosable from the log alone.
+        if not getattr(UnifiedLLMClient, "_env_stamped", False):
+            UnifiedLLMClient._env_stamped = True
+            try:
+                import transformers as _tf
+                _tf_v = _tf.__version__
+            except Exception as _e:
+                _tf_v = f"UNAVAILABLE ({_e})"
+            try:
+                import bitsandbytes as _bnb
+                _bnb_v = _bnb.__version__
+            except Exception as _e:
+                _bnb_v = f"NOT IMPORTABLE ({type(_e).__name__}: {_e})"
+            logger.info(
+                f"local_hf env: torch={torch.__version__} "
+                f"cuda={torch.version.cuda} gpus={torch.cuda.device_count()} "
+                f"transformers={_tf_v} bitsandbytes={_bnb_v}"
+            )
         # [v10.7] bfloat16 on GPU, NOT float16. Qwen2.5(-Math) overflows fp16:
         # attention logits exceed fp16's 65504 max → Inf → NaN → the model emits
         # token 0 ('!') forever ('![](!!!!!!' garbage, exactly what pre-flight saw).
@@ -2265,11 +2287,33 @@ class UnifiedLLMClient:
                         self.model_name, **_load_kwargs,
                     )
                     logger.info(f"local_hf: {self.model_name} loaded in 4-bit NF4 on cuda")
-                except ImportError:
-                    logger.warning("bitsandbytes not installed — falling back to fp16.")
-                    mdl = AutoModelForCausalLM.from_pretrained(
-                        self.model_name, torch_dtype=dtype, **_lkw,
-                    ).to("cuda")
+                except ImportError as _bnb_err:
+                    # [v15.4] FAIL LOUDLY. This used to fall back to a full-precision
+                    # load, which is not a viable substitute for this pipeline and
+                    # silently destroyed an 11-hour run (2026-08-29):
+                    #   * the fallback called .to("cuda") -- i.e. cuda:0 -- ignoring
+                    #     self.device_index, so BOTH 7B models of the mixed preset
+                    #     landed on the SAME card;
+                    #   * 7B in bf16 is ~15.2 GB, so two of them cannot coexist on a
+                    #     15 GB T4 at all;
+                    #   * every generation then came back empty/garbage. The run
+                    #     completed 65 problems with the zero-shot baseline answering
+                    #     'unknown' on 65/65 rows and 36/65 blueprints degenerating to
+                    #     the tautological CoT fallback -- 2/65 correct, 602 s/problem.
+                    # A 4-bit preset that cannot load 4-bit has no honest degraded
+                    # mode: refuse, so the failure costs seconds instead of GPU-hours.
+                    raise RuntimeError(
+                        f"local_hf: load_4bit=True but BitsAndBytesConfig is "
+                        f"unavailable ({type(_bnb_err).__name__}: {_bnb_err}). "
+                        f"bitsandbytes is not importable in this environment, so the "
+                        f"4-bit path cannot run. Refusing to fall back to a "
+                        f"full-precision load: two 7B bf16 models do not fit on one "
+                        f"T4 and the fallback ignores GPU pinning, which produces a "
+                        f"silently broken run rather than a slow one. "
+                        f"Fix the environment (verify `import bitsandbytes` works and "
+                        f"that the installed transformers exposes BitsAndBytesConfig), "
+                        f"then re-run."
+                    ) from _bnb_err
             else:
                 # Standard fp16 path.
                 if use_cuda and self.device_index is not None:
