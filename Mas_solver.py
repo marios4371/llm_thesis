@@ -2509,7 +2509,14 @@ class UnifiedLLMClient:
         # surfaced two stages later as "no executable equations". Legitimate math
         # prose is essentially never >15% exclamation marks, so this is a safe
         # tripwire and it names the real cause at the point of failure.
-        if len(text) >= 40:
+        if len(text.strip()) < 8:
+            logger.error(
+                f"local_hf: EMPTY OUTPUT from {self.model_name} -- generated "
+                f"{len(new_tokens)} token(s) decoding to {text!r}. The model "
+                f"returned essentially nothing; treat as a generation fault, "
+                f"not a wrong answer."
+            )
+        elif len(text) >= 40:
             _bang = text.count("!") / len(text)
             if _bang > 0.15:
                 logger.error(
@@ -5147,6 +5154,23 @@ Select the most reliable candidate."""
             max_tokens=1024,
         )
         base_ans, _ = self.extract_answer(base_raw)
+
+        # [v15.5] The baseline is the do-no-harm anchor: when it yields nothing,
+        # every accuracy number in the run is meaningless. Yet its raw response
+        # was never logged, so a dead baseline could only be diagnosed by
+        # inference (2026-08-29: 'unknown' on 65/65 rows, cause unknowable from
+        # the log). extract_answer accepts an ANSWER tag, oxed{}, ANY trailing
+        # number, and several prose patterns -- so failing all of those means the
+        # text contains no digit at all, which is a generation fault, not a
+        # parsing one. Log enough to tell those apart at a glance.
+        if _extract_last_number(str(base_ans)) is None:
+            _braw = str(base_raw)
+            logger.warning(
+                f"BASELINE produced no numeric answer (extract_answer -> "
+                f"{base_ans!r}). Raw response: {len(_braw)} chars, "
+                f"{sum(c.isdigit() for c in _braw)} digits, "
+                f"{_braw.count('!')} '!'. Head: {_braw[:300]!r}"
+            )
 
         # Step 2: Architect
         # [v14.8] blueprint_samples > 1 derives the blueprint along several
