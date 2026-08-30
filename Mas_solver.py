@@ -772,7 +772,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "15.4"
+SOLVER_VERSION = "15.5"
 
 # [v14.8] Reasoning ROUTES for blueprint ensembling. Index 0 is the bare
 # (hint-free) prompt; since v15.2 PRODUCTION uses the v3_inventory route (see
@@ -2219,8 +2219,25 @@ class UnifiedLLMClient:
         # Root cause: accelerate's device_map dispatch hooks invoke SM-specific CUDA
         # kernels during forward() that are not compiled for T4 (SM7.5) or P100 (SM6.0).
         # Fix: load to CPU, then .to("cuda") manually — uses only universal cublas.
-        # attn_implementation="eager" additionally avoids FlashAttention2 (SM>=8.0 only).
-        _lkw = dict(trust_remote_code=True, attn_implementation="eager")
+        # [v15.5] attn_implementation: "sdpa", NOT "eager".
+        # The point of pinning this at all is to keep FlashAttention2 (SM>=8.0)
+        # out of the picture on T4 (SM7.5). "eager" does that, but it is not the
+        # only option that does, and on transformers 4.49 + Qwen2.5 it is
+        # actively broken: the model config enables sliding-window attention,
+        # eager does not implement it, and transformers only warns --
+        #   "Sliding Window Attention is enabled but not implemented for
+        #    `eager`; unexpected results may be encountered."
+        # The malformed mask then yields NaN logits, and generation degenerates
+        # to token 0, which is '!' in the Qwen tokenizer. Observed 2026-08-30 on
+        # a healthy T4 x2 / 4-bit NF4 session, corrupting every blueprint:
+        #   '{"unknown!": "j!erry!_!!will!_!!!be!!!!!!in!3!years!?!", ...'
+        # This is the same '!!!!' signature v10.7 attributed to fp16 overflow --
+        # same symptom, different cause (bf16 was already in use here).
+        # torch SDPA implements sliding-window correctly and runs on SM7.5: only
+        # its FLASH backend needs SM>=8.0, and it falls back to the mem-efficient
+        # / math backends elsewhere. So SDPA satisfies the original constraint
+        # without the broken-mask failure mode.
+        _lkw = dict(trust_remote_code=True, attn_implementation="sdpa")
 
         # [v10.3 FIX] Wrap the entire model-load block in a try/except so that
         # any failure (OOM, CUDA error, bnb error) cleans up partial VRAM
@@ -2239,7 +2256,7 @@ class UnifiedLLMClient:
         try:
             if self.load_4bit and use_cuda:
                 # 4-bit (BitsAndBytes) requires device_map="auto" — no workaround exists.
-                # attn_implementation="eager" still prevents the FA2 kernel mismatch.
+                # attn_implementation="sdpa" (see _lkw above) still keeps FA2 out.
                 try:
                     from transformers import BitsAndBytesConfig
                     bnb_cfg = BitsAndBytesConfig(
@@ -2472,7 +2489,7 @@ class UnifiedLLMClient:
                         logger.warning("Reloading model on CPU (CUDA context corrupted).")
                         mdl_cpu = _AMCL.from_pretrained(
                             self.model_name, torch_dtype=torch.float32,
-                            trust_remote_code=True, attn_implementation="eager",
+                            trust_remote_code=True, attn_implementation="sdpa",
                         )
                     self._local_model  = mdl_cpu
                     self._local_device = torch.device("cpu")
@@ -2482,6 +2499,28 @@ class UnifiedLLMClient:
         # Decode only the newly-generated tokens.
         new_tokens = out[0, ids["input_ids"].shape[1]:]
         text = tok.decode(new_tokens, skip_special_tokens=True)
+
+        # [v15.5] Degenerate-output detector. When attention breaks (NaN logits),
+        # Qwen decoding collapses onto token 0 -- '!' -- and the result still
+        # LOOKS like a response, so every downstream stage happily parses garbage:
+        #   '{"unknown!": "j!erry!_!!will!_!!!be!!!!!!in!3!years!?!", ...'
+        # That exact corruption (transformers 4.49 + eager attention + Qwen2.5
+        # sliding window, 2026-08-30) reached the blueprint parser and only
+        # surfaced two stages later as "no executable equations". Legitimate math
+        # prose is essentially never >15% exclamation marks, so this is a safe
+        # tripwire and it names the real cause at the point of failure.
+        if len(text) >= 40:
+            _bang = text.count("!") / len(text)
+            if _bang > 0.15:
+                logger.error(
+                    f"local_hf: DEGENERATE OUTPUT from {self.model_name} -- "
+                    f"{_bang:.0%} of {len(text)} chars are '!' (token 0). This is "
+                    f"NaN logits, not a bad answer: the model is producing noise. "
+                    f"Usual cause is an attention-implementation mismatch (check "
+                    f"for a 'Sliding Window Attention is enabled but not "
+                    f"implemented' warning at load) or an unsupported GPU. "
+                    f"Head: {text[:120]!r}"
+                )
         return text
 
     @staticmethod
