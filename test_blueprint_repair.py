@@ -168,6 +168,56 @@ def part5_text_snapping():
           bp["givens"]["x"] == 55 and not any("problem text" in f for f in fixes),
           f"got {bp['givens']}, fixes={fixes}")
 
+    # [v15.6] gsm-hard_195, verbatim, 2026-08-30: a perfectly correct blueprint
+    # (evaluates to gold 118000.0) destroyed by the unguarded suffix rule --
+    # selling_price 400000 and remaining_loan_amount 250000 both "matched" a
+    # bare 0 elsewhere in the text (every number ending in 0 trivially
+    # satisfies str.endswith("0")); rates 0.03 / 0.05 both "matched" a bare
+    # 3 / 5 (str(0.03) ends in the character '3'). All four values were
+    # already grounded in the text; none should move.
+    text195 = ("A property sold for $400,000. Transfer fees are 3% and "
+               "brokerage fees are 5% of the selling price. The seller still "
+               "owes $250,000 on the mortgage. How much are the net proceeds "
+               "after fees and the remaining loan are paid?")
+    bp, fixes = repair_blueprint(
+        {"givens": {"selling_price": 400000, "transfer_fees_rate": 0.03,
+                    "brokerage_fee_rate": 0.05, "remaining_loan_amount": 250000},
+         "equations": [
+             "transfer_fees = givens['selling_price'] * givens['transfer_fees_rate']",
+             "brokerage_fee = givens['selling_price'] * givens['brokerage_fee_rate']",
+             "total_fees = transfer_fees + brokerage_fee",
+             "answer = givens['selling_price'] - total_fees - givens['remaining_loan_amount']",
+         ]},
+        problem_text=text195)
+    check("gsm-hard_195: already-correct givens are not snapped to a bare 0/3/5",
+          bp["givens"] == {"selling_price": 400000, "transfer_fees_rate": 0.03,
+                           "brokerage_fee_rate": 0.05, "remaining_loan_amount": 250000},
+          f"got {bp['givens']}, fixes={fixes}")
+    r = SIV.verify(bp, 118000.0)
+    check("gsm-hard_195: chain still evaluates to gold",
+          r.blueprint_answer is not None and abs(r.blueprint_answer - 118000.0) < 1e-6,
+          f"got {r.blueprint_answer}")
+
+    # A genuine 1-digit suffix coincidence must still be refused generally,
+    # not just in the specific 0/3/5 shapes above. 127 vs a lone text "7": the
+    # length gap (3 vs 1) is too big for the one-digit-apart rule to fire at
+    # all (it requires len difference <= 1), so this isolates the suffix rule
+    # specifically -- pre-fix, "127".endswith("7") matched trivially.
+    bp, fixes = repair_blueprint(
+        {"givens": {"x": 127}, "equations": ["answer = givens['x']"]},
+        problem_text="The bag had 7 apples inside.")
+    check("bare single-digit suffix match refused (127 vs text's 7)",
+          bp["givens"]["x"] == 127, f"got {bp['givens']}")
+
+    # Two-digit-or-longer integer suffix matches must still fire (regression
+    # guard for the fix above, using a case shaped like the real 569/236 one
+    # but disambiguated further so it stays a clean single-candidate case).
+    bp, fixes = repair_blueprint(
+        {"givens": {"price": 88}, "equations": ["answer = givens['price']"]},
+        problem_text="The item cost 1188 cents at the old shop.")
+    check("2+ digit integer suffix match still fires",
+          bp["givens"]["price"] == 1188.0, f"got {bp['givens']}")
+
 
 def part2_refusals():
     print("\n" + "=" * 70)

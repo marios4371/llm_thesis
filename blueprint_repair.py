@@ -298,8 +298,26 @@ def _snap_givens_to_text(givens, problem_text):
         near = {t for t in text_nums if _one_digit_apart(v, t)}
         how = "one digit apart"
         if len(near) != 1:
-            near = {t for t in text_nums
-                    if _digits(t).endswith(_digits(v)) or _digits(v).endswith(_digits(t))}
+            # [v15.6] Guarded: unguarded, this matched on a BARE trailing
+            # digit. Real failure (gsm-hard_195, 2026-08-30): selling_price
+            # 400000 and remaining_loan_amount 250000 both "matched" a lone
+            # "0" elsewhere in the text (any number ending in 0 satisfies
+            # str.endswith("0")), and rate givens 0.03 / 0.05 both "matched"
+            # a bare 3 / 5 (str(0.03) ends in the character '3'). All four
+            # were perfectly correct — the blueprint evaluated to the exact
+            # gold answer before this rule corrupted it. Decimal-valued
+            # givens (rates, fractions) are excluded outright: their string
+            # form's trailing digit is not a transcription artifact the way
+            # an integer ID's is. And any match is required on BOTH sides to
+            # be at least 2 digits, since a 1-digit string is near-certain to
+            # appear somewhere in a multi-number word problem by chance.
+            _dv = _digits(v)
+            if "." not in _dv and len(_dv) >= 2:
+                near = {t for t in text_nums
+                        if "." not in _digits(t) and len(_digits(t)) >= 2
+                        and (_digits(t).endswith(_dv) or _dv.endswith(_digits(t)))}
+            else:
+                near = set()
             how = "shares digit suffix"
         if len(near) != 1 and v.is_integer() and abs(v) >= 10000:
             # [v15.2] gsm-hard's perturbed operands are 5-7 digit integers and

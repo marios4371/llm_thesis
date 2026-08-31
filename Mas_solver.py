@@ -1,5 +1,33 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
+VERSION 15.6: Digit-suffix repair rule stopped destroying correct blueprints
+
+CHANGELOG v15.6 (over v15.5) — the first clean, fully-healthy Run 1 under
+v15.5 (fullmas_20260830.csv, n=150, gsm-symbolic-p2/gsm-hard/svamp mix,
+seed=43) measured 73.33% vs a 74.00% baseline (-0.67pp, not significant) with
+exactly ONE paired loss: gsm-hard_195. Its blueprint was PERFECTLY CORRECT --
+selling_price=400000, transfer_fees_rate=0.03, brokerage_fee_rate=0.05,
+remaining_loan_amount=250000 evaluates to exactly the gold answer, 118000.0
+-- until `blueprint_repair.py`'s "shares digit suffix" fallback rule
+corrupted all four values to 0.0 / 3.0 / 5.0 / 0.0, because the rule had no
+minimum-length guard: ANY number ending in digit 0 trivially satisfies
+`"400000".endswith("0")`, and a decimal given's string form trivially ends in
+its own last digit (`"0.03".endswith("3")`).
+
+- [FIX] blueprint_repair._snap_givens_to_text: the digit-suffix fallback now
+  (a) excludes decimal-valued givens entirely -- a rate's trailing digit is
+  not a transcription artifact the way an integer ID's dropped leading digit
+  is -- and (b) requires BOTH the given and the candidate text number to have
+  >=2-digit representations, killing the bare-single-digit false-positive
+  class outright. Guarded by a regression test reproducing gsm-hard_195
+  verbatim (blueprint now survives untouched, still evaluates to 118000.0)
+  plus a case isolating the bug from the unrelated one-digit-apart rule.
+  Replayed on the 125 stored pretest blueprints (results_August/
+  pretest_blueprint_consistency.json): 48/44/48/60/32% across the five
+  routes, byte-identical to the pre-fix v15.2 measurement -- zero regression
+  on the set this repair pass was originally tuned against.
+
+VERSION 15.5: sdpa attention fix + baseline diagnostics (see below)
 VERSION 15.3: Vote independence requires grounded premises
 
 CHANGELOG v15.3 (over v15.2) — the v15.2 run (mas_full_20260824, n=150)
@@ -772,7 +800,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "15.5"
+SOLVER_VERSION = "15.6"
 
 # [v14.8] Reasoning ROUTES for blueprint ensembling. Index 0 is the bare
 # (hint-free) prompt; since v15.2 PRODUCTION uses the v3_inventory route (see
