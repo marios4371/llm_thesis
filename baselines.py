@@ -31,7 +31,10 @@ Apples-to-apples policy:
 from __future__ import annotations
 
 import re
+import os
+import json
 import time
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
@@ -200,10 +203,53 @@ def chain_of_thought(client: UnifiedLLMClient, problem: str,
 # B3 — Self-Consistency (SC@n)
 # =====================================================================
 
+# [v15.7] Sidecar for per-sample SC answers.
+#
+# Why a file and not just BaselineResult.meta: the Kaggle notebook's
+# _row_from_baseline() writes neither `raw` nor `meta` to the CSV, and the
+# notebook's cells do NOT come down with `git pull` -- so anything that has to
+# survive a run must be written from a .py the pull actually updates. One
+# SC@5 run then yields SC@1/SC@2/.../SC@5 offline, instead of paying ~6 GPU
+# hours for a separate SC@3.
+#
+# Path: $SC_SIDECAR_PATH, else ./sc_samples.jsonl (on Kaggle the CWD is
+# /kaggle/working, which is captured in the commit output). Append-only, one
+# JSON object per problem, flushed per line so a run killed by the 12h wall
+# still leaves every completed problem behind.
+SC_SIDECAR_PATH = os.environ.get("SC_SIDECAR_PATH", "sc_samples.jsonl")
+
+
+def _sc_write_sidecar(problem: str, n: int,
+                      sample_answers: List[Optional[float]],
+                      voted: Optional[float]) -> None:
+    """Append one SC record. Never raises -- a sidecar failure must not kill a
+    10-hour run, so any error is logged and swallowed.
+
+    The runner calls every baseline as ``fn(client, question)``: there is no
+    problem_id to record here. The join key back to the CSV is therefore the
+    sha1 of the problem text, with `voted` as a checksum (it must equal that
+    row's `predicted`) and append order as the fallback.
+    """
+    try:
+        sha = hashlib.sha1(problem.encode("utf-8")).hexdigest()
+        with open(SC_SIDECAR_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "problem_sha1":  sha,
+                "problem_head":  problem[:120],
+                "n":             n,
+                "sample_answers": sample_answers,
+                "voted":         voted,
+                "ts":            time.time(),
+            }) + "\n")
+            fh.flush()
+    except Exception as exc:                      # pragma: no cover
+        logger.warning("SC sidecar write failed (continuing): %s", exc)
+
+
 def self_consistency(client: UnifiedLLMClient, problem: str,
                      n: int = 5, temperature: float = 0.7,
                      max_tokens: int = 500,
-                     inter_sample_sleep: float = 1.0) -> BaselineResult:
+                     inter_sample_sleep: Optional[float] = None) -> BaselineResult:
     """
     B3 — n independent CoT samples at temperature, then majority vote on the
     final numeric answer.
@@ -215,11 +261,24 @@ def self_consistency(client: UnifiedLLMClient, problem: str,
           smaller numeric value wins (deterministic — the alternative is
           first-seen-order which depends on dict iteration).
         * inter_sample_sleep adds extra slack on top of the client's own
-          rate limiter to avoid 429 bursts on Groq.
+          rate limiter to avoid 429 bursts on Groq. None (the default) means
+          "auto": 0.0 for local_hf (no rate limit exists, and 4 x 1s x 150
+          problems is 10 wasted GPU minutes), 1.0 for remote providers.
+        * [v15.7] The per-sample answers are recorded IN ORDER in
+          meta['sample_answers'] and mirrored to a sidecar JSONL (see
+          `sc_sidecar_path`). This is what makes SC@k for every k <= n
+          recoverable offline from a single SC@n run: SC@3 is the majority
+          vote over the first 3 entries. Without it a separate SC@3 run
+          would cost another ~6 GPU-hours for information we already paid
+          for. The notebook's row writer persists neither `raw` nor `meta`,
+          so the sidecar -- not meta -- is the durable copy.
     """
+    if inter_sample_sleep is None:
+        inter_sample_sleep = 0.0 if getattr(client, "provider", "") == "local_hf" else 1.0
     t0 = time.time()
     raws: List[str] = []
     nums: List[float] = []
+    sample_answers: List[Optional[float]] = []
     errors = 0
     total_tokens = 0
 
@@ -232,8 +291,12 @@ def self_consistency(client: UnifiedLLMClient, problem: str,
         if sample.error_type == "":
             if sample.answer is not None:
                 nums.append(round(sample.answer, 6))
+                sample_answers.append(round(sample.answer, 6))
+            else:
+                sample_answers.append(None)
         else:
             errors += 1
+            sample_answers.append(None)
         if i < n - 1 and inter_sample_sleep > 0:
             time.sleep(inter_sample_sleep)
 
@@ -241,16 +304,19 @@ def self_consistency(client: UnifiedLLMClient, problem: str,
     raw_str = ("\n--- sample ---\n".join(raws))[:3000]
 
     if not nums:
+        _sc_write_sidecar(problem, n, sample_answers, None)
         return BaselineResult(
             answer=None, raw=raw_str, num_llm_calls=n,
             tokens_estimated=total_tokens, time_s=elapsed,
             error_type="all_samples_failed" if errors == n else "no_majority",
-            meta={"samples_failed": errors, "n": n},
+            meta={"samples_failed": errors, "n": n,
+                  "sample_answers": list(sample_answers)},
         )
 
     counts = Counter(nums)
     # Sort by (count desc, value asc) for determinism on ties.
     best_val, best_cnt = max(counts.items(), key=lambda kv: (kv[1], -kv[0]))
+    _sc_write_sidecar(problem, n, sample_answers, float(best_val))
     return BaselineResult(
         answer=float(best_val), raw=raw_str, num_llm_calls=n,
         tokens_estimated=total_tokens, time_s=elapsed,
@@ -260,6 +326,7 @@ def self_consistency(client: UnifiedLLMClient, problem: str,
             "winner_votes": best_cnt,
             "samples_failed": errors,
             "n": n,
+            "sample_answers": list(sample_answers),   # [v15.7] ordered
         },
     )
 
