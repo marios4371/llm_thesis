@@ -212,11 +212,25 @@ def chain_of_thought(client: UnifiedLLMClient, problem: str,
 # SC@5 run then yields SC@1/SC@2/.../SC@5 offline, instead of paying ~6 GPU
 # hours for a separate SC@3.
 #
-# Path: $SC_SIDECAR_PATH, else ./sc_samples.jsonl (on Kaggle the CWD is
-# /kaggle/working, which is captured in the commit output). Append-only, one
+# Path: $SC_SIDECAR_PATH, else <run results dir>/sc_samples.jsonl. Append-only, one
 # JSON object per problem, flushed per line so a run killed by the 12h wall
 # still leaves every completed problem behind.
-SC_SIDECAR_PATH = os.environ.get("SC_SIDECAR_PATH", "sc_samples.jsonl")
+# Resolved per call, not at import: the notebook sets the env var in a later
+# cell than the one that imports this module, and an import-time constant
+# would silently keep the stale default and drop the file outside the commit
+# output. The fallback prefers the run's own results dir when it exists, so a
+# forgotten env var still lands the sidecar somewhere Kaggle actually saves.
+_SC_SIDECAR_FALLBACKS = ("/kaggle/working/MAS_SHT/results", ".")
+
+
+def _sc_sidecar_path() -> str:
+    env = os.environ.get("SC_SIDECAR_PATH")
+    if env:
+        return env
+    for d in _SC_SIDECAR_FALLBACKS:
+        if os.path.isdir(d):
+            return os.path.join(d, "sc_samples.jsonl")
+    return "sc_samples.jsonl"
 
 
 def _sc_write_sidecar(problem: str, n: int,
@@ -232,7 +246,7 @@ def _sc_write_sidecar(problem: str, n: int,
     """
     try:
         sha = hashlib.sha1(problem.encode("utf-8")).hexdigest()
-        with open(SC_SIDECAR_PATH, "a", encoding="utf-8") as fh:
+        with open(_sc_sidecar_path(), "a", encoding="utf-8") as fh:
             fh.write(json.dumps({
                 "problem_sha1":  sha,
                 "problem_head":  problem[:120],
