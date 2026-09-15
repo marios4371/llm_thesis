@@ -50,7 +50,18 @@ def eq(a, b, tol=1e-3) -> bool:
 
 
 def build() -> pd.DataFrame:
-    """One row per problem, with the challenger each strategy would propose."""
+    """One row per problem, with the challenger each strategy would propose.
+
+    [v16.1] Carries the largest number in the PROBLEM TEXT. Every predicate in
+    the original Run 0 pool was SIV telemetry -- the model reporting on itself
+    -- and magnitude was never among them, yet it is the strongest error
+    driver measured: inside gsm-hard, 98.4% under 100 and 0.0% above 10M. It
+    is also the one feature here that does not come from the model at all.
+    """
+    import os
+    os.environ.setdefault('HF_DATASETS_OFFLINE', '1')
+    import grounding_probe as G
+    texts = G.load_texts()
     out = []
     for run, path in RUNS.items():
         d = pd.read_csv(path)
@@ -69,7 +80,9 @@ def build() -> pd.DataFrame:
             na = {k: (cnt.get(v, 0) if v is not None else 0) for k, v in ch.items()}
 
             gm, gt = num(r.siv_givens_matched), num(r.siv_givens_total)
+            _tn = [abs(x) for x in G.text_numbers(texts.get(r.problem_id, '')) if x is not None]
             out.append(dict(
+                mx=(max(_tn) if _tn else 0.0),
                 run=run, problem_id=r.problem_id, gold=gold, base=base,
                 base_ok=bool(r.baseline_correct), mas_ok=bool(r.correct),
                 ch_majority=ch['majority'], ch_primary=ch['primary'],
@@ -112,6 +125,11 @@ PREDICATES: Dict[str, Callable[[pd.DataFrame], pd.Series]] = {
     'siv_conf_ge_08':     lambda f: f.siv_conf >= 0.8,
     'sht_triggered':      lambda f: f.triggered,
     'unanimous_cands':    lambda f: f.n_distinct <= 1,
+    # [v16.1] magnitude -- external to the model, absent from the Run 0 pool
+    'big_numbers_1e4':    lambda f: f.mx >= 1e4,
+    'big_numbers_1e5':    lambda f: f.mx >= 1e5,
+    'big_numbers_1e6':    lambda f: f.mx >= 1e6,
+    'small_numbers':      lambda f: f.mx < 1e4,
 }
 
 
