@@ -123,6 +123,37 @@ def _fmt(v: float) -> str:
     return str(int(v)) if float(v).is_integer() else str(v)
 
 
+def rebind_guarded(givens: Dict[str, object],
+                   shrink: ShrinkResult,
+                   tol: float = 1e-9) -> Tuple[Dict[str, object], bool, str]:
+    """Rebind, and refuse when a probe never reached the givens.
+
+    The load-bearing guard. If the Architect folded a shrunk input into a
+    derived constant -- writing raymond_age: 13 where 13 is probe 7 plus the
+    literal 6 -- then no given carries that probe, rebinding cannot restore the
+    real value, and the chain would silently evaluate at 13 instead of
+    3473626. Every probe MUST appear among the givens or the structure did not
+    capture that input and the mechanism has to abstain rather than answer.
+
+    Returns (rebound_givens, ok, reason).
+    """
+    rebound, touched = rebind_givens(givens, shrink, tol)
+    probes = set(shrink.probe_to_original)
+    seen = {p for p in probes
+            for v in givens.values()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+            and abs(float(v) - p) <= tol}
+    missing = probes - seen
+    if missing:
+        return rebound, False, (
+            f"{len(missing)} of {len(probes)} shrunk inputs never appear in the "
+            f"givens (probes {sorted(missing)}) -- the structure folded them "
+            f"into derived constants, so the real values cannot be restored")
+    if not touched:
+        return rebound, False, "nothing was rebound"
+    return rebound, True, f"rebound {len(touched)} givens"
+
+
 def rebind_givens(givens: Dict[str, object],
                   shrink: ShrinkResult,
                   tol: float = 1e-9) -> Tuple[Dict[str, object], List[str]]:
