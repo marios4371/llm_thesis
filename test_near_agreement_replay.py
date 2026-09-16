@@ -38,8 +38,9 @@ def main() -> int:
         for _, r in pd.read_csv(path).iterrows():
             gold = num(r.gold)
             bp = num(r.siv_blueprint_answer)
-            # exactly what solve() does now: parse the string answer it holds
-            cur = _extract_last_number(str(r.predicted))
+            # exactly what solve() does now [v16.4]: the reference is the
+            # BASELINE -- an independent derivation -- not the current answer
+            cur = _extract_last_number(str(r.baseline_ans))
             fired = near_agreement.structurally_corroborated(cur, bp)
             # `before` must be the pipeline's OWN verdict, not a re-grade:
             # `correct` was computed on the raw answer string and `predicted`
