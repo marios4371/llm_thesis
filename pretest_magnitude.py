@@ -32,10 +32,16 @@ import sys
 import time
 from typing import Dict, List, Optional
 
-os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
-
 import magnitude_invariance as M
 
+# The pre-test reads a committed manifest, not the run CSV and not HuggingFace.
+# On the runner neither exists: .gitignore excludes results/ so the CSV never
+# reaches a fresh clone, and a Kaggle session has no dataset cache, so forcing
+# HF_DATASETS_OFFLINE there fails every load. The manifest carries the problem
+# TEXT inline (54 rows, 22 KB), which makes the run self-contained -- no
+# download, no cache, no network -- and pins it to exactly the rows the
+# analysis was done on rather than re-deriving them from a seed.
+MANIFEST = 'pretest_data/large_number_rows.json'
 DEFAULT_RUN = ('results_September/results/MAS_SHT/results/'
                'mas_sht_math7b_20260912_094311.csv')
 
@@ -54,8 +60,21 @@ def correct(pred: Optional[float], gold: Optional[float]) -> bool:
     return abs(pred - gold) <= 1e-6 * max(abs(gold), 1.0) or abs(pred - gold) < 1e-3
 
 
-def load_rows(run_csv: str, min_magnitude: float) -> List[Dict]:
-    """The large-number rows of the seed-44 set, with their problem text."""
+def load_rows(manifest: str, run_csv: str,
+              min_magnitude: float) -> List[Dict]:
+    """Prefer the committed manifest; fall back to the CSV + HF cache locally."""
+    if os.path.isfile(manifest):
+        with open(manifest, encoding='utf-8') as fh:
+            man = json.load(fh)
+        rows = [r for r in man['rows'] if r['mx'] >= min_magnitude]
+        print(f"manifest: {manifest}  (source run {man.get('source_run')}, "
+              f"seed {man.get('seed')})")
+        return [dict(pid=r['problem_id'], text=r['text'], gold=r['gold'],
+                     mx=r['mx'], mas_correct=r['mas_correct'],
+                     baseline_correct=r['baseline_correct']) for r in rows]
+
+    print(f"manifest not found at {manifest} -- falling back to {run_csv} + HF cache")
+    os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
     import pandas as pd
     import grounding_probe as G
     texts = G.load_texts()
@@ -77,6 +96,7 @@ def load_rows(run_csv: str, min_magnitude: float) -> List[Dict]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument('--manifest', default=MANIFEST)
     ap.add_argument('--run-csv', default=DEFAULT_RUN)
     ap.add_argument('--min-magnitude', type=float, default=1e5)
     ap.add_argument('--preset', default='qwen_math7b_mixed')
@@ -84,7 +104,7 @@ def main() -> int:
     ap.add_argument('--out', default='pretest_magnitude.json')
     args = ap.parse_args()
 
-    rows = load_rows(args.run_csv, args.min_magnitude)
+    rows = load_rows(args.manifest, args.run_csv, args.min_magnitude)
     if args.limit:
         rows = rows[:args.limit]
     print(f"large-number rows (max >= {args.min_magnitude:g}): {len(rows)}")
