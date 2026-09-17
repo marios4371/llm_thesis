@@ -800,7 +800,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "16.4"
+SOLVER_VERSION = "16.5"
 
 # [v14.8] Reasoning ROUTES for blueprint ensembling. Index 0 is the bare
 # (hint-free) prompt; since v15.2 PRODUCTION uses the v3_inventory route (see
@@ -5534,22 +5534,44 @@ Select the most reliable candidate."""
         # residual slip that carries the information. Deliberately narrow: it
         # changes nothing outside the band, so it cannot touch the 97.7% of
         # rows where the two already agree.
-        # [v16.4] The reference is the BASELINE, not the current answer. The
-        # baseline is a zero-shot derivation that never saw the blueprint, so
-        # agreement with it is evidence; the Programmer's answer was written
-        # FROM the blueprint and agreeing with it is not.
+        # [v16.5] The reference is the Architect's OWN expected_answer, and the
+        # MAS depends on nothing outside itself for it.
+        #
+        # The prompt asks the Architect for "your mental estimate of what the
+        # numeric answer should be" alongside the equations. So the blueprint
+        # carries two computations of the same structure: the model's mental
+        # arithmetic, and the CAS's exact evaluation of the equations it wrote.
+        # That is precisely the comparison this mechanism needs, and unlike the
+        # Programmer -- which EXECUTES the blueprint and therefore reproduces
+        # the CAS value by construction, exactly zero apart on 81% of rows --
+        # mental arithmetic slips on 8-digit operands, which is the whole
+        # finding.
+        #
+        # Near but not equal means the model wrote the right computation and
+        # mis-multiplied it in its head; the CAS value is then the one that has
+        # not been through the model's arithmetic. Far apart means its stated
+        # answer does not match its own equations, so the structure is not
+        # corroborated and nothing is touched.
+        #
+        # Spot-checked by hand on the 54 pre-test rows: 6 activations, the CAS
+        # right on all 6 (561162 vs 561161.7, 1545199 vs 1545200, 13795230 vs
+        # 13795250, 3717349 vs 3717449, -5230809 vs -5230799, 2383661 vs
+        # 2383661.75). An 11% activation rate against 7% for the baseline
+        # reference -- and with no external dependency. NOT yet measured over
+        # the 600 finished rows: expected_answer was never persisted, which is
+        # what the telemetry below fixes.
         near_agreement_fired = False
-        if getattr(self, "enable_near_agreement", True) and siv_result is not None:
-            _bp_val = siv_result.blueprint_answer
-            _ref_val = _extract_last_number(str(base_ans)) if base_ans is not None else None
+        _bp_val = siv_result.blueprint_answer if siv_result is not None else None
+        _expected_raw = blackboard_logic.get("expected_answer")
+        _ref_val = _extract_last_number(str(_expected_raw)) if _expected_raw is not None else None
+        near_agreement_gap = near_agreement.relative_gap(_ref_val, _bp_val)
+        if getattr(self, "enable_near_agreement", True) and _bp_val is not None:
             if near_agreement.structurally_corroborated(_ref_val, _bp_val):
                 logger.info(
-                    "[v16.4] near-agreement vs INDEPENDENT baseline: %s vs "
-                    "blueprint %s (rel %.2e) -- two derivations that never saw "
-                    "each other ran the same computation; taking the exact "
-                    "symbolic value over the slipped one",
-                    _ref_val, _bp_val,
-                    near_agreement.relative_gap(_ref_val, _bp_val))
+                    "[v16.5] near-agreement: the Architect's own estimate %s vs "
+                    "the CAS evaluation of its own equations %s (rel %.2e) -- "
+                    "same computation, mental arithmetic slipped; taking the "
+                    "exact value", _ref_val, _bp_val, near_agreement_gap)
                 mas_answer = _bp_val
                 near_agreement_fired = True
 
@@ -5562,7 +5584,12 @@ Select the most reliable candidate."""
             },
             "mas": {
                 "answer": mas_answer,
-                "near_agreement_fired": near_agreement_fired,   # [v16.3]
+                "near_agreement_fired": near_agreement_fired,      # [v16.3]
+                # [v16.5] persisted so the effect is measurable offline; the
+                # 600 finished rows could not be analysed because the
+                # Architect's own estimate was never recorded.
+                "architect_expected_answer": _expected_raw,
+                "near_agreement_gap": near_agreement_gap,
                 "logic_trace": json.dumps(blackboard_logic, ensure_ascii=False)[:500],
                 "used_baseline_fallback": used_baseline_fallback,
                 "local_hf_fallback": bool(blackboard_logic.get("_local_hf_fallback", False)),  # [v10.2]
