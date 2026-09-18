@@ -237,6 +237,35 @@ def analyse_run(path: str, cmp_paths: List[str], sidecar: Optional[str]) -> int:
               "re-coupled;\n  on the v16 pipeline it was 94% and the oracle "
               "equalled the program alone.")
 
+    # --- counterfactuals that need no GPU ----------------------------------
+    # Two of the three v17 ablations are exactly recoverable from this one
+    # run's own columns, because the candidate values are all recorded. Do not
+    # spend a commit on either.
+    if 'cand_program' in d and 'cand_blueprint' in d:
+        prog = d.cand_program.map(num)
+        unresolved = stage == reconcile.UNRESOLVED
+
+        # MAS_NO_THIRD: every unresolved row keeps the program instead.
+        nt = [p if u else v for p, v, u in zip(prog, d.pred_n, unresolved)]
+        nt_ok = np.array([ok(v, g) for v, g in zip(nt, d.gold_n)])
+        spent = int(unresolved.sum())
+        print(f"\ncounterfactual MAS_NO_THIRD (no GPU needed): "
+              f"{nt_ok.mean():.2%} vs {d.ok.mean():.2%} shipped "
+              f"({100 * (d.ok.mean() - nt_ok.mean()):+.2f}pp for "
+              f"{spent} extra calls)")
+        if spent:
+            print(f"  the third derivation costs {spent / n:.2f} calls/problem "
+                  f"and buys {int(d.ok.sum() - nt_ok.sum()):+d} problems")
+
+        # MAS_NO_OPERAND_REPAIR: rows repaired by inversion would have gone to
+        # the third derivation instead, so this is a BOUND, not an equality.
+        rep = stage.isin([reconcile.REPAIRED_BLUEPRINT, reconcile.REPAIRED_PROGRAM])
+        if rep.any():
+            print(f"  operand repair fired on {int(rep.sum())} rows, "
+                  f"{np.mean([ok(v, g) for v, g in zip(d.pred_n[rep], d.gold_n[rep])]):.1%} "
+                  f"correct (without it these would have escalated, so this is "
+                  f"a bound rather than the exact ablation)")
+
     # --- paired comparisons ------------------------------------------------
     for cp in cmp_paths:
         if not os.path.exists(cp):
