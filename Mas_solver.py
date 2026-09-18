@@ -1,5 +1,101 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
+VERSION 17.0: Two independent derivations, reconciled
+
+CHANGELOG v17.0 (over v16.5) — v16.4 found that SIV audited its own
+reflection, because the Programmer wrote its code FROM the blueprint being
+audited. That is the verification side of a coupling defect. The generation
+side carries the same defect and it is larger. Measured on seed 44
+(mas_sht_math7b_20260912_094311 paired row-for-row with b_pal_20260915,
+grader rel 1e-4):
+
+    Programmer shown the blueprint as a "colleague's draft"   79.3%
+      equals the blueprint's own CAS value on                 141/150 rows
+      oracle{programmer, blueprint}                           79.3%   +0.0
+
+    same model, PAL prompt, blueprint NOT shown               84.0%
+      oracle{program, blueprint}                              88.0%   +4.0
+      both wrong on                                            18/150
+
+The v12.0 instruction to cross-check rather than transcribe did not survive
+contact with a 7B model. So this system has never had two opinions: it had one
+derivation wearing two hats, plus a zero-shot CoT baseline that was itself the
+b2_cot comparator. That is a sufficient explanation for the whole history —
+2880 selector rules and two classifiers failing held-out (v15.8), the
+certificate tracking problem difficulty instead of correctness (v14.6), and
+every arbitration mechanism needing a do-no-harm anchor to stop it doing
+damage. There was nothing to arbitrate between.
+
+- [FIX] THE PROGRAMMER NO LONGER SEES THE BLUEPRINT. `run_programmer_solver`
+  takes `show_blueprint`; under `decoupled_programmer` (default True) the
+  colleague's-draft section is dropped and the Programmer solves the PROBLEM.
+  The `givens = {...}` first-line convention stays, because SIV's
+  givens-matching and the v17 program-side repair both read it.
+  `MAS_COUPLED_PROGRAMMER=1` restores v16 behaviour for the ablation.
+
+- [FIX] NO INTERNAL ZERO-SHOT BASELINE. Stage 1 of solve() was literally the
+  b2_cot baseline, and the do-no-harm invariant returned it verbatim on 44-69%
+  of problems — the technique was reporting its own comparator as its result.
+  It is gone (`enable_internal_baseline`, default False). The result dict
+  still carries `baseline: {answer: None}` so the notebook's `_row_from_mas`,
+  which cannot be updated by `git pull`, keeps working unchanged.
+  `MAS_INTERNAL_BASELINE=1` restores it.
+
+- [NEW] RECONCILIATION (`reconcile.py`). The two derivations are compared, and
+  a disagreement is treated as a diagnostic rather than a vote. SIV Layer 2
+  inverts the equation chain from the OTHER derivation's answer and asks what
+  each given would have had to be; when exactly one given is absent from the
+  problem text and its reconstruction is a number the text contains, the
+  Architect miscopied that operand. Substituting it and re-evaluating either
+  restores agreement — in which case the agreement is earned — or the repair
+  is discarded. Measured offline on the four stored runs, 510 evaluable rows
+  (`reconcile_analysis.py --replay` reproduces it): 23 rows repair, 22 of the
+  23 ship the correct answer, and every one reaches exact agreement. 16 are
+  v14.8-era blueprints, 7 are v15.2, and ZERO are v15.5 or v15.6 — because the
+  v15.0-15.2 forward snap already removes this defect class wherever it can, so
+  the inverse pass is the safety net for exactly the cases forward snapping
+  correctly abstains on. NO ACCURACY IS CLAIMED FOR IT on the current pipeline.
+  The symmetric program-side snap is implemented and corroboration-gated, and
+  is rarer still (4 rows in 510).
+  The identity test against the problem text is 1e-9 relative and not 1e-6,
+  which is load-bearing: at 1e-6 two 9-digit numbers count as equal when they
+  differ by nine units, and that let the repair fudge an operand into whatever
+  forced agreement — rebuilding the v16.4 coupling defect by hand. Caught on
+  gsm-hard_1266 during development; guarded by test_reconcile.py PART 3.
+
+- [NEW] THE THIRD DERIVATION REPLACES SHT. On a structural disagreement one
+  additional program is generated along a different reasoning route, and
+  `reconcile.adjudicate` ships the blueprint ONLY when that independent
+  program confirms it — a cross-language agreement, the same certificate
+  stage 1 issues. Otherwise the program's answer stands, which is the stronger
+  derivation on exactly this population (~60% vs ~20% on the structurally
+  disagreeing rows of the four stored runs). `enable_sht` from the notebook
+  now gates this instead of the old Critic/Judge path, so no notebook cell has
+  to change; the v16 SHT is available as `legacy_sht` / `MAS_LEGACY_SHT=1`.
+
+- [SUBSUMED] The v16.3/v16.5 near-agreement override is now stage 1 of
+  reconciliation, generalised to an independent reference. Its band, SIV's
+  TOLERANCE_REL and reconcile.DEFAULT_TAU are one number, 1e-4, in three
+  places.
+
+- [TELEMETRY] The reconciliation decision reaches the CSV through the existing
+  `sht_*` columns (`sht_triage` = the stage, `sht_final_strategy` = what
+  shipped, `cand_program` / `cand_blueprint` / `cand_third`), so a finished run
+  is analysable with no notebook change. Full per-problem detail, including the
+  program source that no run has ever recorded, goes to an append-only sidecar
+  (`reconcile_trace.jsonl`, `RECONCILE_SIDECAR_PATH`), the same pattern v15.7
+  used for self-consistency samples and for the same reason.
+
+Honest scope, stated here so it is not overclaimed downstream: on seed 44 the
+two-derivation system alone scores 84.00% at 2.0 LLM calls, which ties PAL and
+the CoT baseline at 1 call. Its certificate covers 76.0% of problems at 93.9%
+precision while the uncovered rows run at 52.8%. The accuracy headroom lives
+entirely in the third derivation and is bounded at +4.67pp by the 7 rows where
+the equations are right and the program is wrong. A simulation using CoT as a
+stand-in third derivation reached 86.67% at 2.23 calls; the shipped third
+derivation is a second PROGRAM, so that number does not transfer and the real
+one has to be measured.
+
 VERSION 15.6: Digit-suffix repair rule stopped destroying correct blueprints
 
 CHANGELOG v15.6 (over v15.5) — the first clean, fully-healthy Run 1 under
@@ -800,7 +896,41 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "16.5"
+SOLVER_VERSION = "17.0"
+
+# [v17.0] Stamp the ABLATION CONFIGURATION into the version string, resolved at
+# import time from the environment.
+#
+# On 2026-08-04 a finished 150-problem run was labelled v14.2 and was actually
+# v14.0 code, which cost ~5 GPU-hours and was only caught because an expected
+# column was missing. v17 makes that failure mode much easier to hit, because
+# the ablations are now env vars that leave every column identical and change
+# only what the numbers MEAN. A CSV that says "17.0" must therefore mean the
+# default configuration and nothing else.
+#
+# The env var has to be set before this module is imported, which on Kaggle
+# means a cell above the one that imports it.
+_ABLATION_TAGS = [
+    ("MAS_COUPLED_PROGRAMMER", "coupled"),      # the Programmer reads the blueprint
+    ("MAS_INTERNAL_BASELINE", "intbase"),       # the b2_cot anchor is back inside
+    ("MAS_LEGACY_SHT", "legacysht"),            # v16 Critic/Judge arbitration
+    ("MAS_NO_THIRD", "nothird"),                # disagreements keep the program
+    ("MAS_NO_RECONCILE", "norecon"),            # no reconciliation at all
+    ("MAS_NO_OPERAND_REPAIR", "norepair"),      # agreement only, no inversion
+    ("MAS_LLM_BLUEPRINT_REPAIR", "llmrepair"),  # the v13.0 re-derivation loop
+]
+_active_ablations = [
+    tag for var, tag in _ABLATION_TAGS
+    if os.environ.get(var, "").strip() in ("1", "true", "True")
+]
+if _active_ablations:
+    SOLVER_VERSION = SOLVER_VERSION + "-" + "-".join(_active_ablations)
+    # print, not logger: this runs at import time, before the module's logger
+    # exists and before any notebook has configured logging. It must be visible
+    # in the Kaggle output no matter what the log level ends up being.
+    print(f"[v17.0] ABLATION RUN — solver_version stamped as {SOLVER_VERSION!r}. "
+          f"Every row of the resulting CSV carries this, so it cannot be "
+          f"mistaken for a default run.", flush=True)
 
 # [v14.8] Reasoning ROUTES for blueprint ensembling. Index 0 is the bare
 # (hint-free) prompt; since v15.2 PRODUCTION uses the v3_inventory route (see
@@ -840,8 +970,63 @@ def _blueprint_strategy_hint(name: str) -> str:
         if nm == name:
             return hint
     return ""
+
+
+# ---------------------------------------------------------------------------
+# [v17.0] Reconciliation sidecar
+# ---------------------------------------------------------------------------
+# Written from this .py file, never from a notebook cell, for the reason
+# recorded in v14.4: `git pull` refreshes the modules and not the cells, so
+# anything that must survive a run has to be written from here. Same pattern
+# and same join key as the v15.7 self-consistency sidecar (sha1 of the problem
+# text), so the two analyse identically.
+#
+# It exists because the fields that matter most for v17 have no column in the
+# notebook's fixed schema -- above all the PROGRAM SOURCE, which no run in this
+# project has ever recorded, and without which the program-side operand repair
+# cannot be replayed or audited offline.
+_RECONCILE_SIDECAR_FALLBACKS = ("/kaggle/working/MAS_SHT/results", ".")
+
+
+def _reconcile_sidecar_path() -> str:
+    env = os.environ.get("RECONCILE_SIDECAR_PATH")
+    if env:
+        return env
+    for d in _RECONCILE_SIDECAR_FALLBACKS:
+        if os.path.isdir(d):
+            return os.path.join(d, "reconcile_trace.jsonl")
+    return "reconcile_trace.jsonl"
+
+
+def _write_reconcile_sidecar(problem: str, expected: str, rec, llm_calls: int,
+                             blueprint: dict, programmer_response,
+                             third_response=None) -> None:
+    """Append one reconciliation record. Never raises: losing a trace line must
+    not kill a ten-hour run."""
+    try:
+        record = {
+            "problem_sha1": hashlib.sha1(problem.encode("utf-8")).hexdigest(),
+            "expected": str(expected)[:120],
+            "llm_calls": llm_calls,
+            "reconcile": rec.as_dict(),
+            "blueprint_givens": blueprint.get("givens", {}),
+            "blueprint_equations": blueprint.get("equations", []),
+            "program_answer": str(getattr(programmer_response, "answer", ""))[:120],
+            "program_code": ((programmer_response.quality_metrics or {}).get("code")
+                             if getattr(programmer_response, "quality_metrics", None)
+                             else None),
+            "third_answer": (str(third_response.answer)[:120]
+                             if third_response is not None else None),
+            "third_code": ((third_response.quality_metrics or {}).get("code")
+                           if third_response is not None else None),
+        }
+        with open(_reconcile_sidecar_path(), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    except Exception as exc:                                   # pragma: no cover
+        logger.warning("reconcile sidecar write failed (continuing): %s", exc)
 import json
 import near_agreement   # [v16.3] near-agreement structural fingerprint
+import reconcile        # [v17.0] reconciliation of two independent derivations
 import time
 import random
 import hashlib
@@ -3241,6 +3426,43 @@ class QualityEnhancedMultiAgentSolver:
         # for the measured argument on each side.
         self.do_no_harm_anchor = "baseline"
 
+        # ---------------- [v17.0] Two independent derivations ----------------
+        # Each flag below turns ONE v17 change off, so every step of the
+        # argument can be ablated from the same code path. Defaults are v17.
+
+        # The Programmer no longer reads the blueprint. With it visible the
+        # two "independent" derivations agreed exactly on 141/150 rows and
+        # oracle{programmer, blueprint} equalled the Programmer alone.
+        self.decoupled_programmer = True
+
+        # Stage 1 of solve() was the b2_cot baseline, i.e. the comparator the
+        # thesis measures against, returned verbatim as the system's own
+        # answer on most problems. v17 does not call it at all.
+        self.enable_internal_baseline = False
+
+        # Compare the two derivations, and on a disagreement try to attribute
+        # it to a single miscopied operand (reconcile.py).
+        self.enable_reconcile = True
+        self.enable_operand_repair = True
+
+        # One extra program along a different route when the two derivations
+        # disagree structurally. Bound to the notebook's `enable_sht`, which
+        # is why the old SHT needs its own flag below.
+        self.enable_third_derivation = True
+        self.third_derivation_route = "v2_backward"
+
+        # The v13.0 LLM blueprint-repair loop. Off: it conditions the blueprint
+        # on the program's answer, so any agreement that follows is
+        # manufactured rather than observed, and it cost 2 calls for a measured
+        # 15.4% fix rate.
+        self.enable_llm_blueprint_repair = False
+
+        # The v16 Critic/Judge SHT path. Off in v17: its alternatives are
+        # seeded from the primary blueprint and so are correlated with it by
+        # construction, and a 7B judge was measured to arbitrate worse than it
+        # solves (v12.0, v13.0). Kept runnable for the ablation table.
+        self.legacy_sht = False
+
         # [v7.3] Log the configuration
         self._log_model_config()
     
@@ -3694,6 +3916,91 @@ Output ONLY this JSON, nothing else:
     # [v13.0] Blueprint repair (one attempt, gated on execution-audit failure)
     # -------------------------------------------------------------------------
 
+    # -------------------------------------------------------------------------
+    # [v17.0] Reconciliation of the two independent derivations
+    # -------------------------------------------------------------------------
+
+    def _reconcile_and_decide(self, problem: str, blueprint: dict,
+                              programmer_response: "AgentResponse",
+                              siv_result, llm_calls: int):
+        """Compare the program against the equations and decide what ships.
+
+        Returns (answer, used_baseline_fallback, reconciliation, third, calls).
+
+        The ordering of the branches IS the argument of this version:
+        agreement certifies, a single miscopied operand is repaired and must
+        re-earn the agreement, and only a genuine structural disagreement is
+        allowed to cost another LLM call.
+        """
+        program_val = _extract_last_number(str(programmer_response.answer))
+        blueprint_val = (siv_result.blueprint_answer
+                         if siv_result is not None else None)
+        code = (programmer_response.quality_metrics or {}).get("code") or ""
+
+        def _rerun(src: str):
+            ok, out = PythonExecutor.execute(src)
+            return _extract_last_number(out) if ok else None
+
+        rec = reconcile.reconcile(
+            blueprint, blueprint_val, program_val, problem,
+            program_code=code, rerun_program=_rerun,
+            enable_repair=getattr(self, "enable_operand_repair", True),
+        )
+
+        # A repair that earned its agreement becomes the blueprint of record,
+        # so the CSV and the sidecar show the equations that actually produced
+        # the answer rather than the ones that failed.
+        if rec.blueprint_after is not None:
+            blueprint.update(rec.blueprint_after)
+            blueprint["_blueprint_repaired"] = True
+
+        rec.final_strategy = rec.stage
+
+        # --- a genuine structural disagreement: one more independent program --
+        if rec.stage == reconcile.UNRESOLVED:
+            third = None
+            third_val = None
+            if getattr(self, "enable_third_derivation", True):
+                route = getattr(self, "third_derivation_route", "v2_backward")
+                logger.info(
+                    "[v17.0] derivations disagree (program=%r, equations=%r); "
+                    "generating a third along route %s",
+                    program_val, blueprint_val, route)
+                third = self.run_programmer_solver(
+                    problem, blueprint, show_blueprint=False,
+                    strategy_hint=_blueprint_strategy_hint(route),
+                    agent_label="Programmer (third derivation)",
+                )
+                llm_calls += 1
+                third_val = _extract_last_number(str(third.answer))
+
+            answer, strategy, certified = reconcile.adjudicate(
+                program_val, blueprint_val, third_val)
+            rec.third_value = third_val
+            rec.final_strategy = strategy
+            rec.certified = certified
+            rec.answer = answer
+            logger.info("[v17.0] adjudicated as %s (certified=%s) -> %r",
+                        strategy, certified, answer)
+            return (("unknown" if answer is None else str(answer)),
+                    False, rec, third, llm_calls)
+
+        if rec.answer is None:
+            return "unknown", False, rec, None, llm_calls
+        return str(rec.answer), False, rec, None, llm_calls
+
+    def _llm_blueprint_repair_allowed(self) -> bool:
+        """[v17.0] The v13.0 LLM re-derivation loop, off unless asked for.
+
+        It has its OWN flag rather than riding on `decoupled_programmer`,
+        because otherwise `MAS_COUPLED_PROGRAMMER=1` would silently change two
+        things at once — whether the Programmer reads the blueprint AND whether
+        a 2-call repair loop fires on every audit failure — and the ablation
+        that is supposed to isolate the coupling would measure their sum.
+        Enable deliberately with `MAS_LLM_BLUEPRINT_REPAIR=1`.
+        """
+        return bool(getattr(self, "enable_llm_blueprint_repair", False))
+
     def _attempt_blueprint_repair(self, problem: str, blueprint: dict,
                                   programmer_response: "AgentResponse",
                                   siv_result: "SIVResult"
@@ -3788,15 +4095,31 @@ Output ONLY this JSON, nothing else:
     # Programmer Agent (Engineer)
     # -------------------------------------------------------------------------
 
-    def run_programmer_solver(self, problem: str, blueprint: dict, max_attempts: int = 3) -> AgentResponse:
-        
+    def run_programmer_solver(self, problem: str, blueprint: dict, max_attempts: int = 3,
+                              show_blueprint: bool = True, strategy_hint: str = "",
+                              agent_label: Optional[str] = None) -> AgentResponse:
+        """[v17.0] `show_blueprint=False` makes this an INDEPENDENT derivation.
+
+        The blueprint is still accepted as an argument (SIV's givens-matching
+        and the callers' telemetry both want it in scope) but none of it
+        reaches the prompt, so nothing the Architect wrote can steer the
+        program. That is the whole point: with the draft visible, this call
+        reproduced the blueprint's own CAS value on 141 of 150 problems and
+        contributed nothing the blueprint did not already say.
+
+        `strategy_hint` varies the reasoning route for the third derivation.
+        """
+        blueprint = blueprint or {}
         givens = blueprint.get("givens", {})
         equations = blueprint.get("equations", [])
         solution_steps = blueprint.get("solution_steps", [])
         unknown = blueprint.get("unknown", "the answer")
-        
+
         # [FIX v7.1] If blueprint has no equations (e.g., from error), fail fast
-        if not equations and not givens:
+        # [v17.0] ...but only when the blueprint is actually being USED. An
+        # independent Programmer does not need one and must still run: a dead
+        # Architect should cost this system one derivation, not both.
+        if show_blueprint and not equations and not givens:
             logger.warning("Programmer received empty blueprint (likely from API error)")
             return AgentResponse(
                 agent="Programmer (empty blueprint)",
@@ -3806,9 +4129,9 @@ Output ONLY this JSON, nothing else:
                 reasoning_trace="Blueprint was empty — likely API error",
                 quality_metrics={"error": "empty_blueprint"}
             )
-        
-        blueprint_text = _format_blueprint_for_programmer(blueprint)
-        
+
+        blueprint_text = _format_blueprint_for_programmer(blueprint) if show_blueprint else ""
+
         # [v12.0] PAL-style prompt. The Programmer solves the PROBLEM directly
         # (single-call PAL scored 88.0% in the n=150 pilot vs 74.0% for the
         # blueprint-transcribing pipeline). The Architect blueprint is shown as
@@ -3844,19 +4167,31 @@ OUTPUT FORMAT:
 - After code, write: ANSWER: [[<number>]]
 """
 
+        # [v17.0] The draft section is what coupled the two derivations. When
+        # it is dropped the same model, same weights, same temperature scores
+        # 84.0% instead of 79.3% on seed 44, and its errors stop coinciding
+        # with the blueprint's (both wrong on 18 rows instead of 31).
+        if show_blueprint:
+            draft_section = (
+                "\nCOLLEAGUE'S DRAFT ANALYSIS (may contain errors — cross-check, "
+                f"do not transcribe):\n{blueprint_text}\n"
+            )
+        else:
+            draft_section = ""
+
+        hint_section = f"\nAPPROACH: {strategy_hint}\n" if strategy_hint else ""
+
         user_msg = f"""PROBLEM:
 {problem}
-
-COLLEAGUE'S DRAFT ANALYSIS (may contain errors — cross-check, do not transcribe):
-{blueprint_text}
-
+{draft_section}{hint_section}
 Write a Python program that solves the PROBLEM and prints the final numeric answer.
 """
-        
+
         repair_feedback = ""
         best_answer = None
         last_code = None
-        
+        _all_calls_errored = True     # [v17.0] see the liveness guard below
+
         for attempt in range(max_attempts):
             msgs = [
                 {"role": "system", "content": sys_msg},
@@ -3875,6 +4210,8 @@ Write a Python program that solves the PROBLEM and prints the final numeric answ
                 repair_feedback = f"\n\n[Attempt {attempt+1}] LLM call failed. Retrying..."
                 continue
             
+            _all_calls_errored = False   # [v17.0] the model answered something
+
             # Extract code
             code = _extract_code_from_response(str(raw_response))
             if not code:
@@ -3906,9 +4243,14 @@ Write a Python program that solves the PROBLEM and prints the final numeric answ
                     if not ok_gate:
                         gate_log = f"WARNING: {gate_log}"
             
-            # Success!
+            # Success! [v17.0] A live Programmer clears the liveness streak;
+            # this reset must sit on the success path, which returns from
+            # inside the loop and never reaches the guard below.
+            self._prog_dead_streak = 0
             return AgentResponse(
-                agent="Programmer (optimized)",
+                agent=(agent_label or
+                       ("Programmer (optimized)" if show_blueprint
+                        else "Programmer (independent)")),
                 answer=best_answer,
                 parsed=best_answer,
                 confidence=1.0,
@@ -3916,14 +4258,55 @@ Write a Python program that solves the PROBLEM and prints the final numeric answ
                 quality_metrics={
                     "execution_output": output,
                     "metamorphic_gate": gate_log,
-                    "attempts": attempt + 1
+                    "attempts": attempt + 1,
+                    # [v17.0] The FULL source, untruncated. reasoning_trace is
+                    # capped at 500 chars for the CSV, but the program-side
+                    # operand snap has to re-execute this, and no run in this
+                    # project has ever recorded what the Programmer actually
+                    # wrote — which is why the symmetric repair could not be
+                    # measured offline before now.
+                    "code": code,
                 }
             )
         
+        # [v17.0] PROGRAMMER LIVENESS. v14.3 put this guard on the
+        # Mathematician because an empty blueprint made a run silently
+        # equivalent to its baseline. In v17 the Programmer carries the same
+        # weight and more: it is the independent derivation AND the value that
+        # ships whenever nothing is certified, so a dead Programmer makes every
+        # number in the run meaningless, and there is no baseline left to mask
+        # it. The streak resets on any call that returns content, so a model
+        # that is merely bad at a problem never trips it -- only one that is
+        # not answering at all.
+        if _all_calls_errored:
+            self._prog_dead_streak = getattr(self, "_prog_dead_streak", 0) + 1
+            logger.error(
+                f"Programmer call FAILED "
+                f"({self._prog_dead_streak}/{DEAD_AGENT_THRESHOLD} consecutive)"
+            )
+            if self._prog_dead_streak >= DEAD_AGENT_THRESHOLD:
+                raise DeadAgentError(
+                    f"Programmer returned an error on {self._prog_dead_streak} "
+                    "consecutive problems. In v17 it is the primary derivation "
+                    "and the default answer, so this run would produce nothing "
+                    "usable while still costing full GPU-hours. Aborting.\n"
+                    "Most likely cause: the model failed to load or was "
+                    "OOM-killed — look above for 'OutOfMemoryError' or "
+                    "'load FAILED'."
+                )
+        else:
+            self._prog_dead_streak = 0
+
         # Failed after all attempts — try SymPy symbolic solver as fallback
+        # [v17.0] NOT when decoupled. This fallback answers by executing the
+        # blueprint's own equations, so taking it would silently turn the
+        # independent derivation back into a copy of the other one — exactly
+        # the coupling this version exists to remove, reappearing on the
+        # failure path. A Programmer that fails now simply yields no number,
+        # and reconciliation ships the blueprint uncertified.
         sympy_answer = None
         sympy_trace = ""
-        if SYMPY_AVAILABLE and blueprint.get("equations"):
+        if SYMPY_AVAILABLE and show_blueprint and blueprint.get("equations"):
             logger.info("Programmer failed. Attempting SymPy symbolic solver fallback...")
             sym_ok, sym_ans, sym_trace = SymbolicSolver.solve_from_blueprint(blueprint)
             sympy_trace = sym_trace
@@ -5151,7 +5534,63 @@ Select the most reliable candidate."""
     # -------------------------------------------------------------------------
 
     def solve(self, problem: str, expected: str) -> Dict[str, Any]:
-        # Step 1: Baseline
+        # [v17.0] LLM calls actually spent, counted as they happen rather than
+        # assumed. Every previous version reported a constant 3 plus whatever
+        # SHT added, which was wrong whenever a stage was skipped.
+        llm_calls = 0
+
+        # Step 1: Baseline — [v17.0] NOT RUN BY DEFAULT.
+        #
+        # This block is the b2_cot baseline: same contract, same prompt shape,
+        # same model. It was introduced as a safety anchor and became the
+        # system's answer on 44-69% of problems, which means the technique was
+        # reporting its own comparator as its result. It also cost a call on
+        # every problem. v17 derives its answers from its own two derivations
+        # and compares against b2_cot from the outside, where a baseline
+        # belongs.
+        base_ans, base_raw = None, None
+        if not self.enable_internal_baseline:
+            logger.debug("[v17.0] internal zero-shot baseline disabled")
+        else:
+            base_ans, base_raw = self._run_internal_baseline(problem)
+            llm_calls += 1
+
+        # Step 2: Architect
+        # [v14.8] blueprint_samples > 1 derives the blueprint along several
+        # reasoning routes and keeps the value the most routes agree on; at 1
+        # (the default) this is byte-identical to the single-prompt path.
+        _bp_ensemble = None
+        if getattr(self, "blueprint_samples", 1) > 1:
+            blackboard_logic, _bp_ensemble = self.run_mathematician_ensemble(
+                problem, self.blueprint_samples
+            )
+            llm_calls += max(1, int(getattr(self, "blueprint_samples", 1)))
+        else:
+            # [v15.2] Production route defaults to v3_inventory (see
+            # blueprint_strategy in __init__); "" falls back to the bare prompt.
+            blackboard_logic = self.run_mathematician_analysis(
+                problem,
+                strategy_hint=_blueprint_strategy_hint(
+                    getattr(self, "blueprint_strategy", "v3_inventory")),
+            )
+            llm_calls += 1
+
+        # Step 3: Engineer — [v17.0] an INDEPENDENT derivation by default.
+        # `decoupled_programmer` drops the blueprint from the prompt entirely;
+        # see run_programmer_solver for the measured reason.
+        _show_bp = not self.decoupled_programmer
+        programmer_response = self.run_programmer_solver(
+            problem, blackboard_logic, show_blueprint=_show_bp)
+        llm_calls += 1
+
+        return self._solve_continue(
+            problem, expected, base_ans, base_raw, blackboard_logic,
+            programmer_response, _bp_ensemble, llm_calls)
+
+    def _run_internal_baseline(self, problem: str) -> Tuple[Any, Any]:
+        """The v10.4 zero-shot CoT anchor. [v17.0] Kept intact but off by
+        default: it is the b2_cot comparator, and a system may not quote its
+        own comparator as its answer."""
         # [v10.4] Baseline prompt redesign:
         #   - System role spells out the CoT contract so the model doesn't
         #     waste output budget restating it.
@@ -5200,27 +5639,14 @@ Select the most reliable candidate."""
                 f"{sum(c.isdigit() for c in _braw)} digits, "
                 f"{_braw.count('!')} '!'. Head: {_braw[:300]!r}"
             )
+        return base_ans, base_raw
 
-        # Step 2: Architect
-        # [v14.8] blueprint_samples > 1 derives the blueprint along several
-        # reasoning routes and keeps the value the most routes agree on; at 1
-        # (the default) this is byte-identical to the single-prompt path.
-        _bp_ensemble = None
-        if getattr(self, "blueprint_samples", 1) > 1:
-            blackboard_logic, _bp_ensemble = self.run_mathematician_ensemble(
-                problem, self.blueprint_samples
-            )
-        else:
-            # [v15.2] Production route defaults to v3_inventory (see
-            # blueprint_strategy in __init__); "" falls back to the bare prompt.
-            blackboard_logic = self.run_mathematician_analysis(
-                problem,
-                strategy_hint=_blueprint_strategy_hint(
-                    getattr(self, "blueprint_strategy", "v3_inventory")),
-            )
-
-        # Step 3: Engineer (with SymPy fallback built-in)
-        programmer_response = self.run_programmer_solver(problem, blackboard_logic)
+    def _solve_continue(self, problem: str, expected: str,
+                        base_ans, base_raw, blackboard_logic: dict,
+                        programmer_response: "AgentResponse",
+                        _bp_ensemble, llm_calls: int) -> Dict[str, Any]:
+        """Everything after the two derivations exist: verification,
+        reconciliation and the final answer."""
 
         # Step 3b: Process-Level Verification + SIV
         verification_passed = True
@@ -5321,12 +5747,25 @@ Select the most reliable candidate."""
                     # Replaces blackboard_logic/programmer_response/siv_result
                     # in place so the confidence gate and SHT below see the
                     # repaired attempt, not the one that just failed audit.
-                    blackboard_logic, programmer_response, siv_result, blueprint_repaired = (
-                        self._attempt_blueprint_repair(
-                            problem, blackboard_logic, programmer_response, siv_result
+                    #
+                    # [v17.0] OFF when the derivations are decoupled, and the
+                    # reason is independence rather than cost. This loop hands
+                    # the Architect SIV's error report — which is computed
+                    # against the PROGRAM's answer — and asks it to re-derive.
+                    # The repaired blueprint is then conditioned on the
+                    # program, so any subsequent agreement between the two is
+                    # manufactured rather than observed, and the certificate
+                    # stops meaning anything. It also spent 2 LLM calls for a
+                    # measured 15.4% fix rate (v13.0). Reconciliation replaces
+                    # it with a deterministic, evidence-preserving repair.
+                    if self._llm_blueprint_repair_allowed():
+                        blackboard_logic, programmer_response, siv_result, blueprint_repaired = (
+                            self._attempt_blueprint_repair(
+                                problem, blackboard_logic, programmer_response, siv_result
+                            )
                         )
-                    )
                     if blueprint_repaired:
+                        llm_calls += 2   # [v17.0] Mathematician + Programmer
                         answer_num = _extract_last_number(programmer_response.answer)
                         if siv_result is not None and siv_result.execution_audit_passed and siv_result.verified:
                             logger.info(
@@ -5425,9 +5864,23 @@ Select the most reliable candidate."""
                     f"{type(_cov_err).__name__}: {str(_cov_err)[:120]}"
                 )
 
-        # Step 4: Structured Hypothesis Testing (with SIV integration)
+        # Step 4 [v17.0]: RECONCILIATION, in place of hypothesis testing.
+        #
+        # The two derivations now exist independently, so the question is no
+        # longer "which candidate wins a vote" -- that question was measured
+        # to be unanswerable from this pipeline's telemetry (v15.8: 2880
+        # rules and two classifiers, all negative held-out) precisely because
+        # the candidates were not independent. It is "what do these two
+        # derivations, taken together, licence us to say".
         hypothesis_log = None
-        if self.enable_hypothesis_testing:
+        reconciliation = None
+        third_response = None
+        if self.enable_reconcile and not self.legacy_sht:
+            (mas_answer, used_baseline_fallback, reconciliation,
+             third_response, llm_calls) = self._reconcile_and_decide(
+                problem, blackboard_logic, programmer_response,
+                siv_result, llm_calls)
+        elif self.enable_hypothesis_testing:
             hypothesis_log = self._structured_hypothesis_testing(
                 problem, expected, blackboard_logic,
                 programmer_response, base_ans,
@@ -5502,7 +5955,11 @@ Select the most reliable candidate."""
             used_baseline_fallback = False
 
         # Step 5: Fallback
-        if self.enable_baseline_fallback_on_mas_failure:
+        # [v17.0] `base_ans is not None` is load-bearing now that the internal
+        # baseline does not run: str(None) is "none", which is not "unknown",
+        # so without this guard a failed MAS answer would be replaced by the
+        # literal None.
+        if self.enable_baseline_fallback_on_mas_failure and base_ans is not None:
             if str(mas_answer).strip().lower() == "unknown" and str(base_ans).strip().lower() != "unknown":
                 mas_answer = base_ans
                 used_baseline_fallback = True
@@ -5560,12 +6017,22 @@ Select the most reliable candidate."""
         # reference -- and with no external dependency. NOT yet measured over
         # the 600 finished rows: expected_answer was never persisted, which is
         # what the telemetry below fixes.
+        #
+        # [v17.0] SUBSUMED. Stage 1 of reconciliation is this same rule with a
+        # better reference: the band, the direction and the justification are
+        # identical, but the comparison is now against a derivation produced
+        # in another language instead of against the Architect's own mental
+        # estimate. Running both would apply the rule twice, so it only fires
+        # when reconciliation did not run. The telemetry below is still
+        # computed either way, because `architect_expected_answer` is worth
+        # recording whatever decides the answer.
         near_agreement_fired = False
         _bp_val = siv_result.blueprint_answer if siv_result is not None else None
         _expected_raw = blackboard_logic.get("expected_answer")
         _ref_val = _extract_last_number(str(_expected_raw)) if _expected_raw is not None else None
         near_agreement_gap = near_agreement.relative_gap(_ref_val, _bp_val)
-        if getattr(self, "enable_near_agreement", True) and _bp_val is not None:
+        if (getattr(self, "enable_near_agreement", True) and _bp_val is not None
+                and reconciliation is None):
             if near_agreement.structurally_corroborated(_ref_val, _bp_val):
                 logger.info(
                     "[v16.5] near-agreement: the Architect's own estimate %s vs "
@@ -5584,6 +6051,17 @@ Select the most reliable candidate."""
             },
             "mas": {
                 "answer": mas_answer,
+                # [v17.0] What reconciliation concluded, and how much it cost.
+                "reconcile_stage": (reconciliation.stage if reconciliation else ""),
+                "reconcile_strategy": (reconciliation.final_strategy if reconciliation else ""),
+                "certified": bool(reconciliation.certified) if reconciliation else False,
+                "reconcile_gap": (reconciliation.gap if reconciliation else None),
+                "reconcile_repair": (reconciliation.repair.as_dict()
+                                     if reconciliation and reconciliation.repair else None),
+                "third_answer": (reconciliation.third_value if reconciliation else None),
+                "llm_calls": llm_calls,
+                "decoupled_programmer": bool(self.decoupled_programmer),
+                "internal_baseline": bool(self.enable_internal_baseline),
                 "near_agreement_fired": near_agreement_fired,      # [v16.3]
                 # [v16.5] persisted so the effect is measurable offline; the
                 # 600 finished rows could not be analysed because the
@@ -5649,6 +6127,64 @@ Select the most reliable candidate."""
         if _bp_ensemble is not None:
             result["blueprint_ensemble"] = _bp_ensemble
 
+        # [v17.0] Reconciliation telemetry rides the EXISTING `sht_*` columns.
+        # The notebook's `_row_from_mas` cannot be updated by `git pull` (it
+        # cost this project ~13 GPU-hours to learn that), so a v17 run has to
+        # be analysable through the schema v16 already writes. The mapping is
+        # deliberate, not a hack: `sht_triage` carried the routing decision,
+        # `sht_final_strategy` carried what won, `api_calls_used` fed
+        # `num_llm_calls`, and each candidate became a `cand_<id>` column.
+        # The candidate ids are NEW (`program`, `blueprint`, `third`) because
+        # the things they name are new -- v16's `cand_primary` was a Programmer
+        # that had read the blueprint, and silently reusing the name would
+        # invite a comparison between two different quantities.
+        if reconciliation is not None:
+            _prog_val = _extract_last_number(str(programmer_response.answer))
+            _bp_cand = siv_result.blueprint_answer if siv_result is not None else None
+            _cands = [
+                {"id": "program", "strategy": "independent_program",
+                 "answer": _prog_val, "success": _prog_val is not None},
+                {"id": "blueprint", "strategy": "architect_equations_cas",
+                 "answer": _bp_cand, "success": _bp_cand is not None},
+            ]
+            if reconciliation.third_value is not None or third_response is not None:
+                _cands.append({
+                    "id": "third", "strategy": getattr(self, "third_derivation_route", ""),
+                    "answer": reconciliation.third_value,
+                    "success": reconciliation.third_value is not None,
+                })
+            result["sht"] = {
+                "triggered": reconciliation.stage == reconcile.UNRESOLVED,
+                "triage_result": reconciliation.stage,
+                "final_strategy": reconciliation.final_strategy or reconciliation.stage,
+                "num_candidates": len(_cands),
+                "api_calls_used": llm_calls,
+                "judge_reasoning": reconciliation.detail[:300],
+                "candidates": _cands,
+            }
+            result["reconcile"] = reconciliation.as_dict()
+            _write_reconcile_sidecar(
+                problem, expected, reconciliation, llm_calls,
+                blackboard_logic, programmer_response, third_response)
+
+        elif hypothesis_log is None:
+            # [v17.0] MAS_NO_RECONCILE: neither path ran, so nothing would
+            # populate `sht` and the notebook's `num_llm_calls` would fall back
+            # to its hardcoded 3. Report what was actually spent.
+            result["sht"] = {
+                "triggered": False,
+                "triage_result": "no_reconcile",
+                "final_strategy": "program_only",
+                "num_candidates": 1,
+                "api_calls_used": llm_calls,
+                "judge_reasoning": "",
+                "candidates": [{
+                    "id": "program", "strategy": "independent_program",
+                    "answer": _extract_last_number(str(programmer_response.answer)),
+                    "success": True,
+                }],
+            }
+
         if hypothesis_log:
             result["sht"] = {
                 "triggered": hypothesis_log.hypothesis_testing_triggered,
@@ -5685,7 +6221,13 @@ class QualityAwarePipeline:
                  evaluation_mode: bool = False,
                  dataset_seed: Optional[int] = None,
                  math_reasoning_first: bool = True,
-                 do_no_harm_anchor: str = "baseline"):
+                 do_no_harm_anchor: str = "baseline",
+                 decoupled_programmer: bool = True,      # [v17.0]
+                 internal_baseline: bool = False,        # [v17.0]
+                 enable_reconcile: bool = True,          # [v17.0]
+                 enable_operand_repair: bool = True,     # [v17.0]
+                 legacy_sht: bool = False,               # [v17.0]
+                 third_derivation_route: str = "v2_backward"):
         """
         [UPDATED v10.4] Supports heterogeneous model configuration + ablation flags
         + evaluation_mode safety net.
@@ -5798,6 +6340,66 @@ class QualityAwarePipeline:
         self.solver.enable_siv = enable_siv
         self.solver.enable_hypothesis_testing = enable_sht
         self.solver.enable_compute_routing = enable_routing  # [v14.6]
+
+        # ------------------------- [v17.0] --------------------------------
+        # `enable_sht` now gates the THIRD DERIVATION rather than the Critic
+        # and Judge. The notebook passes it as True for `mas_full` and it can
+        # never be changed by a `git pull`, so the escalation budget keeps its
+        # existing switch while what the budget buys has changed underneath.
+        # The v16 path is still reachable through `legacy_sht`.
+        self.solver.decoupled_programmer = decoupled_programmer
+        self.solver.enable_internal_baseline = internal_baseline
+        self.solver.enable_reconcile = enable_reconcile
+        self.solver.enable_operand_repair = enable_operand_repair
+        self.solver.legacy_sht = legacy_sht
+        self.solver.enable_third_derivation = bool(enable_sht)
+        self.solver.third_derivation_route = third_derivation_route
+
+        # Env overrides, so every v17 ablation runs without editing a cell.
+        def _envflag(name: str) -> bool:
+            return os.environ.get(name, "").strip() in ("1", "true", "True")
+
+        if _envflag("MAS_COUPLED_PROGRAMMER"):
+            self.solver.decoupled_programmer = False
+            logger.warning("[v17.0] MAS_COUPLED_PROGRAMMER — the Programmer sees "
+                           "the blueprint again (v16 behaviour)")
+        if _envflag("MAS_INTERNAL_BASELINE"):
+            self.solver.enable_internal_baseline = True
+            logger.warning("[v17.0] MAS_INTERNAL_BASELINE — the zero-shot CoT "
+                           "anchor is back inside the system")
+        if _envflag("MAS_LEGACY_SHT"):
+            self.solver.legacy_sht = True
+            logger.warning("[v17.0] MAS_LEGACY_SHT — v16 Critic/Judge path")
+        if _envflag("MAS_NO_RECONCILE"):
+            self.solver.enable_reconcile = False
+            logger.warning("[v17.0] MAS_NO_RECONCILE — no reconciliation")
+        if _envflag("MAS_NO_OPERAND_REPAIR"):
+            self.solver.enable_operand_repair = False
+            logger.warning("[v17.0] MAS_NO_OPERAND_REPAIR — agreement only")
+        if _envflag("MAS_NO_THIRD"):
+            self.solver.enable_third_derivation = False
+            logger.warning("[v17.0] MAS_NO_THIRD — disagreements keep the program")
+        if _envflag("MAS_LLM_BLUEPRINT_REPAIR"):
+            self.solver.enable_llm_blueprint_repair = True
+            logger.warning("[v17.0] MAS_LLM_BLUEPRINT_REPAIR — the v13.0 "
+                           "re-derivation loop is back (+2 calls on audit "
+                           "failure; it conditions the blueprint on the "
+                           "program, so the certificate is no longer clean)")
+        _route = os.environ.get("MAS_THIRD_ROUTE", "").strip()
+        if _route:
+            self.solver.third_derivation_route = _route
+            logger.warning(f"[v17.0] MAS_THIRD_ROUTE={_route}")
+
+        logger.info(
+            "[v17.0] derivations: architect_equations + %s program%s | "
+            "reconcile=%s repair=%s third=%s(%s) internal_baseline=%s",
+            "coupled" if not self.solver.decoupled_programmer else "independent",
+            "" if not self.solver.legacy_sht else " | LEGACY SHT",
+            self.solver.enable_reconcile, self.solver.enable_operand_repair,
+            self.solver.enable_third_derivation,
+            self.solver.third_derivation_route,
+            self.solver.enable_internal_baseline,
+        )
         self.solver.blueprint_samples = max(1, int(blueprint_samples))  # [v14.8]
         # [v15.2] Production blueprint route (see solver.blueprint_strategy).
         # MAS_BLUEPRINT_STRATEGY overrides without a notebook edit — same

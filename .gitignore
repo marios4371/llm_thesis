@@ -94,3 +94,9 @@ logs/
 # paper_mas_sht.tex      LaTeX paper
 # *.md                   documentation
 # MAS_SHT_v10.2_Documentation.docx  (optional, large)
+
+# Run sidecars — per-problem traces written from the .py files so they survive
+# a Kaggle run whose notebook cells never sync with git. They are run OUTPUT,
+# like the CSVs above, and belong in the Kaggle Output rather than the repo.
+sc_samples.jsonl
+reconcile_trace.jsonl
