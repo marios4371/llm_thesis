@@ -1,6 +1,49 @@
 """
 Enhanced Reasoning Quality Evaluation System for MAS Math Solver
-VERSION 17.0: Two independent derivations, reconciled
+VERSION 17.1: Two independent derivations, reconciled
+
+CHANGELOG v17.1 (over v17.0) — the first v17 run measured 84.00% against
+PAL 84.00%, the zero-shot CoT 84.00% and the v16 pipeline 84.67%, all paired
+on the same 150 problems (seed 44), all p=1.000. The accuracy effect is null.
+What the run DID establish is the architecture:
+
+    program == blueprint identically        v16 94.6%  ->  v17 73.6%
+    oracle over the system's own two        v16 79.3%  ->  v17 86.7%
+    LLM calls per problem                   v16 3.41   ->  v17 2.20
+    wall clock                              v16 6.51h  ->  v17 4.91h
+
+v16 reached 84.67% by returning the zero-shot CoT baseline, whose own oracle
+over its two derivations was 79.3%; v17 reaches 84.00% from its own two
+derivations with no baseline inside it. The same number, produced honestly,
+at 64% of the calls.
+
+One defect dominated the run and is fixed here.
+
+- [FIX] THE PROGRAMMER RETURNED NO NUMBER ON 27 OF 150 PROBLEMS (18%). Its
+  system prompt still carried rule 6, "a colleague's draft analysis may be
+  provided", while v17.0 had removed the draft from the user message — so the
+  model was told to cross-check something that was not there. The draft rule
+  is now added only when a draft is actually shown, which also makes both arms
+  of the coupling ablation internally consistent instead of comparing a
+  coherent prompt against a contradictory one.
+  Evidence it was the prompt and not the problems: the same model under PAL's
+  simpler prompt answered all 27 and scored 88.9% on them; the failures spread
+  across all three datasets and every magnitude bucket; and failing rows were
+  longer (276 vs 228 characters) and burned all three attempts (178s vs 105s).
+  Rule 2 is also relaxed from "start your code with givens = {...}" to a
+  preference — only 10 of 123 successful programs obeyed it, so it was
+  costing compliance and buying nothing.
+- [FIX] max_tokens 1000 -> 1300 for the Programmer. Generation stops at EOS so
+  this only costs time on the problems that need the room, which are the ones
+  that failed.
+- [FIX] A FAILED PROGRAMMER NOW RECORDS WHY. `code` was only set on success, so
+  the sidecar held None for all 27 losses and the cause had to be inferred from
+  row metadata. `failed_code`, `failure_reason` and `all_calls_errored` are now
+  captured and written to the sidecar with the agent name.
+
+Bounded expectation: the blueprint already shipped 81.5% on those 27 rows, so
+recovering them is worth at most +1.33pp overall. Do not expect the fix to
+change the headline.
 
 CHANGELOG v17.0 (over v16.5) — v16.4 found that SIV audited its own
 reflection, because the Programmer wrote its code FROM the blueprint being
@@ -896,7 +939,7 @@ import re
 # [v12.0] Experiment provenance: stamped into every CSV row by the notebook
 # runner; checkpoints from a different solver version are auto-discarded so
 # results never mix selection policies.
-SOLVER_VERSION = "17.0"
+SOLVER_VERSION = "17.1"
 
 # [v17.0] Stamp the ABLATION CONFIGURATION into the version string, resolved at
 # import time from the environment.
@@ -1012,9 +1055,19 @@ def _write_reconcile_sidecar(problem: str, expected: str, rec, llm_calls: int,
             "blueprint_givens": blueprint.get("givens", {}),
             "blueprint_equations": blueprint.get("equations", []),
             "program_answer": str(getattr(programmer_response, "answer", ""))[:120],
+            "program_agent": str(getattr(programmer_response, "agent", "")),
             "program_code": ((programmer_response.quality_metrics or {}).get("code")
                              if getattr(programmer_response, "quality_metrics", None)
                              else None),
+            # [v17.1] Present only when the Programmer produced nothing usable.
+            "program_failed_code": ((programmer_response.quality_metrics or {})
+                                    .get("failed_code")
+                                    if getattr(programmer_response, "quality_metrics", None)
+                                    else None),
+            "program_failure_reason": ((programmer_response.quality_metrics or {})
+                                       .get("failure_reason")
+                                       if getattr(programmer_response, "quality_metrics", None)
+                                       else None),
             "third_answer": (str(third_response.answer)[:120]
                              if third_response is not None else None),
             "third_code": ((third_response.quality_metrics or {}).get("code")
@@ -4141,22 +4194,37 @@ Output ONLY this JSON, nothing else:
         # cross-check (free program vs declarative blueprint).
         # The `givens = {...}` first-line convention is kept: rule-based
         # verification, metamorphic testing and SIV givens-matching depend on it.
-        sys_msg = """You are an expert Python programmer solving math word problems.
+        # [v17.1] The draft rule is added ONLY when a draft is actually shown.
+        # In the first v17 run it was left in unconditionally while the draft
+        # itself had been removed from the user message, so the Programmer was
+        # told to cross-check something that was not there. That run returned
+        # NO number on 27 of 150 problems (18%), against 0 for the same model
+        # under PAL's simpler prompt on the same problems -- and PAL scored
+        # 88.9% on exactly those rows. The failures were spread across all
+        # three datasets and all magnitude buckets but concentrated on longer
+        # problems (276 vs 228 characters, 178s vs 105s, i.e. all three
+        # attempts exhausted), which points at a contradictory, over-long
+        # instruction set rather than at problem difficulty.
+        _draft_rule = (
+            "\n6. A colleague's draft analysis is provided. Use it to double-check "
+            "your understanding, but if it conflicts with the PROBLEM, follow the "
+            "PROBLEM."
+            if show_blueprint else ""
+        )
+        sys_msg = f"""You are an expert Python programmer solving math word problems.
 
 STRICT RULES:
 1. Read the PROBLEM carefully and solve it yourself. Trust the PROBLEM text.
-2. Start your code with: givens = {...}  — a dict of the numeric values you
-   extract from the PROBLEM (clear snake_case names).
-3. Compute the solution step by step from those givens using plain Python
-   (math module allowed, nothing else).
+2. Where practical, collect the numbers you take from the PROBLEM into a dict
+   named givens at the top, with clear snake_case names.
+3. Compute the solution step by step using plain Python (math module allowed,
+   nothing else).
 4. Store the final result in a variable called 'answer'
-5. Print ONLY the final numeric answer: print(answer) — no explanations, no units
-6. A colleague's draft analysis may be provided. Use it to double-check your
-   understanding, but if it conflicts with the PROBLEM, follow the PROBLEM.
+5. Print the final numeric answer with print(answer) — no explanations, no units{_draft_rule}
 
 EXAMPLE:
 ```python
-givens = {"initial": 10, "used": 3}
+givens = {{"initial": 10, "used": 3}}
 remaining = givens['initial'] - givens['used']
 answer = remaining
 print(answer)
@@ -4199,9 +4267,15 @@ Write a Python program that solves the PROBLEM and prints the final numeric answ
             ]
             
             raw_response = self._get_client(AgentRole.PROGRAMMER).call_model(
-                msgs, 
-                temperature=self.prog_temp, 
-                max_tokens=1000
+                msgs,
+                temperature=self.prog_temp,
+                # [v17.1] 1000 -> 1300. Generation stops at EOS, so this only
+                # costs anything on the problems that actually need the room --
+                # and those are exactly the ones that failed in the first v17
+                # run (failed rows averaged 276 characters of problem text
+                # against 228 for the rest). A truncated code fence yields no
+                # extractable block, which burns all three attempts.
+                max_tokens=1300
             )
             
             # [FIX v7.1] Check for error response from LLM
@@ -4341,7 +4415,15 @@ Write a Python program that solves the PROBLEM and prints the final numeric answ
                 "error": "Max attempts reached",
                 "last_feedback": repair_feedback,
                 "sympy_attempted": SYMPY_AVAILABLE,
-                "sympy_trace": sympy_trace[:200] if sympy_trace else "N/A"
+                "sympy_trace": sympy_trace[:200] if sympy_trace else "N/A",
+                # [v17.1] The FAILING source and the reason it failed. The first
+                # v17 run lost 27 problems here and left nothing to diagnose
+                # with: `code` is only set on success, so the sidecar recorded
+                # None and the cause had to be inferred from row metadata. A
+                # failure this common has to be readable off the run itself.
+                "failed_code": last_code,
+                "failure_reason": (repair_feedback or "")[-300:],
+                "all_calls_errored": _all_calls_errored,
             }
         )
 

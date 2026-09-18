@@ -361,7 +361,7 @@ def part6():
     from Mas_solver import (QualityEnhancedMultiAgentSolver, AgentResponse,
                             SOLVER_VERSION, _write_reconcile_sidecar)
 
-    check(SOLVER_VERSION == "17.0", "SOLVER_VERSION is 17.0")
+    check(SOLVER_VERSION.startswith("17."), f"SOLVER_VERSION is {SOLVER_VERSION}")
 
     solver = object.__new__(QualityEnhancedMultiAgentSolver)
     solver.decoupled_programmer = True
@@ -380,6 +380,7 @@ def part6():
     class _Client:
         def call_model(self, msgs, **kw):
             seen["user"] = msgs[-1]["content"]
+            seen["system"] = msgs[0]["content"]
             return "```python\ngivens = {'a': 2}\nanswer = givens['a'] + 3\nprint(answer)\n```\nANSWER: [[5]]"
 
         def __str__(self):
@@ -397,8 +398,17 @@ def part6():
     check(resp.quality_metrics.get("code", "").strip().endswith("print(answer)"),
           "the full program source is kept for the program-side repair")
 
+    check("colleague" not in seen["user"].lower(), "no dangling draft rule in the user message")
+    check("colleague" not in seen["system"].lower(),
+          "and none in the system message either — telling the model to "
+          "cross-check a draft that is not there cost 27 of 150 problems in the "
+          "first v17 run")
+
     solver.run_programmer_solver("Add 2 and 3.", blueprint, show_blueprint=True)
     check("123456" in seen["user"], "coupled mode still shows the draft (ablation intact)")
+    check("colleague" in seen["system"].lower(),
+          "coupled mode DOES get the draft rule, so both ablation arms are "
+          "internally consistent")
 
     # an empty blueprint must NOT stop an independent Programmer
     r = solver.run_programmer_solver("Add 2 and 3.", {}, show_blueprint=False)
@@ -423,6 +433,25 @@ def part6():
           "decoupled: a failed program never falls back to the blueprint's equations")
     r = solver.run_programmer_solver("Add 2 and 3.", bp2, max_attempts=1, show_blueprint=True)
     check("SymPy" in r.agent, "coupled: the historical SymPy fallback still runs")
+
+    # [v17.1] A failure must leave something to diagnose. The first v17 run lost
+    # 27 problems here and recorded nothing about why.
+    solver._get_client = lambda role: _NoCodeClient()
+
+    class _NoCodeClient:
+        def call_model(self, msgs, **kw):
+            return "The answer is probably around forty-two, no code though."
+
+        def __str__(self):
+            return "nocode"
+
+    solver._get_client = lambda role: _NoCodeClient()
+    r = solver.run_programmer_solver("Add 2 and 3.", {}, max_attempts=2,
+                                     show_blueprint=False)
+    check(r.agent == "Programmer (failed)" and "failure_reason" in r.quality_metrics
+          and "failed_code" in r.quality_metrics
+          and r.quality_metrics["all_calls_errored"] is False,
+          "a failed Programmer records why it failed, not just that it did")
 
     # --- the LLM repair loop has its OWN flag ------------------------------
     # It must NOT ride on decoupled_programmer, or MAS_COUPLED_PROGRAMMER=1
