@@ -1,4 +1,11 @@
 """
+[v18.0] SUPERSEDED BY pretest_v19.py -- run that one.
+
+v19 keeps this script's two arms unchanged (its arm S is v19's arm W, its
+oracle is v19's arm O) and adds the transplant arm, where the model never sees
+the large numbers at all. Same 40 rows, same control, same thresholds. This
+file is kept because the v18.1 construction audit is documented against it.
+
 [v18.0] Pre-test: does a scaled twin let CoT read the structure it misreads
 at 7 digits?
 

@@ -100,6 +100,16 @@ DEFAULT_THRESHOLD = 100_000.0   # the measured collapse boundary
 MIN_DIGITS = 2                  # the smallest scaled number keeps this many digits
 SAFETY_FACTOR = 10.0            # scaled big numbers stay this far above the smalls
 
+# Highly composite, largest first, ending at 1 so the plain nearest-integer
+# twin is always available as a fallback. A twin snapped to a multiple of 840
+# survives being halved, thirded, quartered, fifthed or sevenths'd without
+# turning the story's people into fractions of people.
+SMOOTH_DIVISORS = (2520, 1260, 840, 720, 360, 180, 120, 60, 36, 24, 12, 6, 4, 2, 1)
+
+# How far a twin value may sit from the exact rescaling in order to buy that
+# divisibility. 5% keeps the median distortion at 2.0% (see scale_text).
+MAX_SNAP_DISTORTION = 0.05
+
 
 @dataclass
 class ScaleResult:
@@ -109,6 +119,7 @@ class ScaleResult:
     mapping: Dict[float, float] = field(default_factory=dict)   # original -> scaled
     n_scaled: int = 0
     floor: float = 0.0           # the order-preserving lower bound the twin had to clear
+    smooth: int = 1              # the twin values are multiples of this
     refused: str = ""            # why no twin was produced, if so
 
     @property
@@ -129,7 +140,8 @@ def _fmt(v: float) -> str:
 
 def scale_text(text: str, threshold: float = DEFAULT_THRESHOLD,
                min_digits: int = MIN_DIGITS,
-               safety_factor: float = SAFETY_FACTOR) -> ScaleResult:
+               safety_factor: float = SAFETY_FACTOR,
+               max_distortion: float = MAX_SNAP_DISTORTION) -> ScaleResult:
     """Divide every number >= threshold by ONE common power of ten, as far as
     that can be done WITHOUT inverting the order between the scaled numbers and
     the small constants that stay literal.
@@ -161,6 +173,19 @@ def scale_text(text: str, threshold: float = DEFAULT_THRESHOLD,
     margin costs nothing that was measured to matter. 5 was the smallest factor
     that reached zero on those 754 rows; 10 ships for headroom.
 
+    Why the twin snaps to a multiple of `smooth` (measured the same day). The
+    v16.2 shrink log named TWO causes for its failure, feasibility and
+    GRANULARITY: "5611617 riders -> 7 with 25% upright gives 1.75 people, and
+    the shrunk blueprint sprouts round()". Rounding the twin to a whole number
+    is not enough, because the story then divides it: half of 23 bolts is 11.5.
+    On the same 754 rows a nearest-integer twin makes a quantity fractional
+    that was whole on 74 of them (9.9%). Choosing instead the largest highly
+    composite multiple that stays within `max_distortion` of the exact
+    rescaling cuts that to 17 (2.3%) while the twin's values stay a median 2.0%
+    from a true rescaling -- and the feasibility count stays at 0. The twin is
+    therefore not a literal division: it is the nearest WELL-POSED small
+    instance, which is what the mechanism actually needs.
+
     Equal values map to equal values (coreference survives) and substitution
     runs per regex match, so a number that is a prefix of another is never
     corrupted -- gsm-hard_620 has both 5072217 and 5072217640.
@@ -188,18 +213,30 @@ def scale_text(text: str, threshold: float = DEFAULT_THRESHOLD,
 
     smallest = big[0]
     k = int(math.floor(math.log10(smallest))) - (min_digits - 1)
+    divisor = None
+    scaled = None
+    smooth = 1
     while k > 0:
         divisor = 10.0 ** k
-        scaled = {v: float(round(v / divisor)) for v in big}
-        if (len(set(scaled.values())) == len(big)
-                and min(scaled.values()) >= floor_val
-                and max(scaled.values()) < threshold):
+        exact = {v: v / divisor for v in big}
+        for L in SMOOTH_DIVISORS:
+            cand = {v: float(max(L, L * round(x / L))) for v, x in exact.items()}
+            if (len(set(cand.values())) == len(big)
+                    and min(cand.values()) >= floor_val
+                    and max(cand.values()) < threshold
+                    and all(abs(cand[v] - x) <= max_distortion * x
+                            for v, x in exact.items())):
+                scaled, smooth = cand, L
+                break
+        if scaled is not None:
             break
         k -= 1                      # keep one more digit and try again
     else:
         res.refused = ("no power of ten keeps the large numbers distinct, above "
                        f"{floor_val:g}, and under {threshold:g}")
         return res
+
+    res.smooth = smooth
 
     def repl(m: re.Match) -> str:
         tok = m.group(0)
@@ -235,6 +272,29 @@ TWIN_PROMPT = (
 
 def twin_prompt(twin_text: str, original_text: str) -> str:
     return TWIN_PROMPT.format(twin=twin_text.strip(), original=original_text.strip())
+
+
+def as_shrink_result(res: ScaleResult):
+    """Hand this twin to the v16.2 transplant loop unchanged.
+
+    `magnitude_invariance` already implements everything that happens after the
+    small problem is solved: the guarded rebind (every probe MUST appear among
+    the Architect's givens or the mechanism abstains) and CAS evaluation
+    through the shipped SIV. That half was never the problem -- its rebind
+    guard covered 85.2% of rows and "worked as designed". What failed was the
+    construction it was fed: distinct primes, assigned independently, which
+    turned "drink 5,956,168 of 25,956,168" into "drink 13 of 11".
+
+    So v19 changes exactly one thing: the twin. Feeding a ScaleResult in place
+    of a ShrinkResult keeps the measured machinery and replaces the part the
+    log blamed.
+    """
+    from magnitude_invariance import ShrinkResult
+    sr = ShrinkResult(original_text=res.original_text, shrunk_text=res.twin_text)
+    sr.original_to_probe = dict(res.mapping)
+    sr.probe_to_original = {p: o for o, p in res.mapping.items()}
+    sr.n_shrunk = res.n_scaled
+    return sr
 
 
 # ---------------------------------------------------------------------------
