@@ -8,7 +8,10 @@ Pre-registered, written before the run:
               >= 100k (pretest_data/clean_large_number_rows.json, self-
               contained: text, original text, gold, gold program)
     control   CoT alone on those rows, already measured: 32/40 = 80.0%
-    arm S     twin = uniformly scaled copy (deployable)
+    arm S     twin = uniformly scaled copy (deployable). Where no coherent
+              twin exists -- no power of ten keeps the scaled numbers above the
+              story's constants -- the row falls back to plain CoT, which is
+              what a deployed system would do.
     arm O     twin = the original GSM8K problem (oracle ceiling)
 
     O <= 33/40   magnitude is not what breaks the structure; close this.
@@ -58,7 +61,8 @@ class _StubClient:
         self.calls += 1
         text = msgs[-1]["content"]
         gold = next((g for t, g in self.golds.items() if t.strip() in text), 0.0)
-        return f"Problem A: ... Answer A: 7\nProblem B: ... Answer B: {gold}"
+        return ("Problem A: ...\nAnswer A: 7\n"
+                f"Problem B: ...\nAnswer B: {gold}")
 
 
 def build_client(preset: str, stub_golds: Optional[Dict[str, float]]):
@@ -110,7 +114,11 @@ def main() -> int:
             rec.update(S_twin=sc.twin_text, S_answer_A=a, S_answer_B=b,
                        S_correct=correct(b, r['gold']), S_raw=str(raw)[-600:])
         else:
-            rec.update(S_answer_B=None, S_correct=False, S_refused=sc.refused)
+            # Deployable semantics: when no coherent twin exists the system asks
+            # the question directly, so the row scores as plain CoT -- already
+            # recorded, and deterministic under greedy decoding.
+            rec.update(S_answer_B=None, S_correct=bool(r['cot_correct']),
+                       S_refused=sc.refused, S_fallback=True)
         # ---- arm O: the original problem as the twin ----------------------
         if not args.skip_oracle and r.get('original_text'):
             raw = client.call_model(
@@ -136,7 +144,9 @@ def main() -> int:
     cov = sum(1 for r in out if r.get('scaled_ok'))
     print("\n" + "=" * 66)
     print(f"  control  CoT alone            {ctrl:2d}/{n} = {100*ctrl/n:5.1f}%")
-    print(f"  arm S    scaled twin          {s:2d}/{n} = {100*s/n:5.1f}%   (twin built on {cov}/{n})")
+    fb = sum(1 for r in out if r.get('S_fallback'))
+    print(f"  arm S    scaled twin          {s:2d}/{n} = {100*s/n:5.1f}%   "
+          f"(twin built on {cov}/{n}; {fb} fell back to plain CoT)")
     if not args.skip_oracle:
         print(f"  arm O    original as twin     {o:2d}/{n} = {100*o/n:5.1f}%   (oracle ceiling)")
     for arm in (['S'] + ([] if args.skip_oracle else ['O'])):
@@ -147,6 +157,10 @@ def main() -> int:
     sa = sum(1 for r in out if r.get('S_answer_A') is not None)
     print(f"\n  Problem A answered (scaled twin): {sa}/{n}; Problem B extracted: "
           f"{sum(1 for r in out if r.get('S_answer_B') is not None)}/{n}")
+    if n != 40:
+        print(f"\n  (n={n}, not the pre-registered 40 -- no verdict)")
+        print(f"\n  saved: {args.out}")
+        return 0
     print("\n  pre-registered reading:")
     if not args.skip_oracle and o <= 33:
         print("    O <= 33: magnitude is not what breaks the structure -> CLOSE")

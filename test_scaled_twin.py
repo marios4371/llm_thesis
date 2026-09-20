@@ -14,6 +14,9 @@ import scaled_twin as ST
 FAILS = []
 N = [0]
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+MANIFEST = os.path.join(HERE, "pretest_data/clean_large_number_rows.json")
+
 
 def check(cond, label):
     N[0] += 1
@@ -29,11 +32,20 @@ def part1():
     r = ST.scale_text(t)
     check(r.ok and r.n_scaled == 2, "both large numbers scaled, small ones untouched")
     check("7 gallons" in r.twin_text and "3 people" in r.twin_text, "7 and 3 survive")
+
+    # the comma AFTER a number belongs to the sentence, not to the number
+    rp = ST.scale_text("If Samantha is now 3473626, how many years ago, exactly?")
+    check(rp.ok and ", how many years ago, exactly?" in rp.twin_text,
+          "punctuation after a scaled number survives")
+    # ...but a thousands separator INSIDE one is part of it
+    rk = ST.scale_text("The fund holds 3,473,626 dollars and pays 40 people.")
+    check(rk.ok and 3473626.0 in rk.mapping, "3,473,626 is read as one number")
     a, b = r.mapping[25956168.0], r.mapping[5956168.0]
     check(a > b, "order is preserved: the children still drink LESS than was made")
     check(abs(a / b - 25956168 / 5956168) < 0.15, "the ratio is approximately preserved")
     check(b >= 10, "the smaller large number keeps at least two digits")
-    check(r.divisor == 1e5, f"divisor is a power of ten ({r.divisor:g})")
+    check(r.divisor == 1e4, f"divisor is a power of ten ({r.divisor:g})")
+    check(b >= 10 * (7 + 3), "the twin stays clear of the small constants (7, 3)")
 
     # coreference: the same number twice maps to the same twin value
     t2 = "She has 3473626 cards. Later she gives 3473626 cards away and buys 100."
@@ -54,15 +66,74 @@ def part1():
           "a small-number problem gets no twin and is left alone")
 
     # two large numbers that would collide at the coarse scale separate at a finer one
-    t5 = "Team A scored 1234567 and team B scored 1234589 points."
+    t5 = "Team A scored 1234567 and team B scored 4234589 points."
     r5 = ST.scale_text(t5)
     check(r5.ok and len(set(r5.mapping.values())) == 2,
-          "near-equal large numbers are separated by keeping more digits")
+          "large numbers that would collide are separated by keeping more digits")
+
+    # ...but when separating them needs six digits the twin is still unreadable,
+    # so there is no twin worth presenting
+    t5b = "Team A scored 1234567 and team B scored 1234589 points."
+    r5b = ST.scale_text(t5b)
+    check(not r5b.ok and "under" in r5b.refused,
+          "a twin that cannot get under the threshold is refused, not shipped")
 
     # percentages and decimals below the threshold stay literal
     t6 = "Of the 5611617 riders, 25% stayed upright and 0.5 of the rest fell."
     r6 = ST.scale_text(t6)
     check("25%" in r6.twin_text and "0.5" in r6.twin_text, "25% and 0.5 are untouched")
+
+
+def _twin_answer(gold_code, mapping):
+    """Run the gsm-hard gold program with the twin's numbers substituted, so the
+    test can see what Problem A actually asks. Test-only: a deployed system has
+    no gold program."""
+    import re
+    body = re.sub(r'""".*?"""', '"""doc"""', gold_code, flags=re.S)
+
+    def repl(m):
+        try:
+            v = float(m.group(0).replace(",", ""))
+        except ValueError:
+            return m.group(0)
+        if v in mapping:
+            sv = mapping[v]
+            return str(int(sv)) if float(sv).is_integer() else repr(sv)
+        return m.group(0)
+
+    src = ST.NUMBER_RE.sub(repl, body)
+    ns = {}
+    exec(src, ns)
+    return ns["solution"]()
+
+
+def part1b():
+    print()
+    print("PART 1b - the twin has to stay a possible question")
+    # Scaling only the big numbers mixes two scales. These three rows are the
+    # ones that broke: the shipped rule put Theo on $37 with $100 suits.
+    with open(MANIFEST, encoding="utf-8") as fh:
+        rows = {r["problem_id"]: r for r in json.load(fh)["rows"]}
+    for pid in ("gsm-hard_229", "gsm-hard_1138", "gsm-hard_1280"):
+        r = rows[pid]
+        sc = ST.scale_text(r["text"])
+        check(sc.ok, f"{pid}: a twin is still built")
+        ans = _twin_answer(r["gold_code"], sc.mapping)
+        check(ans > 0, f"{pid}: the twin has a positive answer ({ans}) -- was negative")
+        check(max(sc.mapping.values()) < ST.DEFAULT_THRESHOLD,
+              f"{pid}: the twin is under the collapse boundary")
+
+    # the constraint itself, on a minimal case: $9,000,000 spent 40 at a time
+    r = ST.scale_text("He has 9000000 dollars and buys 6 things at 40 dollars each.")
+    v = list(r.mapping.values())[0]
+    check(r.ok and v >= 10 * (6 + 40),
+          f"the scaled amount ({v:g}) clears ten times the constants it is spent on")
+    check(r.floor == 10 * 46, f"the floor is recorded ({r.floor:g})")
+
+    # no small numbers at all -> nothing to stay clear of, scale all the way
+    r2 = ST.scale_text("The city has 8123456 residents. How many is that?")
+    check(r2.ok and max(r2.mapping.values()) < 100,
+          "with no constants in the way the twin scales all the way down")
 
 
 def part2():
@@ -121,7 +192,7 @@ def part3():
 
 
 def main() -> int:
-    part1(); part2(); part3()
+    part1(); part1b(); part2(); part3()
     print("\n" + "=" * 60)
     if FAILS:
         print(f"FAILURES ({len(FAILS)} of {N[0]}):")
