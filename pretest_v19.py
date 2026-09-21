@@ -134,27 +134,43 @@ class _StubSolver:
                 "equations": ["result = givens['v0']"]}
 
 
-def build(preset: str, stub_golds):
-    """(client for W/O, solver for T). Roles keep their production models."""
+def build(preset: str, stub_golds, arms: List[str]):
+    """(client for W/O, solver for T). Roles keep their production models.
+
+    Only what the requested arms need is loaded. W and O read with the BASELINE
+    model, T writes blueprints with the MATHEMATICIAN model, and in the shipped
+    preset those are two different 7B checkpoints -- so `--arms WO` and
+    `--arms T` each hold one model, which is the way out if both together do
+    not fit in VRAM.
+    """
     if stub_golds is not None:
         return _StubClient(stub_golds), _StubSolver()
     from Mas_solver import (AgentRole, UnifiedLLMClient, HETEROGENEOUS_PRESETS,
                             QualityEnhancedMultiAgentSolver, SOLVER_VERSION)
     cfg = HETEROGENEOUS_PRESETS[preset]
     bc, mc = cfg[AgentRole.BASELINE], cfg[AgentRole.MATHEMATICIAN]
+    need_baseline = any(a in arms for a in ('W', 'O'))
+    need_math = 'T' in arms
     print(f"solver_version={SOLVER_VERSION} preset={preset}")
-    print(f"  CoT reader   (arms W/O): {bc.provider}/{bc.model_name}")
-    print(f"  Architect    (arm  T  ): {mc.provider}/{mc.model_name}")
+    if need_baseline:
+        print(f"  CoT reader   (arms W/O): {bc.provider}/{bc.model_name}")
+    if need_math:
+        print(f"  Architect    (arm  T  ): {mc.provider}/{mc.model_name}")
 
     def mk(m):
         return UnifiedLLMClient(provider=m.provider, use_cache=False,
                                 model_override=m.model_name,
                                 load_4bit=getattr(m, 'load_4bit', False))
 
-    baseline_client = mk(bc)
-    math_client = baseline_client if mc.model_name == bc.model_name else mk(mc)
+    baseline_client = mk(bc) if need_baseline else None
+    if not need_math:
+        return baseline_client, None
+    math_client = (baseline_client if (baseline_client is not None
+                                       and mc.model_name == bc.model_name)
+                   else mk(mc))
+    fallback = baseline_client or math_client
     solver = QualityEnhancedMultiAgentSolver(
-        clients={r: (math_client if r == AgentRole.MATHEMATICIAN else baseline_client)
+        clients={r: (math_client if r == AgentRole.MATHEMATICIAN else fallback)
                  for r in AgentRole})
     return baseline_client, solver
 
@@ -212,7 +228,8 @@ def main() -> int:
     print(f"control, CoT alone (recorded): {ctrl}/{len(rows)} = {100*ctrl/len(rows):.1f}%\n")
 
     client, solver = build(args.preset,
-                           {r['text']: r['gold'] for r in rows} if args.stub else None)
+                           {r['text']: r['gold'] for r in rows} if args.stub else None,
+                           arms)
 
     out, t0 = [], time.time()
     for i, r in enumerate(rows, 1):
