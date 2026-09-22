@@ -1460,6 +1460,13 @@ HETEROGENEOUS_PRESETS: Dict[str, Dict[AgentRole, ModelConfig]] = {
 CACHE_FILE = "call_cache_v6.pkl"
 CALL_CACHE: Dict[str, Any] = {}
 
+# [v20.0] Decoding mode for the local_hf backend. OFF by default: every run
+# before v20 is greedy and must stay byte-reproducible. The v20 pre-test turns
+# this on for its self-consistency arm only, because SC@k is not a control at
+# all while decoding is deterministic -- the k samples are one string repeated.
+# Read at the generate call site; see the note there for why it is safe now.
+LOCAL_HF_SAMPLING: Dict[str, Any] = {"enabled": False, "top_p": 0.95, "top_k": 50}
+
 def setup_logging() -> logging.Logger:
     logger = logging.getLogger("MAS_Pipeline")
     logger.setLevel(logging.INFO)
@@ -2714,6 +2721,29 @@ class UnifiedLLMClient:
             do_sample=False,                         # greedy — no temperature division
             pad_token_id=tok.pad_token_id or tok.eos_token_id,
         )
+        # [v20.0] OPT-IN sampling, off by default so nothing else changes.
+        # The v20 pre-test needs an iso-compute self-consistency arm, and
+        # self-consistency is meaningless while decoding is greedy — every
+        # sample is the same string, so SC@k == CoT for every k. That is the
+        # whole reason the v15.7 b3_sc5 plan was void.
+        #
+        # v10.3 disabled sampling because fp16 probability tensors overflowed
+        # to inf/nan and tripped a CUDA device-side assert. `renormalize_logits`
+        # plus a top-k/top-p cut removes the tail that overflows, and the
+        # generate call below retries greedy ON THE GPU before the pre-existing
+        # handler gives up and moves the model to CPU for the rest of the
+        # session. Callers turn it on for one arm and turn it off again:
+        #     Mas_solver.LOCAL_HF_SAMPLING.update(enabled=True)
+        _samp = LOCAL_HF_SAMPLING
+        _sampling_on = bool(_samp.get("enabled")) and float(temperature or 0) > 0
+        if _sampling_on:
+            gen_kwargs.update(
+                do_sample=True,
+                temperature=float(temperature),
+                top_p=float(_samp.get("top_p", 0.95)),
+                top_k=int(_samp.get("top_k", 50)),
+                renormalize_logits=True,
+            )
         # [v11.1] Token-level JSON-schema enforcement. The model literally cannot
         # emit a token that would break the schema, so prose-only models are forced
         # to produce a valid blueprint. Degrades gracefully to unconstrained
@@ -2736,7 +2766,30 @@ class UnifiedLLMClient:
                 )
         with torch.no_grad():
             try:
-                out = mdl.generate(**ids, **gen_kwargs)
+                try:
+                    out = mdl.generate(**ids, **gen_kwargs)
+                except Exception as samp_err:
+                    # [v20.0] A sampled generate that fails is a sampling
+                    # problem, not a dead GPU. Retry the SAME call greedily on
+                    # the GPU before the handler below concludes the CUDA
+                    # context is poisoned and moves a 7B model to CPU for the
+                    # rest of the session — that fallback is correct for a real
+                    # device fault and ruinous for a recoverable one.
+                    if not _sampling_on:
+                        raise
+                    logger.warning(
+                        f"local_hf: sampled generate failed "
+                        f"({type(samp_err).__name__}: {str(samp_err)[:80]}). "
+                        f"Retrying greedily on {actual_device} -- this call is "
+                        f"no longer an independent sample, so a run that logs "
+                        f"this has a weakened self-consistency arm."
+                    )
+                    _greedy = dict(gen_kwargs)
+                    for k in ("temperature", "top_p", "top_k", "renormalize_logits"):
+                        _greedy.pop(k, None)
+                    _greedy["do_sample"] = False
+                    gen_kwargs = _greedy
+                    out = mdl.generate(**ids, **gen_kwargs)
             except Exception as cuda_err:
                 # [v10.3] CPU fallback for CUDA failures (kernel mismatch or
                 # corrupted context after device-side assert).
