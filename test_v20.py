@@ -66,6 +66,34 @@ def part1():
     check(ident.ok and ident.text == PROB.strip(), "identity is the problem itself")
 
 
+def part1b():
+    print("\nPART 1b - arm F cannot depend on a presenter that may collapse")
+    # The 2026-09-22 smoke test refused the paraphrase on 2 of 2 rows because
+    # Qwen2.5-MATH never emitted the <restated> block. The ensemble fell to two
+    # voters, every row tied, every tie broke to identity, and arm F became the
+    # control with a presenter call attached: W=0 L=0 by construction. The
+    # shipped set must therefore be buildable with no model at all.
+    check(all(n in R.STRUCTURAL for n in R.DEFAULT_SET),
+          f"every default rendering is structural: {R.DEFAULT_SET}")
+    check(len(R.DEFAULT_SET) >= 3,
+          "at least three voters, so a majority can exist without a tie")
+    check('identity' in R.DEFAULT_SET, "the control's answer is one of them")
+
+    rs = R.build_structural(PROB, R.DEFAULT_SET)
+    check(sum(1 for x in rs if x.ok) == 3, "all three build on a normal problem")
+    names = [x.name for x in rs]
+    check(len(set(names)) == 3, "and they are three DIFFERENT renderings")
+    texts = [x.text for x in rs]
+    check(len(set(texts)) == 3, "...producing three different surface forms")
+
+    # a refused paraphrase must carry the raw response, or a refusal rate is
+    # a number nobody can act on without paying for another GPU run
+    ren = R.parse_paraphrase('I will solve this. First, 3 x 12 = 36.', PROB)
+    check(not ren.ok, "a model that solves instead of restating is refused")
+    check(ren.meta.get('raw', '').startswith('I will solve'),
+          "...and the refusal carries what the model actually said")
+
+
 def part2():
     print("\nPART 2 - is_faithful catches the ways a rendering changes the problem")
     ok, _ = R.is_faithful(PROB, PROB)
@@ -236,7 +264,7 @@ def part6():
 
 
 if __name__ == '__main__':
-    for p in (part1, part2, part3, part4, part5, part6):
+    for p in (part1, part1b, part2, part3, part4, part5, part6):
         p()
     print(f"\n{N[0] - len(FAILS)}/{N[0]} checks passed")
     for f in FAILS:

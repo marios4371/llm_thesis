@@ -33,10 +33,10 @@ Control  C   plain greedy CoT on the problem as given. One call. Its answer is
              twice for it.
 
   F  form-diverse. Majority over renderings of the SAME problem, each solved
-             once, greedily. Structural renderings are free; `paraphrase`
-             costs one presenter call. A rendering that does not preserve the
-             problem's numeric literals exactly is refused and falls back to
-             the identity, so a rendering can never vote on a problem the
+             once, greedily. The shipped set is three STRUCTURAL renderings,
+             so there is no presenter call at all. A rendering that does not
+             preserve the problem's numeric literals exactly is refused and
+             does not vote, so a rendering can never vote on a problem the
              model was not shown.
 
   S  iso-compute self-consistency. The same solver, same call budget as F's
@@ -74,12 +74,17 @@ closest papers (ParaMAWPS, PCS) each name multi-step reasoning as future work.
 
 COST
 ----
-7 calls/problem at 45.8 s/call measured -> ~8.9 h at n=100. Split it:
+Measured on Kaggle T4 x2, Qwen2.5-Math-7B 4-bit, 2026-09-22 smoke test:
+**366 s/row for 6 calls**, i.e. 61 s/call, not the 45.8 s/call the v17 run
+recorded for a different pipeline. n=100 is therefore ~10.2 h and does NOT
+fit one Kaggle batch session, whose GPU cap is 9 h. Run it as two versions:
+--max-hours 8.0 finishes ~78 rows, and re-running the identical command
+resumes the rest in ~2.2 h.
 
     python pretest_v20.py --build-manifest --dataset gsm-symbolic-p2 --n 100
-    python pretest_v20.py --arms CF      # session 1, 4 calls/problem, ~5.1 h
-    python pretest_v20.py --arms S       # session 2, 3 calls/problem, ~3.8 h
-    python pretest_v20.py --stub         # offline, no model, no GPU
+    python pretest_v20.py --arms CFS --max-hours 8.0    # version 1
+    python pretest_v20.py --arms CFS --max-hours 8.0    # version 2, resumes
+    python pretest_v20.py --stub                        # offline, no GPU
 
 Sessions 1 and 2 read the same manifest and merge into the same output file,
 so the arms stay paired across sessions. All three arms in one 9-hour session

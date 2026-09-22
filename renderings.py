@@ -34,11 +34,13 @@ literals to be preserved exactly, and every transform either returns a
 rendering that passes it or returns `ok=False` with a reason. A refused
 rendering falls back to the identity, which is what a deployed system would do.
 
-The two structural transforms are pure re-layout: they move whole sentences
-and add headings, and they never touch a character inside a sentence. That
-makes their faithfulness a property of the code rather than a hope about a
-model. `paraphrase` is the one transform that goes through the LLM, and it is
-the one that is validated hardest.
+The structural transforms are pure re-layout: they move whole sentences and
+add headings, and they never touch a character inside a sentence. That makes
+their faithfulness a property of the code rather than a hope about a model,
+and it is why the shipped set is made of them. `paraphrase` is the one
+transform that goes through the LLM; it is validated hardest, and the
+2026-09-22 smoke test refused it on 2 of 2 rows, which is why it is no longer
+in DEFAULT_SET. See the note there.
 
 NOT IN THE TRANSFORM SET, DELIBERATELY
 --------------------------------------
@@ -245,12 +247,17 @@ def parse_paraphrase(raw: str, original: str) -> Rendering:
     raw = str(raw or '')
     m = _RESTATED.search(raw)
     if not m:
+        # Keep a slice of what the model actually said. A refusal rate is a
+        # number; a refusal you cannot read is a dead end, and the smoke test
+        # hit 2/2 with no way to see why without paying for another run.
         return Rendering('paraphrase', original.strip(), ok=False,
-                         refused='no <restated> block in the response')
+                         refused='no <restated> block in the response',
+                         meta={'raw': raw[:400]})
     out = m.group(1).strip()
     ok, why = is_faithful(original, out)
     return Rendering('paraphrase', out if ok else original.strip(),
-                     ok=ok, refused=why)
+                     ok=ok, refused=why,
+                     meta={} if ok else {'raw': out[:400]})
 
 
 # ---------------------------------------------------------------------------
@@ -260,10 +267,24 @@ def parse_paraphrase(raw: str, original: str) -> Rendering:
 STRUCTURAL = {'identity': identity, 'givens_first': givens_first,
               'goal_first': goal_first}
 
-#: The pre-registered rendering set for the v20 pre-test. `identity` is free
-#: (the control already paid for it), `givens_first` costs one solver call,
-#: `paraphrase` costs one presenter call and one solver call.
-DEFAULT_SET = ('identity', 'givens_first', 'paraphrase')
+#: The pre-registered rendering set for the v20 pre-test. All three are
+#: STRUCTURAL, which means zero presenter calls: `identity` is free (the
+#: control already paid for it) and the other two cost one solver call each.
+#:
+#: [AMENDED after the 2026-09-22 smoke test, before the real run.] The set was
+#: `(identity, givens_first, paraphrase)` and the paraphrase was refused on
+#: 2 of 2 rows. That is not a tolerable failure rate, it is a collapse: with
+#: the paraphrase gone the ensemble had two voters, every row was a 1-1 tie,
+#: every tie broke to the identity, and arm F became the control with a
+#: presenter call attached -- W=0 L=0 against C, by construction rather than by
+#: measurement. Qwen2.5-MATH is tuned to solve, not to restate, so asking it
+#: for a faithful re-rendering is asking the wrong instrument.
+#:
+#: `goal_first` replaces it: free, deterministic, faithful by construction and
+#: usable on 92% of gsm-symbolic-p2. The paraphrase is still selectable with
+#: --renderings and is worth revisiting with a non-math model as the presenter,
+#: because it is the transform the prior work uses.
+DEFAULT_SET = ('identity', 'givens_first', 'goal_first')
 
 
 def build_structural(text: str, names) -> List[Rendering]:
