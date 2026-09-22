@@ -14,8 +14,9 @@ it was being measured against was mostly noise. Two findings, 2026-09-22:
     headroom left on gsm-hard, so no aggregation over answers can show an
     effect there.** That is why v12 through v19 all measured null.
   * A mechanical audit of GSM-Hard's construction puts its defect rate at
-    16-21% through channels independent of the earlier 17.2% finding, one of
-    them GSM8K-Platinum's human re-annotation.
+    21.3% of the auditable rows, through three channels independent of the
+    earlier 17.2% finding, one of them GSM8K-Platinum's human re-annotation.
+    See gsmhard_audit.py.
 
 So this pre-test does not run on gsm-hard. It runs where the model still has
 somewhere to fall: gsm-symbolic-p2 or gsm-plus.
@@ -81,8 +82,15 @@ COST
     python pretest_v20.py --stub         # offline, no model, no GPU
 
 Sessions 1 and 2 read the same manifest and merge into the same output file,
-so the arms stay paired across sessions. Download the JSON: an interactive
-Kaggle session loses it.
+so the arms stay paired across sessions. All three arms in one 9-hour session
+(`--arms CFS`) is the simpler plan when the session length allows it, and it
+removes the need to carry the JSON between sessions at all.
+
+Re-running the same command RESUMES: a row already carrying every requested
+arm is skipped. That matters because this run is long and this project has
+lost long runs to a session dying partway. Download the JSON after every
+session anyway -- an interactive Kaggle session loses /kaggle/working unless
+the notebook is saved as a version.
 """
 from __future__ import annotations
 
@@ -269,6 +277,8 @@ def main() -> int:
     ap.add_argument('--max-tokens', type=int, default=1024)
     ap.add_argument('--sc-temperature', type=float, default=0.8)
     ap.add_argument('--stub', action='store_true')
+    ap.add_argument('--no-resume', dest='resume', action='store_false',
+                    help='re-run rows that are already complete in --out')
     ap.add_argument('--build-manifest', action='store_true')
     ap.add_argument('--dataset', default='gsm-symbolic-p2')
     ap.add_argument('--n', type=int, default=100)
@@ -309,14 +319,26 @@ def main() -> int:
             with open(args.out, encoding='utf-8') as fh:
                 prior = {r['pid']: r for r in json.load(fh).get('rows', [])}
             print(f"merging into {len(prior)} rows from a previous session")
+            if args.resume:
+                print("  resume is ON: rows already carrying every requested "
+                      "arm are skipped (--no-resume to force)")
         except Exception as exc:
             print(f"could not read {args.out} ({exc}); starting fresh")
 
-    out, t0 = [], time.time()
+    out, t0, done = [], time.time(), 0
     for i, r in enumerate(rows, 1):
         gold, text = r['gold'], r['text']
         rec = dict(prior.get(r['problem_id'], {}))
         rec.update(pid=r['problem_id'], gold=gold, dataset=r.get('dataset'))
+
+        # Resume. A Kaggle session that dies at hour eight must not restart at
+        # row one: this run is ~9 GPU-hours and this project has lost long runs
+        # to exactly that. A row already carrying every requested arm is kept
+        # and skipped, so re-running the same command continues it.
+        if args.resume and all(f'{a}_correct' in rec for a in arms):
+            out.append(rec)
+            done += 1
+            continue
 
         if 'C' in arms:
             c = solve(client, text, args.max_tokens)
@@ -351,11 +373,12 @@ def main() -> int:
                        S_disagreement=R.disagreement_rate([v for _, v in svotes]))
 
         out.append(rec)
-        el = time.time() - t0
+        el, ran = time.time() - t0, len(out) - done
         flags = ' '.join(f"{a}={'OK ' if rec.get(f'{a}_correct') else 'BAD'}"
                          for a in arms)
         print(f"[{i:3d}/{len(rows)}] {str(r['problem_id'])[:22]:22s} {flags}"
-              f"  {el/i:5.0f}s/row  eta {el/i*(len(rows)-i)/60:4.0f} min",
+              f"  {el/max(ran,1):5.0f}s/row"
+              f"  eta {el/max(ran,1)*(len(rows)-i)/60:4.0f} min",
               flush=True)
         with open(args.out, 'w', encoding='utf-8') as fh:
             json.dump(dict(manifest=args.manifest, preset=args.preset,

@@ -176,6 +176,18 @@ def part5():
             capture_output=True, text=True, cwd=HERE)
         check(r2.returncode == 2, "arm F alone is rejected (it needs C's identity vote)")
 
+        # re-running the same arms must RESUME, not redo: the stub counts
+        # calls, so a second identical invocation that did no work is proof.
+        before = json.load(open(out, encoding='utf-8'))['rows']
+        r_re = subprocess.run(
+            [sys.executable, os.path.join(HERE, 'pretest_v20.py'), '--stub',
+             '--manifest', man, '--out', out, '--arms', 'CF'],
+            capture_output=True, text=True, cwd=HERE)
+        check(r_re.returncode == 0, "re-running the same arms exits 0")
+        check('resume is ON' in r_re.stdout, "...and says it is resuming")
+        check(json.load(open(out, encoding='utf-8'))['rows'] == before,
+              "a resumed run leaves the completed rows byte-identical")
+
         # a second session merges rather than overwriting
         r3 = subprocess.run(
             [sys.executable, os.path.join(HERE, 'pretest_v20.py'), '--stub',
