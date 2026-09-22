@@ -279,6 +279,10 @@ def main() -> int:
     ap.add_argument('--stub', action='store_true')
     ap.add_argument('--no-resume', dest='resume', action='store_false',
                     help='re-run rows that are already complete in --out')
+    ap.add_argument('--max-hours', type=float, default=0.0,
+                    help="stop cleanly after this many hours (0 = no limit). "
+                         "Kaggle kills a batch GPU session at 9h WITHOUT "
+                         "saving; set 8.0 and re-run to resume.")
     ap.add_argument('--build-manifest', action='store_true')
     ap.add_argument('--dataset', default='gsm-symbolic-p2')
     ap.add_argument('--n', type=int, default=100)
@@ -325,7 +329,7 @@ def main() -> int:
         except Exception as exc:
             print(f"could not read {args.out} ({exc}); starting fresh")
 
-    out, t0, done = [], time.time(), 0
+    out, t0, done, stopped_early = [], time.time(), 0, 0
     for i, r in enumerate(rows, 1):
         gold, text = r['gold'], r['text']
         rec = dict(prior.get(r['problem_id'], {}))
@@ -339,6 +343,18 @@ def main() -> int:
             out.append(rec)
             done += 1
             continue
+
+        # Wall clock. Kaggle's batch GPU session ("Save & Run All") is capped
+        # at 9 hours and is killed at the cap with no chance to write anything;
+        # the interactive session is capped at 12. Stopping ourselves one hour
+        # short turns a lost run into a resumable one, because every row so far
+        # is already on disk.
+        if args.max_hours and (time.time() - t0) > args.max_hours * 3600:
+            stopped_early = len(rows) - i + 1
+            print(f"\n  --max-hours {args.max_hours} reached with "
+                  f"{stopped_early} row(s) left. The file is complete up to "
+                  f"here; re-run the identical command to resume.")
+            break
 
         if 'C' in arms:
             c = solve(client, text, args.max_tokens)
@@ -389,6 +405,9 @@ def main() -> int:
                            n=len(rows), rows=out), fh,
                       ensure_ascii=False, indent=1)
 
+    if stopped_early:
+        print(f"\n  PARTIAL: {len(out)}/{len(rows)} rows. No verdict is read "
+              f"off a partial run.")
     return summarise(out, arms, names, args)
 
 

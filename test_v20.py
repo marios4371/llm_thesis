@@ -188,6 +188,27 @@ def part5():
         check(json.load(open(out, encoding='utf-8'))['rows'] == before,
               "a resumed run leaves the completed rows byte-identical")
 
+        # the wall-clock stop must leave a RESUMABLE file, not a lost run
+        out3 = out + '3'
+        r_t = subprocess.run(
+            [sys.executable, os.path.join(HERE, 'pretest_v20.py'), '--stub',
+             '--manifest', man, '--out', out3, '--arms', 'CF',
+             '--max-hours', '0.0000001'],
+            capture_output=True, text=True, cwd=HERE)
+        check(r_t.returncode == 0, "a run that hits --max-hours still exits 0")
+        check('reached with' in r_t.stdout, "...and says how many rows are left")
+        check('PARTIAL' in r_t.stdout and 'No verdict' in r_t.stdout,
+              "...and refuses to read a verdict off a partial run")
+        part = json.load(open(out3, encoding='utf-8'))['rows']
+        check(0 < len(part) < 4, f"...having written the rows it did finish ({len(part)})")
+        r_c = subprocess.run(
+            [sys.executable, os.path.join(HERE, 'pretest_v20.py'), '--stub',
+             '--manifest', man, '--out', out3, '--arms', 'CF'],
+            capture_output=True, text=True, cwd=HERE)
+        check(r_c.returncode == 0 and
+              len(json.load(open(out3, encoding='utf-8'))['rows']) == 4,
+              "re-running the identical command finishes the remaining rows")
+
         # a second session merges rather than overwriting
         r3 = subprocess.run(
             [sys.executable, os.path.join(HERE, 'pretest_v20.py'), '--stub',
