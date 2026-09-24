@@ -22,7 +22,8 @@ solves, it judges each step. In the MAS it is the Verifier.
 WHY THIS PHASE IS CHEAP AND CLEAN
 ---------------------------------
 It generates nothing. It scores the 5 stored samples per row from the v21 run
-(forward passes only), so every arm below is computed on the SAME samples that
+(forward passes only, and only on the 80 of 140 rows whose samples disagree --
+a unanimous row cannot be moved by any weighting), so every arm below is computed on the SAME samples that
 produced S3 = 79 and S5 = 80. The comparison is paired by construction and
 costs ~30 GPU-minutes instead of 8 hours.
 
@@ -52,7 +53,7 @@ exploratory and must not be picked from this run.
 
 RUN
 ---
-    python score_prm_v22.py                     # Kaggle, T4 x2, ~30 min
+    python score_prm_v22.py                     # any T4 (Kaggle or Colab), ~20-30 min
     python score_prm_v22.py --analyse-only      # offline, from the scores file
     python score_prm_v22.py --stub --limit 10   # offline plumbing check
 
@@ -98,12 +99,12 @@ def split_steps(raw: str) -> List[str]:
 # ---------------------------------------------------------------------------
 
 class PRMScorer:
-    def __init__(self, name: str, four_bit: bool = True):
+    def __init__(self, name: str, four_bit: bool = True, device_map='auto'):
         import torch
         from transformers import AutoModel, AutoTokenizer
         self.torch = torch
         self.tok = AutoTokenizer.from_pretrained(name, trust_remote_code=True)
-        kw = dict(trust_remote_code=True, device_map='auto')
+        kw = dict(trust_remote_code=True, device_map=device_map)
         if four_bit:
             from transformers import BitsAndBytesConfig
             # the reward head stays in full precision: it is two small linear
@@ -297,15 +298,15 @@ def main() -> int:
             continue
         prob = texts[r['pid']]
         rec = {k: r[k] for k in ('pid', 'gold', 'set', 'S3_correct', 'S5_correct') if k in r}
+        # A row whose samples all agree cannot be moved by any weighting, so
+        # it is not scored: every arm equals plain voting there by construction.
+        unanimous = len(L.clusters([s['answer'] for s in r['samples']])) <= 1
+        rec['unanimous'] = unanimous
         rec['samples'] = []
         for s in r['samples']:
             steps = split_steps(s['raw'])
             rec['samples'].append({'answer': s['answer'], 'n_steps': len(steps),
-                                   'prm': scorer.score(prob, steps)})
-        for extra in ('R', 'R0'):
-            if extra in r:
-                rec[extra] = {'answer': r[extra]['answer'],
-                              'prm': scorer.score(prob, split_steps(r[extra]['raw']))}
+                                   'prm': [] if unanimous else scorer.score(prob, steps)})
         out.append(rec)
         if i % 10 == 0 or i == len(rows):
             print(f"  [{i:3d}/{len(rows)}] {(time.time()-t0)/max(1,i-len(prior)):.1f}s/row", flush=True)

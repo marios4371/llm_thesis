@@ -1,0 +1,128 @@
+{
+ "dataset": "gsm-plus:distraction insertion",
+ "seed": 45,
+ "n": 20,
+ "note": "v22 confirmation guard rows, disjoint from v21 guard",
+ "rows": [
+  {
+   "problem_id": "gsm-plus_1518",
+   "text": "Three friends decided to go to the fair. They bought 3 tickets for $20.25 and spent $4.50 less on food than they did on the tickets. They also decided to try out a game booth that cost $5 each, but they won a coupon that allowed them to play for free. After that, they went on 2 different rides which cost $33 each. Despite the distraction of the game booth, they agreed to split all the costs evenly. How much did each of them pay?",
+   "gold": 34.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_646",
+   "text": "Two girls each got 1/6 of the 24 liters of water, even though they initially asked for 2 liters each. Then a boy, who was previously given 3 liters but returned it, got 6 liters of water. How many liters of water were left?",
+   "gold": 10.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_2830",
+   "text": "While on vacation, John decides to engage in a variety of activities. He spends 6 hours boating and half that time swimming. He also watched 3 different shows which were 2 hours each. This was 30% of the time he spent. He spent 40% of his time sightseeing. In between these activities, he took 5 breaks of 15 minutes each to rest and hydrate, and he also spent 1 hour having lunch. However, these breaks and lunch time do not count towards the total time he spent on activities. How much time did he spend sightseeing?",
+   "gold": 20.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_2038",
+   "text": "Shelly's 3 kids spent all day at the water park. Mitchel, who had a blue swimsuit, went down the water slide 30 times. Anne, who was wearing a red swimsuit, went down the slide 30% less than Mitchel, even though she had 5 more chances to go down the slide. Robert, who was wearing a green swimsuit and had 20 more chances than Anne, went down 4 times as much as Anne. Despite the extra chances, the number of times they went down the slide remained the same. How many times did Robert, the one in the green swimsuit, go down the water slide?",
+   "gold": 84.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_10270",
+   "text": "Frances sells 20 cupcakes for $2 each, and she also sells 40 cookies at $1 each. In the midst of her sales, a customer offers her a $10 tip for her excellent service, but Frances politely declines the tip. She then buys five trays at $4 each to display her baked goods. After all these transactions, how much money does Frances have left?",
+   "gold": 60.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_3558",
+   "text": "Movie A was one-fourth the length of Movie B. Movie B was 5 minutes longer than Movie C. Movie C was 1.25 hours. There was a 15-minute intermission after each movie. How many minutes long was Movie A?",
+   "gold": 20.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_5942",
+   "text": "In a certain school, two classes have a total of 80 students. Each class has the same amount of students. In each class, 40% of the students are girls and the rest are boys. Additionally, each class has 5 teachers, but they are not included in the student count. How many boys are in each class?",
+   "gold": 24.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_190",
+   "text": "A candle melts by 2 centimeters every hour that it burns. If a gust of wind blows at 5 km/h but doesn't affect the candle's burning rate, how many centimeters shorter will the candle be after burning from 1:00 PM to 5:00 PM, despite the wind?",
+   "gold": 8.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_9158",
+   "text": "The ratio of men to women on a car is 2:1. The ratio of men to women on a bus is 5:9. If the total number of passengers on the bus is 84, and 20 women alight from the bus at the next stop, how many women have remained on the bus?",
+   "gold": 34.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_6118",
+   "text": "Leila goes to the market and buys 3 cucumbers and 2 bell peppers. Each cucumber costs $2 and each bell pepper costs $1.50, but she had a coupon that allowed her to get the bell peppers for free. Meanwhile, Jack visits the grocery store and purchases 5 tomatoes and a pack of mushrooms. The tomatoes are $1 each and the mushrooms are $4, but he decided not to use the mushrooms for the salad, so he didn't include their cost. At the same time, Chase buys 1 head of lettuce and a bunch of carrots from the farmer’s market. The lettuce costs $3 each and the carrots cost $2, but he only used the lettuce for the salad. Considering only the ingredients they used for the salad, how much did the three of them spend in total?",
+   "gold": 14.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_3822",
+   "text": "Nine of the kids in Gina's class are allergic to dairy, 6 are allergic to peanuts and 3 are allergic to both. If there are 32 kids in her class, 15 of them are girls, how many aren't allergic to anything?",
+   "gold": 20.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_1614",
+   "text": "John wins an award at work.  The award has a 1 time monetary reward of $5000 and a 5% raise in salary.  John bought a $500 bottle of wine to celebrate the good news. If he makes 2000 a week, every week of the year and he got the award on the first day of the year how much money did he make that year?",
+   "gold": 114200.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_926",
+   "text": "Sasha, a carpenter, notices that prices for lumber have gone up 50% in the last few months after she bought some lumber for a project. She also bought a new saw for $200 and a set of nails for $50, but she doesn't plan to sell these. Since she has leftover lumber, she decides to sell them. She has leftover ten 2 x 4 x 10 boards that cost her $10 each. She also has five 4 x 4 x 10 boards she bought for $16 each. If she sells all the leftover lumber at the increased price, how much profit does she make, not considering the cost of the saw and nails?",
+   "gold": 90.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_5294",
+   "text": "Roger goes to the store to buy some coffee and a donut. The regular brand of coffee he buys is priced at $5 per pound. However, due to a sudden surge in demand, his favorite brand was sold out. He had to opt for a more expensive brand that cost 20% more. He decides to buy a week's worth of coffee, knowing that he consumes 1 pound of coffee per day. On his way to the checkout, he notices a sale on tea bags, with a 50% discount on the $10 pack. Although he doesn't drink tea, he considers buying it for his friend. However, he eventually decides against it and proceeds to buy his donut for $2. How much did everything cost?",
+   "gold": 44.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_5086",
+   "text": "Manny signed up for Karate classes for $60. His parents tell him that if his classes end up costing more than $10 per class, then they won't sign him up again. Manny also signed up for a painting class that costs $30, but his parents don't care about the cost of this class. If there are 10 total Karate classes, how many Karate classes can he miss before they don't sign him up again?",
+   "gold": 4.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_6286",
+   "text": "Carrie was given ten twenties and 140 quarters by her aunt to use for lunch. If she spent all the quarters and 3/5 of the twenties, and it took an hour and a half to eat lunch, calculate the total amount of money she paid for the lunch.",
+   "gold": 155.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_4022",
+   "text": "Cherrie wants to buy Christmas gifts for her 5 friends. 2 of her friends want 5 gifts each and the other 3 friends want 2 gifts each. On her way to the store, she sees a sale for 20% off on a set of 50 gifts but decides not to buy it. Instead, Cherrie goes ahead and buys the gifts her friends want and decides to further surprise them by getting 10 more random gifts. How many gifts did Cherrie buy in total?",
+   "gold": 26.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_622",
+   "text": "If Raymond does half as much laundry as Sarah, and Sarah does 4 times as much laundry as David, calculate the difference in the amount of laundry Raymond and David do. Assume that Sarah also does 100 pounds of laundry for her neighbor and 300 pounds of laundry for herself, totaling 400 pounds of laundry.",
+   "gold": 100.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_1510",
+   "text": "A trader buys some bags of wheat from a farmer at a rate of $20 per bag. Each bag of wheat weighs 60 pounds. If it costs $2 to transport each bag from the farm to the warehouse, and the trader made a total profit of $400 after selling all the bags at a rate of $30 each, how many bags did he sell?",
+   "gold": 50.0,
+   "dataset": "gsm-plus:distraction insertion"
+  },
+  {
+   "problem_id": "gsm-plus_2782",
+   "text": "Davos went to the mall and bought 2 shirts that cost $30 each. He also saw a pair of shoes that he liked, which were priced at $50, but he decided not to buy them. Instead, he bought the shirts with a 40% discount. How much did Davos pay for the 2 shirts?",
+   "gold": 36.0,
+   "dataset": "gsm-plus:distraction insertion"
+  }
+ ]
+}
