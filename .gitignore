@@ -65,7 +65,8 @@ models--*/
 .cursor/
 
 # ----- AI tools (local session files) -----
-.claude/
+.claude/*
+!.claude/skills/
 .qodo/
 
 # ----- OS junk -----

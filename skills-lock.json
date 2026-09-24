@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "skills": {
+    "academic-plotting": {
+      "source": "Orchestra-Research/AI-research-SKILLs",
+      "sourceType": "github",
+      "skillPath": "20-ml-paper-writing/academic-plotting/SKILL.md",
+      "computedHash": "44eb3f65b52a253bc30e4f21ede90ef51f724743d20de21500132238210d2305"
+    },
+    "evaluating-llms-harness": {
+      "source": "Orchestra-Research/AI-research-SKILLs",
+      "sourceType": "github",
+      "skillPath": "11-evaluation/lm-evaluation-harness/SKILL.md",
+      "computedHash": "bb59037597fe101031982be5d665682856b6c26307c86646f900ad6092d7b63e"
+    },
+    "huggingface-papers": {
+      "source": "huggingface/skills",
+      "sourceType": "github",
+      "skillPath": "skills/huggingface-papers/SKILL.md",
+      "computedHash": "2ebe1d72b530d4d3cef0d6345d3f5cc892446af73efe0227038def6a1a3cd658"
+    },
+    "ml-paper-writing": {
+      "source": "Orchestra-Research/AI-research-SKILLs",
+      "sourceType": "github",
+      "skillPath": "20-ml-paper-writing/ml-paper-writing/SKILL.md",
+      "computedHash": "68715c9272519a5b53a5a96dad8aa344da2674769d4083584c5acb31eec0605f"
+    },
+    "peer-review": {
+      "source": "k-dense-ai/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/peer-review/SKILL.md",
+      "computedHash": "977a6360d44a1faa8b29ed75840cb45c112f1bbf4cef7902b8be8c62294e9faa"
+    },
+    "scientific-critical-thinking": {
+      "source": "k-dense-ai/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scientific-critical-thinking/SKILL.md",
+      "computedHash": "da747066d8295c06095d3a901bf6a2afbad2e6491526989262098367da63f944"
+    },
+    "serving-llms-vllm": {
+      "source": "Orchestra-Research/AI-research-SKILLs",
+      "sourceType": "github",
+      "skillPath": "12-inference-serving/vllm/SKILL.md",
+      "computedHash": "8d51c09bf42a8592a7e84fa179ceaed56b83b6fa1d682f002967d45eb40469e2"
+    },
+    "statistical-analysis": {
+      "source": "k-dense-ai/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/statistical-analysis/SKILL.md",
+      "computedHash": "8607e69dd81a18f82bd5347de06bcd64dd2c70832a3371f0e6867c8aa9c23532"
+    },
+    "statistical-power": {
+      "source": "k-dense-ai/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/statistical-power/SKILL.md",
+      "computedHash": "3652b750929c6e8c9e8a1e45435da9b1992805e442b65d839f45aae9c6570817"
+    }
+  }
+}
