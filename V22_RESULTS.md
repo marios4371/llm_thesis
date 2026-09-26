@@ -67,7 +67,11 @@ python pretest_v22.py --pooled results_September/pretest_v22_dev.json results_Se
 
 ## Next
 
-No further accuracy experiment is planned. The remaining work is writing.
+**Update 2026-09-26:** one more accuracy experiment is planned, v23 (Verifier-guided Tabu
+Restarts, an original repair method). See `V23_PLAN.md`. Its dev pass reuses the stored
+v21/v22 drafts, so it needs about 6 GPU-hours and no new drafts.
+
+Besides v23, the remaining work is writing.
 - `paper_mas_sht.tex` is synced only through v15.3. It needs the fresh-seed null, v17, the GSM-Hard audit, v20 (SC baseline), v21 (error taxonomy: role errors), and v22.
 - `references.bib` is missing from the repo; only `references_additions.bib` exists.
 - The framing: an analysis of why MAS with small models fails (defective benchmarks, coupled agents, verifiers that certify difficulty rather than correctness, role errors), plus the confirmed Solver+Verifier system. The verifier method itself is not original (Lightman 2023, Qwen PRM). The contributions are the findings.

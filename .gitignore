@@ -101,3 +101,4 @@ logs/
 # like the CSVs above, and belong in the Kaggle Output rather than the repo.
 sc_samples.jsonl
 reconcile_trace.jsonl
+pretest_v23_stub.json
