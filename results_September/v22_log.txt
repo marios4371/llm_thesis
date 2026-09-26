@@ -1,0 +1,74 @@
+rows: 140  samples: 700
+A new version of the following files was downloaded from https://huggingface.co/Qwen/Qwen2.5-Math-PRM-7B:
+- configuration_qwen2_rm.py
+. Make sure to double-check they do not contain any added malicious code. To avoid downloading new versions of the code file, you can pin a revision.
+A new version of the following files was downloaded from https://huggingface.co/Qwen/Qwen2.5-Math-PRM-7B:
+- modeling_qwen2_rm.py
+. Make sure to double-check they do not contain any added malicious code. To avoid downloading new versions of the code file, you can pin a revision.
+2026-09-24 08:33:45.421091: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:  25%|██▌       | 1/4 [00:36<01:49, 36.56s/it]Downloading shards:  50%|█████     | 2/4 [04:18<04:50, 145.47s/it]Downloading shards:  75%|███████▌  | 3/4 [06:51<02:28, 148.86s/it]Downloading shards: 100%|██████████| 4/4 [08:40<00:00, 133.18s/it]Downloading shards: 100%|██████████| 4/4 [08:40<00:00, 130.08s/it]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:18<00:54, 18.15s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:34<00:34, 17.18s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:51<00:16, 16.88s/it]Loading checkpoint shards: 100%|██████████| 4/4 [01:02<00:00, 14.55s/it]Loading checkpoint shards: 100%|██████████| 4/4 [01:02<00:00, 15.54s/it]
+Some weights of the model checkpoint at Qwen/Qwen2.5-Math-PRM-7B were not used when initializing Qwen2ForProcessRewardModel: {'lm_head.weight'}
+- This IS expected if you are initializing Qwen2ForProcessRewardModel from the checkpoint of a model trained on another task or with another architecture (e.g. initializing a BertForSequenceClassification model from a BertForPreTraining model).
+- This IS NOT expected if you are initializing Qwen2ForProcessRewardModel from the checkpoint of a model that you expect to be exactly identical (initializing a BertForSequenceClassification model from a BertForSequenceClassification model).
+  verifier Qwen/Qwen2.5-Math-PRM-7B loaded in 594s (4-bit NF4)
+We detected that you are passing `past_key_values` as a tuple and this is deprecated and will be removed in v4.43. Please use an appropriate `Cache` class (https://huggingface.co/docs/transformers/v4.41.3/en/internal/generation_utils#transformers.Cache)
+  [ 10/140] 22.0s/row
+  [ 20/140] 24.3s/row
+  [ 30/140] 24.3s/row
+  [ 40/140] 24.0s/row
+  [ 50/140] 23.9s/row
+  [ 60/140] 23.8s/row
+  [ 70/140] 23.9s/row
+  [ 80/140] 23.8s/row
+  [ 90/140] 23.7s/row
+  [100/140] 24.2s/row
+  [110/140] 24.0s/row
+  [120/140] 24.0s/row
+  [130/140] 23.8s/row
+  [140/140] 23.3s/row
+saved /content/drive/MyDrive/MAS_SHT/prm_scores_v22.json
+
+========================================================================
+  MAIN SET  n=100   aggregation (pre-registered): min
+    S3   79 =  79.0%
+    S5   80 =  80.0%
+    V3   80 =  80.0%
+    V5   83 =  83.0%
+    B3   77 =  77.0%
+    B5   80 =  80.0%
+
+    V3 vs S3: W= 3 L= 2 net=+1
+    V5 vs S5: W= 4 L= 1 net=+3
+    B3 vs S3: W= 5 L= 7 net=-2
+    B5 vs S5: W= 6 L= 6 net=+0
+    V3 vs S5: W= 5 L= 5 net=+0
+    mixed rows: best right sample outscores best wrong one in 43/54 = 80%   (chance level 60%)
+    exploratory aggregations (NOT for choosing -- report only):
+      last : V3  83  V5  82  B3  85  B5  86
+      prod : V3  80  V5  84  B3  79  B5  84
+      mean : V3  78  V5  81  B3  78  B5  83
+
+========================================================================
+  GUARD SET  n=40   aggregation (pre-registered): min
+    S3   34 =  85.0%
+    S5   32 =  80.0%
+    V3   35 =  87.5%
+    V5   33 =  82.5%
+    B3   35 =  87.5%
+    B5   36 =  90.0%
+
+    V3 vs S3: W= 1 L= 0 net=+1
+    V5 vs S5: W= 2 L= 1 net=+1
+    B3 vs S3: W= 2 L= 1 net=+1
+    B5 vs S5: W= 5 L= 1 net=+4
+    V3 vs S5: W= 3 L= 0 net=+3
+    mixed rows: best right sample outscores best wrong one in 14/16 = 88%   (chance level 56%)
+    exploratory aggregations (NOT for choosing -- report only):
+      last : V3  35  V5  33  B3  35  B5  34
+      prod : V3  35  V5  33  B3  35  B5  36
+      mean : V3  35  V5  33  B3  34  B5  34
+
+  pre-registered reading:
+    INCONCLUSIVE: V3 > S3 but short of the pass bar
