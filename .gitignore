@@ -102,3 +102,4 @@ logs/
 sc_samples.jsonl
 reconcile_trace.jsonl
 pretest_v24_stub.json
+pretest_v25_stub.json
