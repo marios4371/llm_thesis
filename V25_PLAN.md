@@ -191,3 +191,54 @@ verifier against v22's scores (drift).
   line will show whether the verifier can judge the notes themselves.
 - **INCONCLUSIVE.** Report the direction and the pooled n = 200 reading,
   and state the power honestly.
+
+## 7. Dev screen result (2026-09-28, `results_September/preset_V25_dev.json`)
+
+**SCREEN: WEAK.** RA 80 vs B5 78 on the 100 main rows (W7 L5, net +2,
+sign p = 0.77). Guard: −1, which the rule counts as no harm. Verifier drift
+against v22's stored scores: max 0.0001, so the two views were scored on the
+same scale.
+
+| arm | calls | right / 100 | oracle |
+|---|---|---|---|
+| S5 | 5 | 68 | 82 |
+| B4 | 4 | 75 | 79 |
+| **B5** | 5 | **78** | 82 |
+| **RA** | 5 | **80** | 88 |
+| RA5 | 6 | 81 | 89 |
+| RA7 | 8 | 81 | 91 |
+| VRA (vote over RA's pool) | 5 | 68 | 88 |
+| BQ5 (verifier, reading only) | 6 | 69 | 76 |
+
+What held:
+- **The pre-registered vote prediction held exactly.** VRA = S5 = 68: the
+  diversity across readings vanishes under a vote.
+- **RA − S5 = +12** at equal calls (W15 L3, p = 0.008).
+- **The coverage mechanism works when it fires.** 5 of RA's 7 wins are
+  rows where only the Reader's reading had the answer. Examples:
+  - p2_1012: 424 on all 5 plain samples, 408 under the reading;
+  - p2_1234: 260 twice under the reading, no plain sample right.
+
+What did not, and why:
+- **3 of the 5 losses are not verifier mistakes.** The right answer was only
+  in plain samples 3-5, which RA drops (p2_2022, p2_169, p2_713).
+- **The other 2 are near-ties at saturation.** 80% of all last-step scores
+  are ≥ 0.999. On 42 of the 100 rows, two different answers share the top
+  score within 0.001.
+- **The verifier's resolution at the top, not coverage, is now the
+  ceiling.** It turns the 88-91 covered rows into only 80-81 right, however
+  the pool is arranged.
+
+Explored after the screen, all reported. 10 variants were looked at, so
+none of them is a claim:
+- **Weighted votes are worse:** W-RA 73, W-B5 71.
+- **Cascades:**
+  - stop when the first two plain samples agree, else best of the 5 plain:
+    78 at 3.29 calls;
+  - the same, but best of 5 plain + 2 read: 80 at 4.58 calls.
+- **Tie-breaks among near-tied samples** (min, mean, frequency): none takes
+  RA above 81. The ones that "gain" +5 over B5 do so by lowering B5 to 75-76.
+
+**Decision support.** If the dev discordance is the true effect (W 7%, L 5%),
+the 100-row confirmation gives P(SUPPORTED) ≤ 0.29 and P(REFUTED) ≈ 0.33.
+Recommendation: do not spend the 11 GPU-hours on it as registered.

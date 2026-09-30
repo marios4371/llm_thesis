@@ -150,3 +150,55 @@ stored samples 4-5 are held out to check the sampler.
    ```bash
    python pretest_v26.py --summary-only --out results_September/pretest_v26.json
    ```
+
+## 7. Pilot result (2026-09-30, `results_September/preset_V26_dev.json`)
+
+**REFUTED, and the 2 missing rows cannot change it.** 78 of 80 rows finished;
+the 7.6 h cap stopped the run at 350 s/row, before p2_1234 and p2_713.
+- Hard rows: PCD − L0 = −9.2 pp per sample (template bootstrap [−17.0, −2.2],
+  permutation p = 0.079, rows W13 L22).
+- If PCD got both missing rows fully right (+100 pp each), the result would
+  still be −5.6 pp ≤ 0, which is REFUTED.
+- VALIDITY holds (L0 − held-out = +2.8 pp), so the new sampler is sound.
+- HARM on the easy rows: −8.3 pp.
+
+| hard rows (n=58) | per sample | rows with ≥1 right sample |
+|---|---|---|
+| L0 (plain) | **44.8%** | **41** |
+| MINP (b only) | 37.4% | 37 |
+| PCD5 (a=0.5) | 39.1% | 35 |
+| PCD (a=1) | 35.6% | 31 |
+| CADQ (question only) | 41.4% | 32 |
+
+**Why it fails.**
+- **It is not derailment.** No arm has a missing answer, and PCD hits the
+  1024-token limit less often than L0 (3.4% vs 6.8%).
+- **The truncation alone costs −7.5 pp.** On the hard rows the right path
+  starts from a LOW-probability token: the recited reading is the mode. The
+  plausibility constraint (b = 0.1, standard in CD/CAD) cuts off exactly the
+  branches that were right. Examples:
+  - p2_2257: L0 finds 6 once, and MINP/PCD never do;
+  - p2_715: L0 finds 33 once;
+  - p2_1012: L0 finds 408 once.
+  Coverage falls in step: L0 41 rows, MINP 37, PCD 31.
+- **The contrast removes a further −3.6 pp** on rows where the prototype was
+  edited (L0 39.5, MINP 32.5, PCD 28.9, n=38).
+- **The implementation behaves as designed.** Where the prototype was
+  identical, PCD ≈ MINP (48.3 vs 46.7), as it should.
+- **The Prototype agent did its part.** It removed the right twist in, for
+  example, p2_2257 "(including the plants width)" and p2_1269. It produced a
+  usable prototype on 78/78 rows, 25 identical to the problem.
+- **The flaw is the premise.** A recited reading cannot be undone
+  token-by-token inside the model's plausible set.
+
+**What this adds to the thesis.**
+1. On P2 the correct answers of hard problems live in the TAIL of the
+   sampling distribution. Sharpening (min-p style truncation, contrastive
+   decoding) lowers both accuracy and coverage. Methods that keep diversity
+   and select afterwards (SC, v22's verifier) are the ones that work.
+2. RoR-Bench's open problem is not solved by decoding-level contrast either.
+   It joins their negative results for notice prompts and modified
+   few-shots.
+
+**Decision:** do not run the confirmation (pre-registered GO requires
+SUPPORTED and no harm).
