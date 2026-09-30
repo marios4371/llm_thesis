@@ -105,3 +105,10 @@ pretest_v24_stub.json
 pretest_v25_stub.json
 pretest_v26_stub.json
 pretest_v27_stub.json
+pretest_v28_stub_w0.json
+pretest_v28_stub_w1.json
+pretest_v28_smoke_w0.json
+pretest_v28_smoke_w1.json
+v28_adapters/
+v28_adapters_stub/
+v28_adapters_smoke/
