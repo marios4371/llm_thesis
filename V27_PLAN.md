@@ -107,3 +107,42 @@ fresh rows". A fresh run must compare at equal calls: NH-RA uses 6 calls
    prototypes (about 1 hour).
 4. It prints GO / WEAK / STOP. You download `pretest_v27.json`, and I read
    it with `python pretest_v27.py --summary-only --out results_September/pretest_v27.json`.
+
+## 7. Screen result (2026-09-30, `results_September/preset_V27_dev.json`): STOP
+
+**NH-RA vs RA:** W4 L21, net −17, sign p = 0.001. NHV hurts on every pool:
+
+| pool | v22 | NH |
+|---|---|---|
+| B5 | 78 | 61 |
+| RA | 80 | 63 |
+| RA5 | 81 | 62 |
+| B10 | 81 | 62 |
+
+- Guard: −1, which is within the bar.
+- The prototypes worked: 120/120 usable, 31 identical.
+
+**Why: the verifier barely reads the problem.**
+- Its rewards under the prototype correlate r = 0.93 with its rewards under
+  the real problem.
+- The null reward is not a "twist detector". It is a weaker copy of the
+  plain correctness signal: right candidates have a mean null reward of
+  0.980, wrong ones 0.820.
+- So the prediction runs backwards: AUROC 0.24 overall, 0.30 inside the
+  RA top ties. Choosing the lowest null picks the weakest candidate in the
+  tie.
+- On the recitation rows the recited answer scores 1.000 under both
+  problems, and so does the right answer where one exists (p2_890).
+
+This is the known finding of Xu et al., "Reward Models Identify
+Consistency, Not Causality" (arXiv 2502.14619): removing the problem
+statement has minimal impact on reward scores. That paper was in the
+novelty search results but was not read before building; it predicts this
+failure.
+
+**What it adds to the thesis.** It is the mechanism behind "the verifier is
+blind to recitation". A process verifier checks the internal consistency of
+the steps, not their fidelity to THIS problem. Swapping the problem for its
+familiar version leaves its judgment almost unchanged (r = 0.93, measured on
+69 rows x 10 candidates). No selection rule built on that verifier can
+separate recited solutions from problem-specific ones.
