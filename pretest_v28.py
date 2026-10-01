@@ -63,6 +63,11 @@ MODES
     python pretest_v28.py --stub --worker 0     # offline plumbing, no GPU
 Re-running the same command resumes (prototypes, samples and training
 checkpoints are saved as they are made).
+
+ONE GPU (Colab): run the four steps one after the other, all with the same
+--out-dir (a Google Drive folder), FV first so PRIMARY is readable early:
+    --worker 0 --arms FV,  --worker 1 --arms FV,  --worker 0 --arms RW,  --worker 1 --arms RW
+MAS_SHT_Colab_v28.ipynb does exactly that and resumes across sessions.
 """
 from __future__ import annotations
 
@@ -244,6 +249,7 @@ class HFEngine:
 
     def new_adapter(self, name: str) -> None:
         from peft import get_peft_model
+        self.solver()
         if self.pm is None:
             self.pm = get_peft_model(self.base, self._lora_cfg(), adapter_name=name)
         else:
@@ -259,7 +265,7 @@ class HFEngine:
         return contextlib.nullcontext()
 
     def adapter_path(self, name: str, ckpt: bool = False) -> str:
-        d = ADAPTERS[self.args.mode]
+        d = os.path.join(getattr(self.args, 'out_dir', '.'), ADAPTERS[self.args.mode])
         os.makedirs(d, exist_ok=True)
         return os.path.join(d, f'{name}.ckpt.pt' if ckpt else f'{name}.pt')
 
@@ -549,7 +555,8 @@ def with_state(row: Dict, st: Dict) -> Dict:
 def run_worker(args) -> int:
     w = args.worker
     mode = args.mode
-    out_path = args.out or OUT[mode].format(w=w)
+    out_path = args.out or os.path.join(args.out_dir, OUT[mode].format(w=w))
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     rows = load_rows()
     P = plan(rows, w, mode)
     state = {'worker': w, 'rows': {}, 'train': {}}
@@ -558,7 +565,8 @@ def run_worker(args) -> int:
         print(f"resuming worker {w} from {out_path}")
     state['meta'] = {'mode': mode, 'k_eval': K_EVAL, 'k_guard': K_GUARD, 'k_valid': K_VALID,
                      'k_familiar': CD.K_FAMILIAR, 'temperature': args.temperature,
-                     'max_tokens': args.max_tokens, 'arms': list(args.arms),
+                     'max_tokens': args.max_tokens,
+                     'arms': sorted(set(state.get('meta', {}).get('arms', [])) | set(args.arms)),
                      'train_keys': [r['key'] for r in P['train']],
                      'eval_keys': [r['key'] for r in P['eval']],
                      'guard_keys': [r['key'] for r in P['guard']],
@@ -594,7 +602,6 @@ def run_worker(args) -> int:
                 print(f"  prototypes {i}/{len(need)}  {(time.time() - t0) / i:.1f} s each", flush=True)
         eng.free(reader)
         del reader
-    eng.solver()
 
     # 2 familiar samples -----------------------------------------------------
     need = [r for r in P['train']
@@ -625,6 +632,11 @@ def run_worker(args) -> int:
     for arm in args.arms:
         name = f'{arm}_w{w}'
         tr = state['train'].get(arm, {})
+        scored = all(len(_rec(state, r['key']).get(f'eval_{arm}', [])) >= kk
+                     for rows_, kk in ((P['eval'], K_EVAL), (P['guard'], K_GUARD)) for r in rows_)
+        if tr.get('status') == 'done' and scored:
+            print(f"  {arm}: already trained and scored", flush=True)
+            continue
         if tr.get('status') != 'done' or not eng.has_adapter(name):
             pairs = [p for r in P['train'] for p in CD.build_pairs(with_state(r, _rec(state, r['key'])), arm)]
             if mode == 'smoke':
@@ -741,7 +753,10 @@ def summarise(states: Dict[int, Dict], stub: bool = False) -> int:
     rows = load_rows()
     C = collect(states, rows)
     by = C['by']
-    arms = [a for a in CD.ARMS if any(a in st.get('meta', {}).get('arms', []) for st in states.values())]
+    # an arm counts once it has been trained on some worker: FV and RW may be
+    # run in separate sessions (one GPU), and the states are merged here
+    arms = [a for a in CD.ARMS if any(st.get('train', {}).get(a, {}).get('status') == 'done'
+                                      for st in states.values())]
     main = [by[k] for k in sorted(C['main'])]
     guard = [by[k] for k in sorted(C['guard'])]
     print('\n' + '=' * 78)
@@ -856,6 +871,8 @@ def main() -> int:
     ap.add_argument('--temperature', type=float, default=0.8)
     ap.add_argument('--max-tokens', type=int, default=1024)
     ap.add_argument('--out', default='')
+    ap.add_argument('--out-dir', default='.', help='where the worker files and adapters go '
+                    '(a Google Drive folder on Colab, so a lost session loses nothing)')
     ap.add_argument('--stub', action='store_true')
     ap.add_argument('--smoke', action='store_true')
     ap.add_argument('--no-resume', dest='resume', action='store_false')
@@ -871,11 +888,11 @@ def main() -> int:
     if args.summary_only:
         states = {}
         for w in (0, 1):
-            p = OUT[args.mode].format(w=w)
+            p = os.path.join(args.out_dir, OUT[args.mode].format(w=w))
             if os.path.exists(p):
                 states[w] = V24._read(p)
         if not states:
-            print(f"no results found ({OUT[args.mode].format(w='0/1')})")
+            print(f"no results found ({os.path.join(args.out_dir, OUT[args.mode].format(w='0/1'))})")
             return 1
         return summarise(states, stub=args.stub)
     if args.device < 0:

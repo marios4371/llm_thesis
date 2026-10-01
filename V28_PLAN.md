@@ -116,6 +116,38 @@ That is about 7-8 h in all. Each worker stops at `MAX_HOURS = 8.0`, and everythi
 4. Download `pretest_v28_w0.json` and `pretest_v28_w1.json`. Offline:
    `python pretest_v28.py --summary-only`
 
+## 7b. How to run (Google Colab, one GPU)
+
+`MAS_SHT_Colab_v28.ipynb` runs the identical screen.
+
+**The steps, in this order:**
+1. worker 0 FV
+2. worker 1 FV
+3. worker 0 RW
+4. worker 1 RW
+
+PRIMARY is readable after step 2; ATTRIBUTE after step 4. An A100 (≥ 34 GB) runs the two workers of a step side by side.
+
+**Storage.** Everything goes to `MyDrive/MAS_SHT_v28`: the worker files, the adapters, the training checkpoints and the logs. A session that ends loses at most the last batch, or the last 8 training steps.
+
+**Each session:** Runtime → Run all.
+- The tests run every time.
+- The smoke runs only in the first session.
+- Finished steps exit in seconds.
+- The last cell prints the reading, or PARTIAL if steps remain.
+
+**Time.**
+
+| GPU | until PRIMARY | everything |
+|---|---|---|
+| T4 | ~8-9 h | ~15 h |
+| A100 | | ~3-4 h |
+
+On a T4 that means several sessions.
+
+The same commands work anywhere with one GPU:
+`python pretest_v28.py --worker W --arms FV|RW --out-dir DIR`, then `--summary-only --out-dir DIR`.
+
 ## 8. Risks, stated before the run
 
 - **DPO on long reasoning often gives small gains.** The NLL term is there for that reason, but it is not a guarantee.

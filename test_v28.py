@@ -48,7 +48,7 @@ def check(cond, label):
 
 def _args(**kw):
     base = dict(worker=0, device=0, arms=list(CD.ARMS), preset='qwen_math7b_mixed', temperature=0.8,
-                max_tokens=1024, out='', stub=True, smoke=False, resume=True, max_hours=0.0,
+                max_tokens=1024, out='', out_dir='.', stub=True, smoke=False, resume=True, max_hours=0.0,
                 summary_only=False, mode='stub')
     base.update(kw)
     return argparse.Namespace(**base)
@@ -288,6 +288,29 @@ def part6():
             T.run_worker(_args(worker=1, out=cut))
         check(all(len(V24._read(cut)['rows'].get(k, {}).get('eval_FV', [])) == T.K_EVAL
                   for k in V24._read(cut)['meta']['eval_keys']), "the same command resumes it")
+        # one GPU (Colab): FV on both workers first, RW in later sessions, one --out-dir
+        od = os.path.join(d, 'drive')
+        with contextlib.redirect_stdout(io.StringIO()):
+            for w in (0, 1):
+                T.run_worker(_args(worker=w, arms=['FV'], out_dir=od))
+        seq = {w: V24._read(os.path.join(od, T.OUT['stub'].format(w=w))) for w in (0, 1)}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            T.summarise(seq)
+        s = buf.getvalue()
+        check('PRIMARY' in s and 'ATTRIBUTE not read yet' in s,
+              "FV-only sessions already give PRIMARY; ATTRIBUTE waits for RW")
+        with contextlib.redirect_stdout(io.StringIO()):
+            for w in (0, 1):
+                T.run_worker(_args(worker=w, arms=['RW'], out_dir=od))
+        seq = {w: V24._read(os.path.join(od, T.OUT['stub'].format(w=w))) for w in (0, 1)}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            T.summarise(seq)
+        check('ATTRIBUTE FV - RW' in buf.getvalue() and seq[0]['meta']['arms'] == ['FV', 'RW'],
+              "the RW sessions complete the same files, and the summary merges both arms")
+        check(all(len(seq[0]['rows'][k].get('eval_FV', [])) == T.K_EVAL for k in seq[0]['meta']['eval_keys']),
+              "an RW session leaves the FV samples untouched")
         rec = st[0]['rows']
         fam = [k for k in st[0]['meta']['train_keys'] if rec.get(k, {}).get('familiar')]
         check(fam and all(k not in st[0]['meta']['eval_keys'] for k in fam),
@@ -405,6 +428,16 @@ def part8():
     check('test_v28.py' in src and '--require-model' in src, "it runs the tests, model tests required")
     check('--smoke' in src and '--summary-only' in src, "it runs the smoke check and the summary")
     check("'--worker', '0'" in src and "'--worker', '1'" in src, "it runs both workers")
+    nb = json.load(open('MAS_SHT_Colab_v28.ipynb', encoding='utf-8'))
+    src = '\n'.join(''.join(c['source']) for c in nb['cells'])
+    check("BRANCH   = 'Context-DPO'" in src and "OUT_DIR = '/content/drive/MyDrive/MAS_SHT_v28'" in src,
+          "Colab: the Context-DPO branch, every result on Google Drive")
+    check("'--out-dir', OUT_DIR" in src and '--summary-only --out-dir' in src,
+          "Colab: the workers and the summary read and write the same Drive folder")
+    check(src.index("for arm in ('FV', 'RW')") > 0 and 'test_v28.py' in src and '--require-model' in src,
+          "Colab: tests first, then FV on both workers before RW")
+    check("'transformers>=4.44.0,<4.50'" in src and "'peft>=0.12,<0.15'" in src,
+          "Colab: the same pinned stack as the Kaggle runs")
 
 
 def main() -> int:
