@@ -113,3 +113,23 @@ These rows motivated DQ, because the error analysis read them. The screen decide
 - **The Questioner, not the answerers, is the weak link.** A 7B instruct model must spot the first divergence between two long solutions. The run stops at once if its first 8 questions are all unusable. The question report shows how many were usable and why the others were not.
 - **A factored question can still be misread.** Example: "how many groups leave" when the text lists two clubs joined by "or". The 4-of-5 rule exists to protect the 48 disputes v22 already wins.
 - **Ambiguous golds.** About 3 of the 10 lost disputes have ambiguous golds; no reading question fixes those.
+
+## 8. Screen result (2026-10-04, `results_Octomber/pretest_v29.json`): STOP
+
+Pass 1 finished on 99 of the 100 main rows; 6 guard rows and 1 main row were still missing. The verdict cannot change: DQ-B10 vs B10 is **W0 L2** (79 vs 81), so the remaining row leaves net ≤ −1.
+
+| pool | v22 | DQ |
+|---|---|---|
+| B10 | 81 | 79 (W0 L2) |
+| RA | 80 | 80 |
+| RA5 | 81 | 81 |
+| B5 | 78 | 77 |
+
+On the 57 disputes that contain the right answer, DQ is right on 46 (81%) against v22's 48 (84%). It made 2 flips, both right → wrong, and fixed nothing.
+
+**Why: the Questioner cannot localise the disagreement.**
+- **47% unusable.** 45 of 95 questions asked about a quantity BOTH solutions share (same value), not the one where they diverge. Once it even wrote "How many minutes did Solution 1 incorrectly assume…".
+- **The usable questions are mostly well-formed.** On 46 of 50 both values occur in their solution's text, and all 250 answers parsed.
+- **But the answers are not reliable enough.** On the 43 usable pairs with exactly one right solution, the factored answers side with it 74% of the time, below v22's 84% on the same disputes.
+
+**What it adds to the thesis.** The same-family 7B agents fail at a task one level easier than solving: comparing two solutions to find where they read the problem differently. Together with v24 (the Reader recites), v27 (the PRM does not read the problem) and v28 (training does not transfer), this is the fourth independent measurement of the same conclusion. Inside a small single-family MAS, nothing checks fidelity to the problem better than the generator itself.
