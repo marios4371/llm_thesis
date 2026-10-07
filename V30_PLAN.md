@@ -95,6 +95,23 @@ The dev rows motivated the idea, so a GO decides only whether a confirmation on 
 - **Format shift.** A verbatim problem as a step is unusual for the verifier. The drift gate checks the plumbing, not this; V1 (which leaves the assistant turn untouched) is the comparison.
 - **In-sample dev rows.** Hence the held-out reading and, on GO, the fresh confirmation.
 
-## 8. Screen result
+## 8. Screen result (2026-10-05, Kaggle 2×T4, `results_Octomber/preset_V30_dev.json`): STOP
 
-Not run yet.
+All passes complete (120/120 dev rows, 140 held-out rows); drift gate max 7e-8, so the plumbing reproduces v22 exactly.
+
+| | v22 | RRV (V2) | W | L |
+|---|---|---|---|---|
+| **B10 (pre-registered)** | 81 | **73** | 1 | 9 |
+| RA | 80 | 79 | 2 | 3 |
+| RA5 | 81 | 76 | 0 | 5 |
+| B5 | 78 | 70 | 0 | 8 |
+| held-out B5 (v21 rows) | 86 | 81 | 2 | 7 |
+| guard | | +1 | 1 | 0 |
+
+- **SCREEN STOP** (net −8, sign p = 0.021); **HELD INCONSISTENT**. The re-read score is worse than v22's argmax on both the dev and the held-out rows.
+- Disputes: RRV right on 40/57 (70%) vs v22's 48/57 (84%); held-out 25/34 vs 30/34.
+- **The re-read score carries less information, not more.** AUROC inside B10's ties: v22 last step 0.77, V2 0.62. V2 is not saturated (right samples mean +6.25 log-odds, wrong +5.65, heavily overlapping), so this is not a precision problem: the score after re-reading tracks the problem less well than the trace's own last step.
+- **V1 (Leviathan's front repetition) is neutral:** disputes 47/57 (82%), AUROC 0.77 = v22. Repeating the problem changes nothing; placing it after the solution makes the score worse.
+- **Mechanism check fails:** V2 vs V2p r = 0.87 (v27's V0: 0.93). Swapping the re-read copy for the familiar version lowers right and wrong samples alike (+0.49 vs +0.59 log-odds), i.e. no twist-specific sensitivity.
+
+**What it adds to the thesis.** The fifth independent measurement of the same conclusion (v24, v27, v28, v29, v30): the verifier's blindness to problem fidelity is not an input-ordering artifact that causal attention explains. Re-reading, the cheapest possible intervention, neither makes Qwen2.5-Math-PRM-7B problem-aware (r 0.93 → 0.87) nor helps selection; it extends Xu et al. 2025 to this PRM and shows that prompt repetition, which helps non-reasoning generators (Leviathan et al. 2025), does not transfer to a discriminative verifier.
