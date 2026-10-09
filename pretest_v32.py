@@ -53,6 +53,7 @@ import gc
 import json
 import os
 import random
+import re
 import shutil
 import sys
 import time
@@ -595,7 +596,44 @@ def run(args) -> int:
     return summarise(rows, recs)
 
 
+_CRED = re.compile(r'(https?://)[^/@\s"\']+@')
+
+
+def scrub_git_credentials(repo_dir: str = '.') -> int:
+    """Cell 1 of the Kaggle notebooks clones with https://<token>@github.com/...
+    when a GITHUB_TOKEN secret is set, and git keeps that URL in .git/config,
+    FETCH_HEAD and the reflog. Kaggle saves /kaggle/working, this clone
+    included, as the notebook's Output, so the token must be gone before
+    anything is saved. The repository is public, so fetching still works
+    without it. It lives here, not in a notebook cell, because Kaggle's copy of
+    a notebook does not follow git (cells are not re-imported on pull).
+    Returns the number of files changed."""
+    git = os.path.join(repo_dir, '.git')
+    if not os.path.isdir(git):
+        return 0
+    targets = [os.path.join(git, 'config'), os.path.join(git, 'FETCH_HEAD')]
+    for root, _, files in os.walk(os.path.join(git, 'logs')):
+        targets += [os.path.join(root, f) for f in files]
+    changed = 0
+    for p in targets:
+        try:
+            with open(p, encoding='utf-8', errors='surrogateescape') as fh:
+                s = fh.read()
+        except OSError:
+            continue
+        t = _CRED.sub(r'\1', s)
+        if t != s:
+            with open(p, 'w', encoding='utf-8', errors='surrogateescape') as fh:
+                fh.write(t)
+            changed += 1
+    if changed:
+        print(f"  removed a credential from {changed} git metadata file(s) before any output is saved")
+    return changed
+
+
 def main() -> int:
+    if '--stub' not in sys.argv:
+        scrub_git_credentials(os.path.dirname(os.path.abspath(__file__)))
     ap = argparse.ArgumentParser()
     ap.add_argument('--v25', default=T30.DEV_V25)
     ap.add_argument('--v26', default=T30.DEV_V26)

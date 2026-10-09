@@ -181,6 +181,24 @@ def part3():
     except ValueError:
         bad = True
     check(bad, "a batched call that returns the wrong number of sequences raises")
+    with tempfile.TemporaryDirectory() as tmp:
+        g = os.path.join(tmp, '.git')
+        os.makedirs(os.path.join(g, 'logs', 'refs', 'heads'))
+        files = {os.path.join(g, 'config'): '[remote "origin"]\n\turl = https://ghp_SECRET123@github.com/u/r.git\n',
+                 os.path.join(g, 'FETCH_HEAD'): "abc\t\tbranch 'main' of https://ghp_SECRET123@github.com/u/r\n",
+                 os.path.join(g, 'logs', 'HEAD'): '0 abc x <x> 1 +0 clone: from https://ghp_SECRET123@github.com/u/r.git\n',
+                 os.path.join(g, 'logs', 'refs', 'heads', 'main'): '0 abc x <x> 1 +0 ssh git@github.com:u/r.git\n'}
+        for p, s in files.items():
+            with open(p, 'w', encoding='utf-8') as fh:
+                fh.write(s)
+        with contextlib.redirect_stdout(io.StringIO()):
+            n = T.scrub_git_credentials(tmp)
+        after = {p: open(p, encoding='utf-8').read() for p in files}
+        check(n == 3 and not any('SECRET' in s for s in after.values())
+              and 'url = https://github.com/u/r.git' in after[os.path.join(g, 'config')]
+              and 'git@github.com:u/r.git' in after[os.path.join(g, 'logs', 'refs', 'heads', 'main')],
+              "a GitHub token in the clone URL is removed from .git/config, FETCH_HEAD and the reflog "
+              "(Kaggle saves the clone as Output); ssh remotes are left alone")
     saved = RJ.jury_choice
     RJ.jury_choice = _plumbing          # the stub run must exercise the verdicts whatever the user wrote
     try:
