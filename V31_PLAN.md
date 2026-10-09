@@ -71,6 +71,19 @@ On GO, the confirmation is the fresh seed-48 rows (`pretest_data/v25_confirm_p2.
 - **A weaker juror.** It only has to prefer the right *tied* answer over the wrong one. Its own accuracy can be below Qwen's, as long as its wrong answers scatter.
 - **Dev rows read by the error analysis.** Hence the held-out reading and, on GO, the fresh confirmation.
 
-## 8. Screen result
+## 8. Screen result (2026-10-08, Kaggle, `results_Octomber/preset_V31_dev.json`): STOP
 
-Not run yet.
+| | v22 | XJ | W | L |
+|---|---|---|---|---|
+| **B10 (pre-registered)** | **81** | **75** | 3 | 9 |
+| B5 | 78 | 75 | 1 | 4 |
+| held-out B5 | 86 | 82 | 2 | 6 |
+| guard | | ±0 | 2 | 2 |
+
+- **SCREEN STOP** (net −6, sign p = 0.146); **HELD INCONSISTENT**. Ties right: XJ 42/57 (74%) vs v22 48/57 (84%); held-out 26/34 vs 30/34.
+- **The juror is too weak to arbitrate:** DeepSeek-Math-7B-RL gets 44.8% of its samples right (some sample right on 69/100 rows), against roughly 60% for Qwen. The second family is weaker still (OLMo-2-7B: 21.2%, exploratory, 16 rows).
+- **But the errors ARE decorrelated: the shared-error floor on recitation is low.** On the 13 dev rows where ≥ 3/5 Qwen samples agree on a wrong answer, the juror's plurality repeats that answer on 1 (8%); it is right on 5 and a *different* wrong answer on 7. Held-out: 1/7 (14%). This matches Tan et al.'s 5–20% cross-family overlap and answers the Jury paper's open ceiling for this error type: P2 recitation errors are model-specific, not a shared misconception.
+- EXPLORATORY Jury-10 (plain vote over Qwen C5 + juror 5, no PRM): 76 vs Qwen SC@5 68 (+8), still below v22's B5 78.
+- Post hoc (EXPLORATORY, not claims): overriding only on ≥ 3/5 juror votes gives dev B10 82 / B5 79 but held-out B5 85 vs 86; adding Qwen tie counts gives 82 / 77 / 84. Nothing survives the held-out rows.
+
+**What it adds to the thesis.** Heterogeneity supplies exactly the decorrelation the five same-family screens lacked (shared-error floor 8–14%), but a cross-family juror helps only if it is roughly as accurate as the generator. Inside v22's ties the PRM is already right 84–91%, so a 45%-accurate juror loses more ties than it wins. The lever is real; its price is a juror of comparable strength.
