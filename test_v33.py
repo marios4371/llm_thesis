@@ -128,6 +128,10 @@ def part3():
         run = [i for i in (js.find('pretest_v33.py --max-hours'), js.find("'pretest_v33.py', '--out'")) if i >= 0]
         check(t >= 0 and "'test_v25.py'" in js and bool(run) and t < min(run),
               f"{nb} runs test_v25.py and test_v33.py before the GPU run")
+        if 'Kaggle' in nb:
+            src = ''.join(''.join(c['source']) for c in cells)
+            check('{_gh_token}@' not in src and 'http.extraHeader' in src,
+                  f"{nb} never puts the GitHub token in a URL (git would store it in the clone Kaggle saves)")
 
 
 def main():
