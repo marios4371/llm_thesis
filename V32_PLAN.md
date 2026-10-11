@@ -132,6 +132,24 @@ return score.index(best)
 4. **Power.** With 100 rows, +3 is about the noise floor. A GO only earns a fresh-row confirmation; it is not a thesis claim.
 5. **Disk and time.** About 54 GB of checkpoints. A Reader's download is removed if less than 30 GB of disk is left. A session that stops at `--max-hours` resumes from the saved file.
 
-## 8. Screen result
+## 8. Screen result (2026-10-11, Kaggle, `results_Octomber/preset_V32_dev.json`): STOP by futility
 
-Not run yet.
+The session ended with 90/100 dev main rows done and 0/20 guard rows. So the pre-registered reading did not print. It no longer depends on the missing rows:
+
+| | n | v22 rule | jury rule |
+|---|---|---|---|
+| B10 (comparator) | 100 | 81 | 81 |
+| RJ = C5 + F1×2 + F2×2 | 90 | 71 | **67** |
+
+- **RJ vs B10 on the 90 rows: W1 L8, net −7, sign p = 0.039.**
+  - GO needs W ≥ 2L, which is impossible even if all 10 missing rows were wins (11 vs 8).
+  - WEAK needs at least 8 wins in 10.
+- **The rule makes it worse, not better.** RJ vs the same pool under v22's rule is W2 L6.
+- **The foreign readings hurt the Solver.** Per-sample accuracy is F1 41.7% and F2 42.8%, against 59.6% plain and 56.4% under the Qwen Reader. The damage is largest where the Solver was right: on rows with 4–5/5 plain samples right, F1 gives 55.8% and F2 60.5%, against 94.4% plain.
+- **Mechanism 1: the Readers' arithmetic leaks into the reading.** v24's Reader prompt allows "one simple calculation". The foreign models get those calculations wrong, and the Solver adopts them, exactly as v24 measured.
+  - Example, p2_1012: Phi writes ½ × 884 = **546**, Granite **438**; the right value is 442. Both views answer 424, against a gold of 408.
+  - So the design assumption that "the foreign model contributes none of its arithmetic" did not hold.
+- **Mechanism 2: no decorrelation through reading.** On rows where ≥ 3/5 plain samples agree on a wrong answer, the foreign views repeat it on 35% (F1) and 40% (F2) of samples. The Qwen Reader view repeats it on 40%. When the foreign model SOLVES (v31), the figure is 8–14%. Qwen's errors live in Qwen's solving, so they survive a foreign reading.
+- Readings were usable on 100/100 rows (7.2 and 7.6 notes per row), so the format was not the problem.
+
+**For the thesis:** decorrelation across families belongs to the solver, not to the reader. Giving a strong solver another family's reading imports that family's mistakes without removing the solver's own. This is the reading-side counterpart of v31: there, the foreign model was decorrelated but too weak to arbitrate.
