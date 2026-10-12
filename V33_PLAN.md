@@ -94,6 +94,29 @@ These are the stored v22 seed-45 rows. The gate and the Reader were fixed before
    - PRIMARY 1 (vs SC) has the power: the dev effect is +12 against a bar of +5.
 3. **A Reader failure.** If the Reader writes nothing usable, gated rows fall back to plain samples (VGRA ≈ ADAPT). `pretest_v25.py` aborts if its first 5 readings are unusable.
 
-## 8. Result
+## 8. Result: FINAL (2026-10-12, 100 main + 20 guard, `results_Octomber/pretest_v25_2ndsession.json`)
 
-Not run yet.
+**Pre-registered reading:**
+- **PRIMARY 1, INCONCLUSIVE:** VGRA 78 vs SC@5 74, W7 L3, net +4, p = 0.34 (bar: +5 and p < 0.05).
+- **PRIMARY 2, NOT MET:** VGRA 78 vs B5 81, W2 L5, at 3.51 calls/row.
+- **GUARD, no harm:** −1.
+
+**The Reader routing did not replicate.**
+- On the 17 gated rows the Reader view gets 6 right, while two more plain samples get 10.
+- The dev effect (11 vs 7 on 16 rows) was in-sample.
+
+**What DID replicate** (reported as a replication; not a v33 primary):
+- The v22 ADAPT rule is fixed since v22: when the min step reward of the best of 3 samples is below 0.85, it adds C4 and C5.
+
+| set | ADAPT5 | B5 | SC@5 | ADAPT5 calls/row |
+|---|---|---|---|---|
+| v25 confirmation (100) | 82 | 81 | 74 | 3.34 |
+| v22 confirmation (100) | 76 | 78 | 68 | 3.32 |
+| **pooled, 200 fresh P2 rows** | **158** | **159** | **142** | **3.33** |
+
+**Pooled comparisons:**
+- **ADAPT5 vs SC@5: +16, W20 L4, p = 0.0015.**
+- ADAPT5 vs B5: −1 (W2 L3) at 67% of B5's compute.
+- ADAPT5 vs B3: +8 (W9 L1, p = 0.02).
+- B5 vs SC@5: +17 (p = 0.0009).
+- Guard, 40 rows: all arms score 35.
