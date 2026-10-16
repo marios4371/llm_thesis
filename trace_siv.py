@@ -146,6 +146,8 @@ def normalize(s: str) -> Optional[Tuple[str, frozenset]]:
     """One side of a claim -> (python expression, unit-symbol names), or None if
     out of scope. Words inside \\text{} become UNIT SYMBOLS, so `19 min + 18 min
     = 37 min` is checkable while `60 min = 1 hour` or `11 remainder 8` is not."""
+    if re.search(r'[0-9A-Za-z}]\s*_\s*\{?\s*[0-9A-Za-z]', s):
+        return None                    # [v35.1] subscripts: `11111111_2` is base 2, not 111111112
     s = s.replace('\\left', '').replace('\\right', '').replace('\\!', '').replace('\\,', '').replace('\\;', ' ')
     s = s.replace('\\displaystyle', '').replace('\\$', '').replace('$', '')
     for c in _CURRENCY:
@@ -341,23 +343,38 @@ def _runon(parts: Sequence[str], i: int) -> bool:
     return left is not None and head is not None and abs(left - head) <= 1e-6 * max(1.0, abs(left))
 
 
+_DISOWNED = re.compile(r'\b(?:false|contradiction|not true|impossible|incorrect|mistake|not equal|error)\b', re.I)
+
+
 def check_step(step: str) -> List[Verdict]:
     out: List[Verdict] = []
+    # [v35.1] a step that itself calls something false (`0 \equiv 1 \pmod{2}`, which is
+    # false; "wait, that is a mistake") is not asserting its claims: never refute it
+    disowned = bool(_DISOWNED.search(_MATH_SEG.sub(' ', step)))
     for seg in segments(step):
-        if '\\equiv' in seg:
-            out += [(seg.strip()[:160], v) for v in _congruences(seg)]
+        if disowned:
+            out += [x for x in _claims(seg) if x[1] == TRUE]
             continue
-        toks = re.split(r'(=|\\approx|≈)', seg)
-        parts, rels = toks[0::2], toks[1::2]
-        for i in range(len(parts) - 1):
-            a, b = parts[i], parts[i + 1]
-            if not a.strip() or not b.strip():
-                continue
-            v = check_pair(a, b, approx=rels[i] != '=')
-            if v == FALSE and _runon(parts, i):
-                v = None
-            if v:
-                out.append((f"{a.strip()} {rels[i]} {b.strip()}"[:160], v))
+        out += _claims(seg)
+    return out
+
+
+def _claims(seg: str) -> List[Verdict]:
+    """The verdicts of one math segment (a chain `a = b = c`, or a congruence)."""
+    if '\\equiv' in seg:
+        return [(seg.strip()[:160], v) for v in _congruences(seg)]
+    out: List[Verdict] = []
+    toks = re.split(r'(=|\\approx|≈)', seg)
+    parts, rels = toks[0::2], toks[1::2]
+    for i in range(len(parts) - 1):
+        a, b = parts[i], parts[i + 1]
+        if not a.strip() or not b.strip():
+            continue
+        v = check_pair(a, b, approx=rels[i] != '=')
+        if v == FALSE and _runon(parts, i):
+            v = None
+        if v:
+            out.append((f"{a.strip()} {rels[i]} {b.strip()}"[:160], v))
     return out
 
 

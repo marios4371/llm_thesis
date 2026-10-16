@@ -131,3 +131,42 @@ The honest label is **partially original**: original audit and findings, known t
 ## 7. Thesis framing
 
 SIV is the original mechanism. Its measured profile (refutations right, passes uninformative, blueprint the bottleneck) dictated its final role. In that role it is a free, deterministic refuter applied to the Solver's own trace, composed with verifier-routed sampling. The three-class error taxonomy (scattered slips / correlated slips / correlated misreadings) explains when each component helps, and it names the residual (recitation) that no same-family component fixes.
+
+## 8. Result (2026-10-15, 80/80 rows; Kaggle rows 48-79 `results_Octomber/pretest_v35.json` + Colab rows 0-47 `results_Octomber/pretest_v35_colab.json`)
+
+The checker and policy were frozen: trace_siv.py sha256 296ac4882e53, refutes() sha256 c6ddc9369e9a.
+
+| arm | right / 80 | calls/row |
+|---|---|---|
+| SC@5 | 71 | 5 |
+| B5 | 72 | 5 |
+| ADAPT (v22) | 70 | 3.33 |
+| **ADAPT-R** | **71** | **3.30** |
+
+**Pre-registered reading:**
+- **PRIMARY INCONCLUSIVE.** ADAPT-R vs ADAPT is W1 L0, net +1. The bar was +3.
+- **SECONDARY NON-INFERIOR.** ADAPT-R vs SC@5 is W2 L2, net 0.
+
+**Why so small: opportunities, not misses.** Refutation can only change a row where ADAPT is wrong although the pool holds a right sample. That happened on 5/80 rows, against about 10/69 in v34 L3-5. 5 of the 80 rows have no right sample at all.
+- On the 5 opportunities, the audit fixed **math500_436**: two wrong `3` samples were refuted and `4` was picked.
+- The other 4 wrong picks contain no false claim.
+  - math500_50 and math500_292 are the PRM-saturation-on-a-wrong-singleton pattern of v34. Here the singletons' errors were not arithmetic, so they could not be checked.
+  - math500_385 and math500_222 are clean disputes.
+- The regime gap itself was smaller on these rows: ADAPT 70 vs SC@5 71, against −5 in v34 L3-5.
+
+**Never harmful.** ADAPT-R has 0 losses to ADAPT on the fresh rows, and 0 losses in 560 rows over every pool (P2a, P2b, MATH, V21, guards, v35).
+
+**Fresh precision audit (14 FALSE verdicts inside right samples, 11/343 right samples refuted vs 12/47 wrong):**
+- **8 are genuine false claims the model recovered from:** `2009 = 7×49`, `1+2+3−4+5+6 = 11`, `11111×27 = 300000`, `10^5 ≡ 18370 (mod 41)`, `10^5 ≡ 9990 (mod 271)`.
+- **5 are one parser bug.** In math500_278, `11111111_2` (a base-2 subscript) is read as Python's underscore digit literal. All five samples were refuted; the v22 fallback kept the answer and cost +2 calls.
+- **1 is a claim the model states as false.** In math500_479 it writes "`0 ≡ 1 (mod 2)`, which is false".
+- Neither false-positive class changed an answer. Fixing them (a `_<digits>` subscript guard, and skipping claims followed by "is false" or "contradiction") is post-hoc work for the next version, not for this verdict.
+
+**Mechanism numbers, replicated on fresh rows:**
+- The PRM gives ≥ 0.9 to 11/29 provably false steps (38%; the stored pools gave 29–40%).
+- The audit refutes 12/47 wrong samples (26%; stored: 19–28%).
+
+**What this supports in the thesis:**
+- Trace-level SIV is a free (0 calls), deterministic, never-harmful refuter that repairs one specific failure of verifier selection: the PRM picking a sample with a checkable slip.
+- How much it gains depends on how often that failure occurs. It was +4/100 on v34 MATH, +2/200 on P2, +1/100 on V21 and +1/80 on fresh MATH L3-5. The pooled total is W8 L0 over 560 rows, but most of that is in-sample.
+- The pre-registered claim "+3 on 80 fresh MATH rows" is NOT confirmed.
