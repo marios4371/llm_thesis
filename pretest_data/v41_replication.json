@@ -1,0 +1,2246 @@
+{
+ "dataset": "v41: v38 replicated on every unused clean GSM-Hard row >= 1e4",
+ "seed": 41,
+ "n": 319,
+ "used_before": [
+  "pretest_data/v38_surgery.json",
+  "pretest_data/v36_arith.json",
+  "pretest_data/large_number_rows.json",
+  "pretest_data/clean_large_number_rows.json"
+ ],
+ "rows": [
+  {
+   "problem_id": "gsm-hard_41",
+   "text": "A raspberry bush has 6 clusters of 7077300 fruit each and 67 individual fruit scattered across the bush. How many raspberries are there total?",
+   "gold": 42463867.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_670",
+   "text": "Benny threw bologna at his balloons.  He threw two pieces of bologna at each red balloon and 2265371 pieces of bologna at each yellow balloon.  If Benny threw 58 pieces of bologna at a bundle of red and yellow balloons, and twenty of the balloons were red, then how many of the balloons in the bundle were yellow?",
+   "gold": 7.9457e-06,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_577",
+   "text": "Jamie earns $2718326 per hour for 8 hours of work each day. Should she need to work additional hours, she is paid a special hourly rate that is 150% of her regular hourly rate. Last Tuesday, she worked 11 hours. How much was she paid, in dollars, for her work that day?",
+   "gold": 33979075.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1146",
+   "text": "Farmer Brown has 5374841 animals on his farm, all either chickens or cows. He has twice as many chickens as cows. How many legs do the animals have, all together?",
+   "gold": 14332909.333333334,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_448",
+   "text": "Each pole on a road intersection has 4 street lights. If the number of poles at each intersection is 1301977, and the road has 4 intersections, calculate the total number of functioning street lights if 20 streetlights from the total number are not working.",
+   "gold": 20831612.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_832",
+   "text": "Mason likes eating carrots. If he eats 4 carrots each on weekdays and 7292325 carrots each on Saturday and Sunday, how many carrots does he eat a week?",
+   "gold": 14584670.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_311",
+   "text": "There were 5166095 cats on a rock. Four boats came and carried away 5 cats each, and later, 3/5 of the remaining cats ran after a mouse they'd seen. How many cats were left on the rock?",
+   "gold": 2066430.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_408",
+   "text": "A stickler for health, Octavia drinks half the daily recommended cups of coffee. By contract, Octavia’s husband Juan drinks 10 times the amount of coffee she drinks. Juan’s doctor has asked him to reduce his coffee intake to the daily recommendation of 7219263 cups. By how many cups must Juan reduce his daily coffee intake?",
+   "gold": 28877052.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_931",
+   "text": "A company produces chocolate in bars. In one day, it can produce 4933506 bars. The company sells all the produced bars for $2 per bar. How much money will the company receive for selling produced chocolate bars during two weeks?",
+   "gold": 138138168.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_30",
+   "text": "Charlie wants to sell beeswax candles.  For every pound of beeswax, he can make 10 tapered candles.  One pound of beeswax and the wicks cost $10.00 in supplies.   If he sells each candle for $2.00 each, what is his net profit if he makes and sells 1080379 candles?",
+   "gold": 1080379.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_939",
+   "text": "Randy has 2796074 oatmeal cookies, 4 chocolate chip cookies, and 5 sugar cookies. He ate 3 cookies for an early day snack, one of each flavor. He ate 2 oatmeal cookies for lunch. He gives 2 sugar cookies to his friends. Then, he bakes 4 of each flavor for dinner. How many cookies does he have now?",
+   "gold": 2796088.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_518",
+   "text": "A company wanted to buy 500 computers and had $1684916 for each computer. However, when they went to order, they realized the price of each computer was 10% higher than they had planned for. Calculate the total amount of money they paid to buy the computers at the new prices.",
+   "gold": 926703800.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_860",
+   "text": "Mr. Maxim works at The Best Cookeries Around restaurant. On a particular day, 3937468 people entered the restaurant in the morning to eat. At around 10:00, 40 more people entered the restaurant and ordered the same amount of food as the first people. After a while, twice the number of people who entered the restaurant at 10:00 came in and ordered lunch. By evening, an additional 3 times as many people as the number that came in first had entered the restaurant. Calculate the total number of people that entered the restaurant on that day.",
+   "gold": 15749992.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_932",
+   "text": "Jake is shopping at a clothing store. The store has a buy one get one 50% off deal on T-shirts. Jake buys 2 T-shirts. The original price of each T-shirt is $1036475. Then, Jake buys a pair of shoes that is 40% off the original price. The original price of the shoes is $40. What is the total amount of money Jake spends at the store?",
+   "gold": 1554736.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1038",
+   "text": "Three people divided an amount of $5601592. The second took $80 more than the first and the third took twice what the second took. Calculate the share of the first one.",
+   "gold": 1400338.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_675",
+   "text": "To raise money for their class fund, each of the 3063160 students from one class sold lollipops that cost $0.8 per lollypop. On average, each student sold 10 lollipops. If they bought the lollipops for $0.5 each, how much money was the class able to raise from the profit of selling lollipops?",
+   "gold": 9189480.000000002,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1197",
+   "text": "Ellen decided to play a prank on her friend. She got a case of 12 sodas and shook 6143608 of them up. Then she took 1 unshaken soda for herself and left. Ellen's brother stopped by and took 1 of the shaken sodas and 2 of the unshaken sodas, then Ellen's friend came along. What is the likelihood, expressed as a percentage, that Ellen's friend gets sprayed with soda from a shaken can?",
+   "gold": 51196733.33333333,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1148",
+   "text": "Heather bought a jumbo bag of raisins with 6483268 cups of raisins in it. She wants to make oatmeal cookies, granola, and snack mix with the raisins. A batch of oatmeal cookies takes 3/4 of a cup of raisins. How many batches of oatmeal cookies can Heather make if she divides the bag of raisins equally among the cookies, granola, and snack mix?",
+   "gold": 2881452.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_172",
+   "text": "There are 296509 penguins sunbathing in the snow.  One-third of them jump in and swim in the ocean.  Another one-third go inside the cave to eat their dinner.  How many penguins are still left sunbathing?",
+   "gold": 98836.3333333334,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1174",
+   "text": "Julia’s boat sprang a leak while she was out on the lake. The boat was taking on 9375033 liters of water for every ten feet she rowed back towards shore. It took her sixteen seconds to row twenty feet. The shore was 64 seconds away. How much water had the boat taken on by the time Julia reached shore?",
+   "gold": 75000264.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_491",
+   "text": "Three people invested $9065135 in a joint savings account.  After Dylan's investment of 2/5 of the total amount, Frances invested 2/3 of the remaining amount.  Skyler's investment accounted for the rest. How much money was Skyler's investment?",
+   "gold": 1813027.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1007",
+   "text": "Gretchen has 7064386 coins. There are 30 more gold coins than silver coins. How many gold coins does Gretchen have?",
+   "gold": 3532208.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_117",
+   "text": "Sandra's neighbor gives her a basket of 9 eggs every time she babysits their daughter. To make a Spanish flan, she needs 7819475 eggs. If Sandra has been tasked to make 15 Spanish flans for her school fundraiser, how many times does Sandra have to babysit?",
+   "gold": 13032458.333333334,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_447",
+   "text": "The school auditorium has 8085399 rows of seats. There are 18 seats in each row. One-fourth of the seats were occupied by the administrators. One-third of the remaining seats were occupied by the parents and the rest were occupied by the students. How many students were there in the school auditorium?",
+   "gold": 72768591.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_351",
+   "text": "Belen has two kinds of pennies, a 2010 penny and a 1959 penny. The 2010 penny is three-quarters of the weight of the 1959 penny. If the 1959 penny weighs 5244240 grains, what is the combined weight of the two pennies?",
+   "gold": 9177420.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1",
+   "text": "A robe takes 2287720 bolts of blue fiber and half that much white fiber.  How many bolts in total does it take?",
+   "gold": 3431580.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_82",
+   "text": "John buys 2 pairs of shoes for each of his 3 children.  They cost $8553000 each.  How much did he pay?",
+   "gold": 51318000.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1088",
+   "text": "Finn watches 11 tadpoles swimming in the pond.  Suddenly he sees 9305284 of them come out of hiding from under a lily pad ,then he sees 2 of them hide under a rock.  How many tadpoles can Finn see in the pond now?",
+   "gold": 9305293.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_342",
+   "text": "Bob is in charge of doing laundry for a large hotel. Each room has 9247888 sheets, one comforter, twice as many pillow cases as sheets and twice as many towels as pillow cases. How many pieces of laundry are there in 80 rooms?",
+   "gold": 5178817360.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_103",
+   "text": "Jordan plays video games for 2 hours every day. He also has a part-time job where he earns $6771144 an hour. How much money would Jordan earn in one week if he spent his video game time working instead?",
+   "gold": 94796016.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1032",
+   "text": "The Kennel house keeps 3 German Shepherds and 1299277 Bulldogs. If a German Shepherd consumes 5 kilograms of dog food and a bulldog consumes 3 kilograms of dog food per day. How many kilograms of dog food will they need in a week?",
+   "gold": 27284922.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_763",
+   "text": "Alison qualified for a spot on the running team, so she went shopping for some athletic gear. She bought a tank top for $7638700, a pair of running shorts for $5 more than the top cost, and a pair of tennis shoes that were originally $48 but were on sale for half price. She had a coupon for $2 off the package of $8 athletic socks that she also bought. How much did she spend on athletic gear?",
+   "gold": 15277435.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_127",
+   "text": "Lloyd earns $7442649 an hour on Math tutoring.  He tutored 5 hours for the first week and 8 hours for the second week. How much did he earn for the first two weeks?",
+   "gold": 96754437.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1012",
+   "text": "Maria invited 3277850 of her friends over for a water balloon fight in the backyard. At the start of the game, Maria gave each of her friends 2 water balloons. She had one water balloon for herself.  Then her mom came out and gave each person 3 more balloons.  How many total balloons did the girls have?",
+   "gold": 16389254.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_539",
+   "text": "Jeremy saw 4324663 birds in their backyard and threw a stone at them, scaring away 1/3 of that number. A few minutes later, 20 more birds joined the fearless birds. How many birds are now in the backyard?",
+   "gold": 2883128.666666667,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_537",
+   "text": "Cecelia went to the milk store and found out that a gallon jar costs $2 more than a half-gallon jar. If a gallon jar costs $9066468, calculate the total amount of money she spent on 10-gallon jars and 16 half-gallon jars.",
+   "gold": 235728136.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_616",
+   "text": "Brenda invested $7270258 into a scheme that accumulates simple interest at the rate of three-quarters of the original amount per year. How much in total will she have after 3 years?",
+   "gold": 23628338.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_145",
+   "text": "John wins an award at work.  The award has a 1 time monetary reward of $5000 and a 5% raise in salary.  If he makes 8152111 a week, every week of the year and he got the award on the first day of the year how much money did he make that year?",
+   "gold": 445110260.6,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1183",
+   "text": "At the Burger Palace restaurant, there is an enormous jar containing red, blue and green jelly beans.  On the outside of the jar is a note that reads, \"This jar contains 1% fewer red jelly beans than blue jelly beans and 1% more green jelly beans than blue jelly beans.\"  If the jar contains a total of 5546400 jelly beans, how many more green jelly beans does it contain than red jelly beans?",
+   "gold": 36976.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1019",
+   "text": "Susan earns $9710696 every 10 minutes for an online task she does. If she works between 8 a.m. and 11 a.m. and pauses in between for half an hour, how much money does she earn for the online task?",
+   "gold": 145660440.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1093",
+   "text": "Carly had 1489106 cards, 2/5 of the cards had the letter A on them, 1/2 of the remaining had the letter B, 5/8 of the rest had the letter C on them, and the others had the letter D. How many of the cards had the letter D on them?",
+   "gold": 167524.425,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_919",
+   "text": "Avery needs to buy a 3 piece place setting (dinner & salad plate and a bowl) for her holiday dinner.  She’s having 12 people over for dinner.  If the dinner plates cost $9613754 each and bowls each cost $5.00 and the salad plates cost $4.00, how much will she spend on place settings?",
+   "gold": 115365156.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_353",
+   "text": "Stetson made a bet with Alec that he would give up $10 for each orange he eats. While at the farm, Stetson ate 2/5 of the oranges they picked. If they picked 9935353 oranges, calculate the total amount of money Stetson gave up?",
+   "gold": 39741412.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_179",
+   "text": "Griffin had 24 french fries, but Kyle took 4031825 of them.  Billy took twice as many as Kyle.  Ginger gave Griffin a handful of her fries, and then Colby took from Griffin 3 less than the number of fries that Kyle had taken.  If in the end Griffin had 27 fries, how many fries did Ginger give Griffin?",
+   "gold": 16127300.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_795",
+   "text": "Bobby takes a 7797436 min lunch and 2 15 minutes break per day at the office.  After 5 days, how many hours do his lunches and breaks add up to?",
+   "gold": 649788.8333333333,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_909",
+   "text": "Conor lives near a beach and loves going there every day to have fun. On a particular week, he found 9493424 people at the beach on the first day. The next day, 20 more people were present at the beach than on the first day, and on the third day, the total number of people increased to twice the number that were there on the second day. If Conor saw an average of 60 people each day the rest of the week, calculate the total number of people Conor saw at the beach that week.",
+   "gold": 37973996.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_292",
+   "text": "The ratio of popsicles that Betty and Sam have is 5:6. If the total number of popsicles they have together is 9381115, how many more popsicles does Sam have more than Betty?",
+   "gold": 852828.6363636367,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1267",
+   "text": "Aiden and 12 of his friends are going to see a film at the cinema, and meet up with 7804773 more friends there. They each save a seat and then buy enough drinks and snacks to fill the seats. Each seat has enough room to hold one person, two drinks, and three snacks. If drinks and snacks cost $2 each, how much money, in dollars, has the group spent overall on snacks and drinks?",
+   "gold": 78047860.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_808",
+   "text": "In Tate’s garden pond, there are 4 male guppies, 1278904 female guppies, 3 male goldfishes, and 5 female goldfishes.  He buys 2 male guppies, 1 female guppy, 2 male goldfishes, and 3 female goldfishes.  How many more female fishes than male fishes does Tate have?",
+   "gold": 1278902.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_701",
+   "text": "Coach brought one bag filled with basketballs to practice and dumped them all out onto the gym floor before practice began.  After the practice time was over, he asked Jordan, Jason, and Jeffrey to pick up the balls and carry them over to the bag.  The three boys picked up and carried all of the balls in one trip.  Jordan carried twice as many balls as Jason, and Jason carried twice as many balls as Jeffrey. If Jason had picked up and carried 6752769 balls, what is the total number of balls that the coach brought to practice?",
+   "gold": 23634691.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_635",
+   "text": "Tobias bought a big pizza with 2821391 pieces. He ate 2/5 of the pieces on the first day, 10 pieces on the second day, and 7/13 of the remaining pieces on the third day. How many pizza pieces has he eaten so far?",
+   "gold": 2040087.3384615383,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_328",
+   "text": "Beatrice bought ten packets of crayons for her Art class. Six of the packets had 7927834 pieces of colors each, and the other four packets had sixteen pieces of colors each. How many colors of crayons did Beatrice buy in all?",
+   "gold": 47567068.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_550",
+   "text": "A council met to vote on a new regulation. The vote passed with twice as many votes in favor of the new regulation as there were against it. If there are 4420075 people on the council, what was the number of votes in favor of the new regulation?",
+   "gold": 2946716.6666666665,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_4",
+   "text": "Kylar went to the store to buy glasses for his new apartment. One glass costs $5, but every second glass costs only 60% of the price. Kylar wants to buy 5364765 glasses. How much does he need to pay for them?",
+   "gold": 21459061.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_338",
+   "text": "Ali had $8300329. Leila gave him half of her $100. How much does Ali have now?",
+   "gold": 8300379.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_942",
+   "text": "Norman High School enrolls an average of 8282072 students every year. Butler High School, the neighboring school, enrolls an average of 3/4 as many students as Norman High School. How much greater is the average enrollment at Norman High School than the enrollment at Butler High School?",
+   "gold": 2070518.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1160",
+   "text": "90 single use contacts come in 1 box and will last Pete 45 days.  Each box is $111230 and currently 10% off.  If he buys 2 boxes of contact, how much will each pair of contacts cost?",
+   "gold": 2224.6,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_411",
+   "text": "Cody and Trevor had 7633966 sandwiches. Cody ate a third of the sandwiches, and Trevor ate a quarter of the sandwiches. How many sandwiches are left?",
+   "gold": 3180819.166666666,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_714",
+   "text": "Adrianne is collecting different kinds of beads for making bracelets. Her mother gave her 9691421 metallic beads. Her sister gave her ten more beads than her mother, and her friend gave her twice as many as her mother gave.  How many beads did Adrianne have altogether?",
+   "gold": 38765694.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_660",
+   "text": "Susan made 8172231 cookies for Christmas and was going to equally divide them between her 6 nephews. Before Susan could package them, her husband snuck 4 cookies for himself. How many cookies will each of Susan’s nephews get?",
+   "gold": 1362037.8333333333,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_618",
+   "text": "A farmer has 900 eggs. He placed them on a tray, which holds 2775702 eggs each. How much will the farmer earn if he sells it for $2.5 per tray?",
+   "gold": 0.0008106057,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1249",
+   "text": "Seth gave half of his stickers to Luis. Luis used half of the stickers and gave the rest to Kris.  Kris kept 6518325 of the stickers and gave the remaining 7 stickers to Rob. How many stickers did Seth have in the beginning?",
+   "gold": 26073328.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_49",
+   "text": "There are twice as many boys as girls at Dr. Wertz's school. If there are 9012438 girls and 5 students to every teacher, how many teachers are there?",
+   "gold": 5407462.8,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_605",
+   "text": "Roy has saved 40% more in money earned by chores than his brother Anthony.  Anthony has saved $10.00 more than their sister Eva.   Eva has saved $5552229.  How much money does Roy have?",
+   "gold": 7773134.6,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1118",
+   "text": "Mr. Robles buys 3415708 bananas, which is enough to feed his three monkeys for a week. One monkey eats 10 bananas each day. The second monkey eats 4 more bananas than the first monkey and the third monkey eats the rest of the bananas for the day.  How many bananas does the third monkey eat each day?",
+   "gold": 487934.2857142857,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1131",
+   "text": "Carmen goes to an auction to win an antique desk. She accepts the opening bid of $4364032 and continues bidding until she wins. The bids on the desk rise by $50 each time and 3 other people each bid once. Carmen bids after each of the 3 other people and eventually wins. How much money, in dollars, does the desk cost her?",
+   "gold": 4364332.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1283",
+   "text": "A company pays each of its employees $2543121 in a month. The company has a policy of increasing the salaries of each of its employees by 10% of the initial salary every year for those who've stayed in the company for five years. If Sylvie just clocked 5 years in the company last December, what's her annual salary after three more years of service?",
+   "gold": 39672687.60000001,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_22",
+   "text": "Gunter is trying to count the jelly beans in a jar. He asks his friends how many they think are in the jar. One says 9926805. Another says 20 more than half the first one. A third says 25% more than the first one. What is their average guess?",
+   "gold": 9099577.916666666,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_208",
+   "text": "Alani's family decided that the children should write stories of any kind. They were then required to read all of the stories they'd written to the family at the end of the weekend. Alani wrote 20 stories in the first week, her brother Braylen wrote 40 stories, and her sister Margot wrote 5426794 stories. If they each doubled the number of stories they'd written in the first week in the second week, calculate the total number of stories they wrote altogether.",
+   "gold": 16280562.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_691",
+   "text": "Jen is planning to sell her root crops. She has 6 yams which can be sold at $7200530 each, 10 sweet potatoes that cost $2 each, and 4 carrots which cost $1.25 each. If she sells everything, how much will she earn?",
+   "gold": 43203205.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1209",
+   "text": "The local firefighters are doing a “fill the boot” fundraiser. Their goal is to raise $3522385. After the first 3 hours, they have raised $2100.  For how many hours do they have to fundraise in total to reach their goal, assuming an equal amount raised in every hour?",
+   "gold": 5031.9785714286,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1240",
+   "text": "Julia and Nadine were given the same amount of allowance by their mother. The two girls decided to combine their allowance to surprise their father on his birthday. They bought a cake which costs $3190589. They also bought 1 dozen balloons which were sold for $0.5 for 2 balloons. The remaining money was used to buy 2 tubs of ice cream for $7 each. How much did Julia and Nadine's mother give each one of them?",
+   "gold": 1595303.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1251",
+   "text": "Farmer Brown has 3016226 animals on his farm, all either chickens or cows. They have a total of 70 legs, all together. How many of the animals are chickens?",
+   "gold": 6032417.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_8",
+   "text": "Toula went to the bakery and bought various types of pastries. She bought 3 dozen donuts which cost $5804528 per dozen, 2 dozen mini cupcakes which cost $80 per dozen, and 6 dozen mini cheesecakes for $55 per dozen. How much was the total cost?",
+   "gold": 17414074.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_486",
+   "text": "For every muffin, Svetlana needed 8397985 tablespoons of flour, 3 tablespoons of sugar, and 0.28397985 of a tablespoon of salt. How many tablespoons of dry ingredients would Svetlana need to make 16 muffins?",
+   "gold": 134367812.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_622",
+   "text": "There are 8745980 rooms at the KozyInn Motel. It takes housekeeping 20 minutes to clean each room. How many hours would it take to clean one-half of the rooms?",
+   "gold": 1457663.3333333333,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_479",
+   "text": "Gus spent $5220941 at the grocery store.  He bought 2 bag of chips for $2.00 each, a bucket of fried chicken for $8.00 and a bottle of soda for $1.00.  How much did the apple pie cost?",
+   "gold": 5220928.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1232",
+   "text": "Marcy makes homemade candles that she markets as 99% guaranteed not to explode. 5% of the more dangerous candles also have a defect that makes them smell like wet dog. If she makes 2691134 candles, how many of them will both smell like wet dog and explode?",
+   "gold": 1345.567,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_498",
+   "text": "Greta and Celinda are baking cookies. Greta bakes 9530477 cookies and Celinda bakes twice as many. If the pair eat 10 of the cookies while they are cooling and put the rest in a box, how many cookies are there in the box?",
+   "gold": 28591421.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_312",
+   "text": "The employees of Google went on a day trip. 4 buses were rented that have the capacity of holding 60 employees. 6 minibusses that can hold 30 employees, and 10 minivans that can hold 5387984 employees. How many employees can join the day trip?",
+   "gold": 53880260.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1250",
+   "text": "Together, Sofie, Anne, and Fawn have 3258066 books. If Sofie has 25 more books than Anne, and Anne has 12 fewer books than Fawn does, how many books does Fawn have?",
+   "gold": 1086022.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_111",
+   "text": "Raphael went to buy some school supplies. He bought 4 pens which cost $1.5 each, 2 notebooks which cost $4 each, and a rim of bond paper which cost $441064. How much did Raphael spend on everything?",
+   "gold": 441078.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1133",
+   "text": "Henry is making cookies for a local baking competition. He wants to make twice as many as he did last year. When he finishes baking, he realizes he actually baked 15 more cookies than he meant to. He drops 5 of his cookies as he is putting them out to cool, and now has a total of 5818183 cookies. How many cookies did Henry bake last year?",
+   "gold": 2909086.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_315",
+   "text": "Indras has 8059170 letters in her name. Her sister's name has 4 more letters than half of the letters in Indras' name. How many letters are in Indras and her sister's names?",
+   "gold": 12088759.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_454",
+   "text": "On a particular week, a tow truck pulled 6580022 cars for each of the first three days and then four fewer cars on each of the remaining days of the week. Calculate the total number of cars it towed that week.",
+   "gold": 46060138.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_233",
+   "text": "Martha is planning her Christmas party. She invited 1742335 families with 6 people and 3 families with 4 people. 8 people couldn't come due to illness, and 1/4 that number had previous commitments. How many people show up for Martha's party?",
+   "gold": 10454012.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1316",
+   "text": "The red rope was four times the length of the blue rope. The blue rope was 7 centimeters shorter than the yellow rope. If the 3 ropes had a combined length of 105430 centimeters, what was the length of the red rope in centimeters?",
+   "gold": 20.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_761",
+   "text": "Ingrid drinks 8 cups of water every day.  If there are 4295398 cups in a gallon, how many gallons of water does she drink in 30 days?",
+   "gold": 5.58738e-05,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_958",
+   "text": "A factory used to make tractors, but now makes silos. When they made tractors, they sold 10 tractors a day and made $100 per tractor. Now, they sell 7277175 silos a day, and make $220 per silo. What percentage more are they making per day now?",
+   "gold": 160097750.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_61",
+   "text": "Dan plants 1390409 rose bushes. Each rose bush has 25 roses. Each rose has 8 thorns. How many thorns are there total?",
+   "gold": 278081800.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_169",
+   "text": "Mark buys a fleet of 12 cars for his company.  Each car sells for $20,000.  He pays 10% tax on the cars and then another $1575034 for registration on each of them.  How much does he pay for everything?",
+   "gold": 19164408.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_222",
+   "text": "Annika brought $8166708 to the town fair. She spent half of it on food and snacks, and an additional $10 for rides. How much, in dollars, is left?",
+   "gold": 4083344.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_419",
+   "text": "Mack wants to count things and decided to count how many birds there are in the sky over the next week. On days one and two, Mack saw a total of 50 birds. On day three he saw none. On days four and five, he saw 120 birds. On day six he saw 20 and on day seven he saw 6807880. On average, how many birds did Mack see in a day?",
+   "gold": 972581.4285714285,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1111",
+   "text": "Anthony had 3971649 pencils. He gave 1/2 of his pencils to Brandon, and he gave 3/5 of the remaining pencils to Charlie. He kept the remaining pencils. How many pencils did Anthony keep?",
+   "gold": 794330.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_85",
+   "text": "Morisette and Kael were asked to bring fruits. Morisette brought 5 apples and 1994134 oranges, while Kael brought twice the amount of apples and half the number of oranges than Morisette. How many fruits do they have in total?",
+   "gold": 2991216.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_5",
+   "text": "Toulouse has twice as many sheep as Charleston. Charleston has 4 times as many sheep as Seattle. How many sheep do Toulouse, Charleston, and Seattle have together if Seattle has 6314246 sheep?",
+   "gold": 82085198.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_528",
+   "text": "Candy has 4786847 light blue spools of thread, 45 dark blue spools of thread, 40 light green spools of thread, and 50 dark green spools of thread. What percent of her spools are blue?",
+   "gold": 99.998119901,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_68",
+   "text": "Out of the 9030534 Grade 5 students, 2/5 are boys and 2/3 of the girls are in the girl scout. How many girls are not in the girl scout?",
+   "gold": 1806106.8000000003,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1128",
+   "text": "Dr. Hugo Grumpus and his assistant, Igor, were preparing to perform a laboratory experiment.  Dr. Grumpus told Igor to gather 8273687 test tubes, 7 beakers, and 14 Petri dishes, and to place them all on the lab bench.  By accident, Igor gathered half as many test tubes as requested, two more than the number of Petri dishes requested.  And while he had picked up the correct number of beakers, he lost several on the way to the lab bench.  In total, the number of items Igor had placed on the lab bench was 29.  How many beakers did Igor lose?",
+   "gold": 4136837.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_831",
+   "text": "Carlos, Jim and Carrey were at the beach playing and they decided to gather some seashells. Jim collected 8313157 seashells, which was 5 more than what Carlos collected. Carlos collected twice as many as Carrey. They gathered all their seashells and divided them equally between themselves. How many did each person get?",
+   "gold": 6927628.333333333,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_134",
+   "text": "Three friends spent $4352681 on 3 tickets to the fair. They also spent $4.50 less on food than on the tickets. They also went on 2 different rides which costs $33 for each ride. If they agreed to split all the costs evenly, how much did each of them pay?",
+   "gold": 2901807.8333333335,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_441",
+   "text": "The basketball team went to the steakhouse to eat dinner.  The first player ate a 6-ounce steak.  The second player ate beef tips, containing 8286921 beef tips, each an ounce in size.  The third player ate a one-pound steak.  And the fourth and fifth players ordered vegetarian meals.  In total, how many ounces of meat were consumed by the team?",
+   "gold": 8286943.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_171",
+   "text": "Dax went to their farm to pick some apples and found half as many bugs as ants in the garden. If there were 2934354 ants, calculate the total number of insects in the garden.",
+   "gold": 4401531.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_963",
+   "text": "Kenny is selling his Pokemon cards to buy a ticket to an amusement park, which costs $100. He has a collection of cards and plans to sell them for $1.5 each. He keeps 1/3 of them and gets to go to the amusement park with $385571 in spending cash. How many cards did he start with?",
+   "gold": 385670.9999999999,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_289",
+   "text": "James is in charge of running messages from the office to each teacher's classroom. If he delivers 428598 messages to Ms. Thompson and 1/3 as many messages to Mr. Yu, how many messages does he deliver total?",
+   "gold": 571464.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_680",
+   "text": "Andrew bakes 200 mini cinnamon rolls and 300 mini blueberry muffins. A normal cinnamon roll has 1909461 calories and a normal blueberry muffin has 450 calories. If a mini pastry has 1/3rd of the calories of a normal version, how many calories do the pastries he baked have?",
+   "gold": 127342400.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_767",
+   "text": "Leo collects stickers. Two years ago, he had 100 stickers in his collection. Last year, Leo collected 6839369 stickers. This year, he collected twice the number of stickers as the previous year. How many stickers does Leo have in his collection?",
+   "gold": 20518207.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1030",
+   "text": "Faraday owns a flower shop. He sells a sunflower that costs $2 each and a bouquet of sunflower that costs $8420035. If Faraday earned $26 from the sunflower and $56 from the bouquet per day, and if each bouquet has 12 sunflowers, how many sunflowers was Faraday able to sell after 3 days?",
+   "gold": 39.0002394289,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_234",
+   "text": "Solomon bought 20 marbles from his friend Johanna and added them to a store that had 1402292. If his father also gave him 2/5 times as many marbles as he bought from Johanna, and each marble weighs 2kgs, calculate the total weight of marbles Solomon has in the store.",
+   "gold": 2804640.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_534",
+   "text": "In a student council election, candidate A got 20% of the votes while candidate B got 50% more than candidate A's votes. The rest of the votes was given to candidate C. If there were 3287063 voters, how many votes did candidate C get?",
+   "gold": 1643531.4999999998,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_373",
+   "text": "The farm has 2696487 cows and the zoo has 20 sheep.  The zoo has twice as many cows as the farm does.  The farm has half as many sheep as the zoo does.  How many animals do the farm and zoo have combined?",
+   "gold": 8089491.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1155",
+   "text": "Pauline visits her favorite local museum three times a year. The cost of one visit is $257209. After 5 years, the cost of one visit has increased by 150%, but Pauline decided not to give up any visit and continued to go to the museum for 3 more years. How much did Pauline spend on all visits to the museum?",
+   "gold": 9645337.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_432",
+   "text": "Colby wants to buy some gumballs that cost a nickel each. If he has 8 quarters, 6 dimes, 7688612 nickels, and 15 pennies, how many can he buy?",
+   "gold": 7688667.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1199",
+   "text": "Digimon had its 20th anniversary.  When it came out John was twice as old as Jim.  If John is 4486073 now how old is Jim?",
+   "gold": 2243046.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_17",
+   "text": "Mishka bought 3 pairs of shorts, 3 pairs of pants, and 3 pairs of shoes. One pair of shorts costs $16.50. One pair of pants costs $22.50 and one pair of shoes costs $8374725. How many dollars did Mishka spend on all the clothing items?",
+   "gold": 25124292.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_159",
+   "text": "It takes Carmen 10 minutes to finish a crossword puzzle and 5 minutes to finish a sudoku puzzle.  Over the weekend she solved 3 crossword puzzles and 1506186 sudoku puzzles.  How much time did she spend playing these games?",
+   "gold": 7530960.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_549",
+   "text": "Joey plays football every week. Last week he played 2 matches on Monday, 3684133 match on Friday, and on Saturday he played double the number of matches he played on Monday. How many matches did Joey play in one week?",
+   "gold": 3684139.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1047",
+   "text": "Ruby is 8882014 times older than Sam. In 9 years, Ruby will be 3 times as old as Sam. How old is Sam now?",
+   "gold": 8882014.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_449",
+   "text": "A DVD can be played 4141140 times before it breaks. There are two DVDs in the public library, one has been played 356 times and the other has been played 135 times. How many total times can both DVDs be played before they break?",
+   "gold": 8281789.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1097",
+   "text": "Rory makes a cake that weighs 20 ounces. She cuts into 2048443 pieces. Rory and her mom each have a piece. How much does the remaining cake weigh?",
+   "gold": 19.999980473,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1066",
+   "text": "The tooth fairy left Sharon $5.00 in exchange for the first tooth Sharon lost.  Then, the tooth fairy gave Sharon $4204207 for each of the next three teeth Sharon lost.  And for each of the last 2 teeth Sharon lost, the tooth fairy gave Sharon half the amount of money per tooth as Sharon had received for each of the previous three teeth.  How much money did the tooth fairy leave Sharon, in dollars?",
+   "gold": 4204215.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1173",
+   "text": "Amora, Lainey, and Collins wanted to share corn chips equally but then realized only two people would get an equal amount of corn chips, while the other person would receive 15 more corn chips than the number the others got. If Amora and Lainey got 5963075 corn chips each, how many corn chips were there altogether?",
+   "gold": 5963230.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1193",
+   "text": "A pirate crew is digging for buried treasure on the island marked X on a map. They dug ten holes the first day, thirteen holes the second day, and eight holes the third day. They stopped digging early on the third day to fill in 6956398 holes the pirates kept falling in. On the fourth day of digging, they unearthed a treasure chest full of gold, jewels, and an aged hat. The island had four times as many holes by then as it did at the end of the first day. How many holes did the pirates dig on the fourth day before finding the treasure?",
+   "gold": 6956407.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_686",
+   "text": "Nate is feeding his livestock hay. Each goat needs 5 pounds, and each sheep needs 3 pounds less than twice the amount each goat needs. If there are 15 goats and 2458888 sheep, how many pounds of hay does Nate need?",
+   "gold": 17212291.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_807",
+   "text": "Last year there were 4227108 students enrolled in a calligraphy class. This year, there was a 20% increase in enrollment. How many students are enrolled this year in the calligraphy class?",
+   "gold": 5072529.6,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_74",
+   "text": "Cody eats three times as many cookies as Amir eats. If Amir eats 4944179 cookies, how many cookies do both of them eat together?",
+   "gold": 19776716.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_912",
+   "text": "A large bag of Starbursts candy has 8580591 pieces of individually wrapped candies.  If this bag has 54 red candies, twice that amount of orange candies and half as many yellow candies as red candies, how many candies are pink?",
+   "gold": 8580402.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_505",
+   "text": "Greta’s paycheck is $1898892. She puts 50% of her pay into her retirement account. She then uses 20% of her paycheck to make her monthly car payment. After funding her retirement and paying for her car, how much money does she have left to spend?",
+   "gold": 569667.6,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_746",
+   "text": "In a 1912100-item quiz, 40% of the questions are easy, and the rest are equally divided as average and difficult questions. If Aries is sure to get 75% of the easy questions, and half of the average and difficult questions correctly, how many points is she sure to get?",
+   "gold": 1147260.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_988",
+   "text": "Mrs. Harrington bought 6022370 boxes of oranges at the market. She gave her mom and her sister 2 boxes of oranges each. Then she kept 1/4 of the oranges and sold the rest. How many oranges did Mrs. Harrington sell if each box contains 20 oranges?",
+   "gold": 90335490.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_474",
+   "text": "Shiela is required to submit a 2539854-page research paper. She already finished writing 1/3 of the paper. How many pages does she have left to write?",
+   "gold": 1693236.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_75",
+   "text": "A local gas station is selling gas for $5252641 a gallon.  An app company is offering $.20 cashback per gallon if you fill up at this station.  If someone buys 10 gallons of gas, how much with their gas be, after the cashback rewards?",
+   "gold": 52526408.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_901",
+   "text": "Crista's plants need to be watered every day. She has 20 plants. 4 of her plants need half of a cup of water. 6162513 plants need 1 cup of water. The rest need a quarter of a cup of water. How many cups of water does Crista need every day for her plants?",
+   "gold": 4621890.75,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_458",
+   "text": "In a jewelers store, the price of a gold Jewell is 4/5 times as much as the price of a diamond Jewell. The cost of a silver Jewell is $400 less than the price of gold. If a diamond Jewell is $8942186, find the total price for all three jewels.",
+   "gold": 23249283.6,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_365",
+   "text": "Brianne and Ashley make greek orange pie. Ashley brought five boxes with 473302 oranges in each box, while Brianne brought 20 more oranges than Ashley. If one greek orange pie needs three oranges, how many greek orange pies can they make?",
+   "gold": 1577680.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_282",
+   "text": "Rachel bought 23 cookies and Janet gave her 8752912 cookies. The other day her brother ate 44 of those cookies. How many cookies are left for Rachel?",
+   "gold": 8752891.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_377",
+   "text": "Julie had $527193. She spent 20% of it on clothes and then 25% of the remaining money on CDs. How much money did Julie have left?",
+   "gold": 316315.8,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_245",
+   "text": "Nick, Richard, Jason and DJ each have paintball guns. DJ has 8 guns, Nick has 10 guns, RJ has 1 gun and Richard has 7356661 guns. If they were to share their guns equally, how many guns would each of them have?",
+   "gold": 1839170.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_657",
+   "text": "John rents his car out 10 times a month for 3 hours each time.  He gets paid $9631143 an hour.  If his car payment is $500, how much profit does he make on his car?",
+   "gold": 288933790.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_192",
+   "text": "There are 6906324 trees in Chris's yard.  Ferdinand has half the number of trees that Chris has.  Harry has 5 more than twice the number of trees that Ferdinand has.  How many more trees are in Harry's yard than Ferdinand's yard?",
+   "gold": 3453167.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1279",
+   "text": "A class of 4404546 students is split into 3 groups such that 2 of them are equal in number and the last one (which is the smallest) is 10 less than each of the other groups. How many students are in this (smallest) group?",
+   "gold": 60.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_230",
+   "text": "In a family of 6134941, three people eat three eggs each day while the rest eat two eggs each day. If they eat eggs every day, how many eggs will the family consume in a week?",
+   "gold": 85889195.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_122",
+   "text": "Jessica is trying to figure out how much to pay on all her debts each month. Her student loans have a minimum payment of $300/month, her credit card's minimum is $200/month, and her mortgage's minimum is $9653262/month. If Jessica wants to pay 50% more than the minimum, how much does she pay in a year?",
+   "gold": 173767716.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_251",
+   "text": "Laurel's friend gave her 2212505 baby outfits that her child no longer needed.  At her baby shower, Laurel received twice the amount of new baby outfits.  Then, Laurel's mom gifted her with another 15 baby outfits.  How many outfits does she have for her baby?",
+   "gold": 6637530.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_286",
+   "text": "Lisa is part of a choir that has 77836 members, 50% of which are boys and 50% of which are girls.  The choir decides to perform with just its female members.  On the day of the performance, however, half the people performing can't make it to the show because their bus breaks down.  The choir's 3 teachers then decide to sing with them. How many people sang in the performance?",
+   "gold": 19462.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_357",
+   "text": "Jana has 6824640 puppies. Two thirds of Jana's puppies are Pomeranians. One third of the Pomeranians are girls. How many girl Pomeranians does Jana have?",
+   "gold": 1516586.6666666667,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_747",
+   "text": "A man eats 5 sandwiches per day, his wife eats 4 sandwiches per day, and their son eats 3488541 sandwiches per day. How many sandwiches does this family eat in one week?",
+   "gold": 24419850.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_599",
+   "text": "John does 8007913 cycles of work a day.  Each cycle has 5 different tasks and each task pays $1.20.  How much does he make if he works a full 7 day week?",
+   "gold": 336332346.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_481",
+   "text": "John decides to take a cooking class.  The class meets 1357398 times a week for 2 hours each time for 6 weeks.  If he learns a new recipe for every 1.5 hours of class time, how many recipes does he learn?",
+   "gold": 10859184.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_982",
+   "text": "There are 20 students in Miss Susan's class. 2996782 of them are good at math only, 8 of them perform well in English only, and the rest are good at both math and English. How many are good at math?",
+   "gold": 12.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_54",
+   "text": "Shiela bought five cell phones for $2683056 each for a 3-month installment. A 2% interest will be charged for each unit. How much will Shiela pay each month for 3 months?",
+   "gold": 4561195.2,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_821",
+   "text": "Melanie's father opens up an animal farm starting with 50 cows and 20 chickens. Milkie Cows Limited brings him 20 cows per day and Broilers Limited brings him 8249298 chickens per day, for three weeks. What's the total number of animals on the farm after three weeks?",
+   "gold": 173235748.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_588",
+   "text": "Milo is making a mosaic with chips of glass. It takes 8033625 glass chips to make every square inch of the mosaic. A bag of glass chips holds 72 chips. Milo wants his mosaic to be three inches tall. If he has two bags of glass chips, how many inches long can he make his mosaic?",
+   "gold": 5.9749e-06,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_485",
+   "text": "In a company of 1413071 employees, 20% of the employees are management.  Out of this 20%, only 30% oversee the entire company.  How many employees oversee the company?",
+   "gold": 84784.26,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1230",
+   "text": "Mico and Marco wanted to get to know each other. They realized that the sum of their ages is 2523797. What will be the sum of their ages in 10 years?",
+   "gold": 2523817.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_571",
+   "text": "Ricardo grows tomatoes and eggplants in his garden. Each tomato plant yields 22 tomatoes while each plant of eggplant yields 4 eggplants. He planted 544089 tomato plants and 8 plants of eggplant. How many fruits can Ricardo get from his plants?",
+   "gold": 11969990.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_773",
+   "text": "The glee club ordered 2966647 pizzas and ate 70% of them. The football team ordered twice as many pizzas and ate 80% of them. How many pizzas are left?",
+   "gold": 2076652.9000000004,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_546",
+   "text": "Gunther, the gorilla, had 8698986 bananas hidden under a fern branch.  When Gunther wasn't looking, Arnold, the chimpanzee, stole half of the bananas from the pile.  The next day, Gunther added another 25 bananas to his pile, but later that evening, Arnold stole another 12 of the bananas.  On the third day, Gunther added another 6 bananas to his pile and began counting bananas.  How many bananas did Gunther find were in the pile?",
+   "gold": 4349512.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1008",
+   "text": "The great dragon, Perg, sat high atop mount Farbo, breathing fire upon anything within a distance of 1000 feet.  Polly could throw the gold javelin, the only known weapon that could sleigh the dragon, for a distance of 400 feet, well within the reach of the dragon's flames.  But when Polly held the sapphire gemstone, she could throw the javelin 3748668 times farther than when not holding the gemstone. If holding the gemstone, how far outside of the reach of the dragon's flames could Polly stand and still hit the dragon with the gold javelin?",
+   "gold": 1499466200.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_710",
+   "text": "Richard, Jerry, and Robert are going to share 60 cherries. If Robert has 8492084 cherries, and has 10 more than Richard, how many more cherries does Robert have than Jerry?",
+   "gold": 25476182.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_331",
+   "text": "Jenna starts out with 8 sapphires. She trades 3 sapphires for 9576083 rubies. If sapphires are worth $800 and rubies are worth $1200, how much money are all her jewels worth?",
+   "gold": 11491303600.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1087",
+   "text": "Bill bakes 300 rolls, 120 chocolate croissants, and 4820274 baguettes every day. Each roll is 4 inches long, each croissant is 6 inches long, and each baguette is two feet long. If Bill puts all the baked goods end to end, how long will they be in feet?",
+   "gold": 9640708.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1163",
+   "text": "Hannah slips on a banana peel and breaks her arm. The doctor charges her $200 for the cast, $300/hour for a 30-minute visit, $7013802/pill for 30 painkillers, and $6/hour for a mandatory minimum of 2 hours of parking. How much does the doctor's visit cost total?",
+   "gold": 210414422.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_352",
+   "text": "Keegan was running a car wash with his friend Tashay to raise money for a baseball camp. They needed to raise $4633489 for the two of them. By 3 pm, Keegan had earned $83 and Tasha had earned $91. How much more did they need to earn to reach their goal?",
+   "gold": 4633315.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1265",
+   "text": "Twenty dozen cups cost $1200 less than the total cost of half a dozen plates sold at $3608431 each. Calculate the total cost of buying each cup.",
+   "gold": 90205.775,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_716",
+   "text": "In Mr. Roper's class of 8558798 students, 20% of the class are football players.  Out of the remaining class, 25% of the students are cheerleaders or part of band.  These 3 groups of students will need to leave early today to travel to an away game.  How many students are leaving early?",
+   "gold": 3423519.2,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_162",
+   "text": "A company spends $27480 on advertising for a year, and then spends a third of that amount on advertising for another year.  What's the total amount the company spent on advertising for the two years?",
+   "gold": 36640.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1144",
+   "text": "There are 1532832 bees in a hive. There are twice as many worker bees as baby bees, and there are twice as many babies as queens.  How many worker bees are there?",
+   "gold": 875904.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_425",
+   "text": "Tabitha agreed to pay John and Jill $7309911 an hour to help clean out her attic and basement.  Jill worked 2 hours on Saturday and 1 hour on Sunday.  John worked twice as long as Jill on Saturday and three times as long as Jill on Sunday.  How much more money did John earn compared to Jill?",
+   "gold": 29239644.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1222",
+   "text": "Eight more than four times the number of coffee mugs in the teacher’s lounge is 9871664. How many coffee mugs are in the teacher’s lounge?",
+   "gold": 2467914.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_350",
+   "text": "Ben has 9420200 tubes of blue paint and 3 tubes of yellow paint. Jasper has half as many tubes of blue paint as Ben, and three times as many tubes of yellow paint as Ben. How many tubes of paint does Jasper have?",
+   "gold": 4710109.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_187",
+   "text": "Brady is counting the money in his piggy bank. He has 100 pennies, 40 nickels, 7120286 dimes, and 40 pieces of dollar bills. How much does Brady have in his piggy bank in dollars?",
+   "gold": 712071.6,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_96",
+   "text": "Tom gets 4 car washes a month.  If each car wash costs $8889528 how much does he pay in a year?",
+   "gold": 426697344.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_301",
+   "text": "Jane counts two zebras with 17 stripes each, a zebra with 3009606 stripes, and another zebra with half that many stripes. How many stripes do the zebras have on average?",
+   "gold": 1128610.75,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_459",
+   "text": "Max bought stamps at the post office. Some of the stamps had a snowflake design, some had a truck design, and some had a rose design. Max bought 1796381 snowflake stamps. He bought 3 more truck stamps than snowflake stamps, and 9 fewer rose stamps than truck stamps. How many stamps did Max buy in all?",
+   "gold": 5389140.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1076",
+   "text": "Garrett is popping popcorn for a snack. As the pan of kernels heats up, the kernels start popping faster. 360935 pop in the first 30 seconds of cooking, then three times that amount in the next 30 seconds. The kernels increase to four times the initial popping rate in the next thirty seconds, but in the final 30 seconds, the popping slows down to half the rate as the past 30 seconds. After Garrett takes the pan off the heat, a quarter of the number of kernels that popped in the final 30 seconds of cooking also pop from the residual heat. How many pieces of popcorn does Garrett have to eat?",
+   "gold": 3789817.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1300",
+   "text": "Rose bought five dozens of eggs for $2.40 a dozen. She will sell it for $1 for 8743034 eggs. How much will be Rose's profit?",
+   "gold": 11.9999986275,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1287",
+   "text": "The ratio of men to women on a bus is 5:9. If the total number of passengers on the bus is 358474, and 20 women alight from the bus at the next stop, how many women have remained on the bus?",
+   "gold": 230427.5714285714,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_509",
+   "text": "Larry cooked dumplings for a group of friends.  There are 1008231 males, including Larry, and 6 females among them. Each male ate 1 more dumpling than each female. How many dumplings did Larry cook if each female ate 3 dumplings and there were no leftovers?",
+   "gold": 4032942.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_202",
+   "text": "Sean is practicing for his role in a theater production. He has to memorize his lines for two scenes and the lyrics to one solo song. His solo song has 5055034 lines in the lyrics. The first scene has twice the number of lines, but only a third of them are his lines. The second scene has six more lines than the song, and four-fifths of them are his. How many lines does Sean have to memorize?",
+   "gold": 12469088.666666666,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1000",
+   "text": "The Hortex company produces bottled carrot juices. Every day it can produce 4200 bottles of these juices. Each juice can cover 20% of 1 person'ts daily energy demand. How many more bottles of juices would Hortex have to produce to be able to satisfy 100% of the daily energy needs of 1177055 people?",
+   "gold": 5881075.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_868",
+   "text": "Trinity sells magazines at 11/8 of the price she bought the magazines. If she bought the magazines at $696747, what is her profit?",
+   "gold": 261280.125,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1310",
+   "text": "Elvis has a monthly saving target of $4138458. In April, he wants to save twice as much daily in the second half as he saves in the first half in order to hit his target. How much does he have to save for each day in the second half of the month?",
+   "gold": 183931.4666666667,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_442",
+   "text": "A Reddit group has 2039864 members. If each member posts an average of 3 posts per day, what's the total number of posts that the group will have in March?",
+   "gold": 189707352.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_155",
+   "text": "Lori wants to buy a $320.00 pair of shoes and a matching belt that is $3021379.  Her part-time job pays her $8.00 an hour.  How many hours will she have to work before she can make her purchase?",
+   "gold": 377712.375,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_183",
+   "text": "On Monday, Sue ate 4 times as many cookies as her sister. On Tuesday, she ate twice as many cookies as her sister. Her sister ate 5 cookies on Monday and 2508320 the next day. If 1 cookie has 200 calories, how many more calories did Sue consume than her sister?",
+   "gold": 501667000.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_20",
+   "text": "Gloria is shoe shopping when she comes across a pair of boots that fit her shoe budget. However, she has to choose between the boots and two pairs of high heels that together cost five dollars less than the boots. If one pair of heels costs $1534633 and the other costs twice as much, how many dollars are the boots?",
+   "gold": 4603904.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_736",
+   "text": "Brook Hills High School currently enrolls 6525618 students. Half of these students are over 16 years old, and one-fourth of the students over 16 years old are male. The remaining half of the students are under 16 years old, and one-half of the students under 16 are male. In total, how many female students are enrolled at this school?",
+   "gold": 4078511.25,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_136",
+   "text": "Ducks need to eat 3.5 pounds of insects each week to survive. If there is a flock of 7626869 ducks, how many pounds of insects do they need per day?",
+   "gold": 3813434.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1282",
+   "text": "A football team played 22 games. They won 9330535 more than they lost. How many did they win?",
+   "gold": 4665278.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1130",
+   "text": "A fruit vendor bought 50 watermelons for $6199980. He sold all of them at a profit of 25%. How much was each watermelon sold?",
+   "gold": 154999.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_63",
+   "text": "Greg has an alarm set to ring three times a day as a reminder. When the alarm goes off, it continues to ring until Greg turns it off. The first time it went off today, it rang 3125372 times. The second time it went off, it rang for three times as long as the first time. The third time, it rang for half as long as the second time. How many times did the alarm ring in all?",
+   "gold": 17189546.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_851",
+   "text": "To heat during the winter, Ali ordered 2182736 kilos of coal. The coal is delivered in 50 kg bags, costing $18 per unit. How much does his order cost?",
+   "gold": 785784.96,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_417",
+   "text": "At the end of the school year, Kate asked her teacher if she could have the 2063238 boxes of 64 crayons since they were all worn down to small pieces.  The teacher agreed.  Kate took the crayons home and decided to make crayon muffins by melting 8 small pieces of crayons together in a muffin tin that she placed in an oven for a few minutes. If she can sell her muffin crayons for $1.50 each, how much money can Kate make?",
+   "gold": 24758856.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_940",
+   "text": "Matthew has a collection of 2029004 unique toy soldiers. He wants to sell them for a fair price. He found a buyer who is willing to pay for half his collection $5 per toy, and for the other half $7 per toy. If Matthew would agree to that offer, how much money would he earn?",
+   "gold": 12174024.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_276",
+   "text": "A company bought $4326221 worth of equipment from a retailer business, but pieces of equipment worth 40% of the total number were faulty. If they returned the faulty pieces of equipment to the seller, calculate the total amount of money spent on functioning pieces of equipment.",
+   "gold": 2595732.6,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_346",
+   "text": "Sarah went to buy books from the store and spent $300 on the books. If each book was $15 and she gave an equal number of books to her 5994251 kids, how many books did each child get?",
+   "gold": 3.3365e-06,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_589",
+   "text": "There are 10 quarts of tea left from the party. 5933894 students each drank 1.5 quarts of tea and 16 students each drank 2 quarts of tea. How many gallons of tea were at the beginning of the party?",
+   "gold": 2225220.75,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_300",
+   "text": "Mark is making a quadruple batch of brownies. The normal recipe calls for 9017069 cups of flour and 1 cup milk. If flour is sold in 2-cup bags and milk is sold in 2-cup bottles, how many more bags of flour than bottles of milk does Mark have to buy?",
+   "gold": 18034136.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1069",
+   "text": "A pound of almonds costs $7968764 while a pound of walnuts costs $15. How much more does it cost for a mixture of 1/2 pound almonds and 1/3 pound walnuts than a mixture of 1/5 pound almonds and 1/3 pound walnuts?",
+   "gold": 2390629.2,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_345",
+   "text": "There are 5915126 students in Marissa’s class. Each student started the year with 10 pencils. After two months, 1/5 of the total pencils in class were used. At the end of the year, only 1/3 of the remaining pencils were left. How many pencils were left?",
+   "gold": 15773669.333333334,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1001",
+   "text": "Skyler has 716646 hats on his hand with the colors red, blue, and white. Half of the hats are red, 3/5 of the remaining hats are blue, and the rest are white. How many white hats does Skyler have?",
+   "gold": 143329.2,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1171",
+   "text": "Every 2 miles a car drives the tires rotate 6091587 times.  Jeremy drives 400 miles a month.  If each tire can undergo 10,440,000 rotations how many years before the tire needs to be replaced?",
+   "gold": 0.0007140996,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_663",
+   "text": "There are 9 Fast and the Furious movies, Deepa has seen each one in the theatre three times. She has spent $7194920 seeing these movies. What is the average price she paid per ticket?",
+   "gold": 266478.5185185185,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1120",
+   "text": "Tony is painting a room with four walls. The north and south walls are 10 x 8 feet. The east and west walls are 5 x 8 feet. A gallon of paint can cover 20 square feet and cost $1156210. How much will it cost to paint the room?",
+   "gold": 13874520.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_501",
+   "text": "Brittany's quilted comforter has many 1-foot by 1-foot colored squares. The comforter had 3347396 red squares, 4 more blue squares than red squares, 6 more green squares than blue squares, and 12 fewer white squares than green squares.  How many square feet is Brittany's comforter?",
+   "gold": 13389596.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_240",
+   "text": "Jaime is a computer programmer for a company that currently has employed 2851496 people. Senior programmers are paid $400 more than junior programmers. If the number of Junior programmers is 2/5 of the total number of employees, and they are each paid $2000 per month, calculate the total amount of money the company pays to all the programmers per month.",
+   "gold": 6387351040.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_649",
+   "text": "Jerry counts 570895 birds nesting in the bushes, 2/3rd of that number of birds flying overhead, and 3 groups of eight birds each feeding. How many birds does he count in total?",
+   "gold": 951515.6666666666,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_897",
+   "text": "The power goes out in Brianna's house one night so she and her family gather all their candles and flashlights. There are 5675268 rooms in the house and 4 people living there, including Brianna. There is a flashlight for every person to carry and two for each room. They have a variety of candles available; 4 small candles each for half the rooms and 5 medium candles each for the other half of the rooms. With everything combined, how many candles and flashlights are Brianna's family using when the lights go out?",
+   "gold": 36889246.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1153",
+   "text": "Luke is spending time at the beach building sandcastles. He eventually notices that each level of a sandcastle will have half the square footage as the level below it. If he makes a 4 leveled sandcastle where the top level has a square footage of 6622389, what is the average square footage of a level?",
+   "gold": 24833958.75,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_769",
+   "text": "Becky, Jake, and Silvia shared 2008462 pizzas. Each pizza had 8 slices. Becky ate 3 more slices than Jake did. Silvia ate twice as many slices than Jake did. If Becky ate 10 slices, how many total slices did they eat?",
+   "gold": 31.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_904",
+   "text": "There are five phones on a phone plan. The main phone costs twice as much as each additional phone. If the main phone plan costs $5203702, how much does the whole phone plan cost?",
+   "gold": 15611106.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1188",
+   "text": "7982450 people apply for a job at Google. Of the people that apply, only 30% receive interviews. Of those who receive interviews, 20% receive a job offer. Of those who receive a job offer, a third of the people accept the position. How many people accept the position?",
+   "gold": 159649.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_959",
+   "text": "Every month, Madeline has to buy food, treats, and medicine for her dog. Food costs $25 per week. Treats cost $7116344 per month. Medicine costs $100 per month. How much money does Madeline spend on her dog per year if there are 4 weeks in a month?",
+   "gold": 85398528.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1094",
+   "text": "Ralph has a record store where people can trade their own records for new ones. People can trade 2 old records for 1 new one. 5 people come in with old records and leave with 8610114 new records between them. How many old records did the 5 people bring in?",
+   "gold": 17220228.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_712",
+   "text": "The red car is 40% cheaper than the blue car. The price of the blue car is $8699599. How much do both cars cost?",
+   "gold": 13919358.399999999,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_336",
+   "text": "Grayson recycles cans and bottles for money each week. An aluminum can is worth two cents and a plastic bottle is worth three cents. She drinks three aluminum cans of soda and 340291 plastic bottles of water a week. How many cents does Grayson earn from recycling in a four-week month?",
+   "gold": 4083516.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_414",
+   "text": "Leah just got a new kitten. Spaying her cost $200, her 3 vaccines costs $20 each, and the kitten broke 8566334 vases that cost $12 each. How much has the kitten cost so far?",
+   "gold": 102796268.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_181",
+   "text": "Isabelle bought party supplies for her little sister’s birthday party. She spent $1422010 on ingredients for the cake, $43 on birthday presents, $15 on decorations, $4 on invitations, and $22 on goodie bags for the party guests. She split the cost evenly three ways with her two parents. How many dollars did each person pay?",
+   "gold": 474031.3333333333,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1220",
+   "text": "Zoey and Sydney are having a watermelon seed spitting contest. Whoever spits their seeds the most total distance wins. They each get one watermelon. Zoey's has 40 seeds and she spits each one 10 feet. Sydney's has 4896852 she spits each one 12 feet. What is the average total distance spat?",
+   "gold": 29381312.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_76",
+   "text": "Marcell and Beatrice are having a contest to see who can eat the most fruit roll-ups, so they unroll as many as they can find. Unfortunately, someone makes a mistake and Beatrice's was 549047 roll-ups wide and 24 rolls up long while Marcell's was 3 roll-ups wide and 14 roll-ups long. If they both ate their entire amount, how many did they eat on average?",
+   "gold": 6588585.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1063",
+   "text": "Nick had twice as many candies as George. Then George ate 5 candies. Now George has 3888090 candies left. How many candies does Nick have?",
+   "gold": 7776190.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_559",
+   "text": "To make 1 liter of juice, Sam needs 5 kilograms of oranges. Each kilogram of oranges costs $3. How much money would Sam have to spend to make 2529562 liters of juice?",
+   "gold": 37943430.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_389",
+   "text": "Ophelia and Jenna are living in the same apartment building. They each have 2 fewer sofas than chairs. Jenna has 3 times as many chairs as Ophelia. If Ophelia has 3844540 sofas, calculate the total number of sofas and chairs that they have.",
+   "gold": 30756332.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_493",
+   "text": "Lorie earns $1757421 per hour. Karen earns twice what Lorie earns. How much does Karen earn in two days if she works 3 hours per day?",
+   "gold": 21089052.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_566",
+   "text": "At the local Pick Your Own fruit orchard, you could pick your own peaches for $5229248 per pound, plums were $1.00 per pound and apricots were $3.00 per pound.  If Winston picked 6 pounds of peaches, 8 pounds of plums and 6 pounds of apricots, how much did he spend on fruit?",
+   "gold": 31375514.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_66",
+   "text": "Emily has 4 kids named Amy, Jackson, Corey, and James. Amy is 5 years older than Jackson and 2 years younger than Corey. If James is 1726976 and is 1 year younger than Corey, how old is Jackson?",
+   "gold": 1726970.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_739",
+   "text": "Janet gets a job as a waitress.  She makes $10 an hour from wages and another $15 an hour from tips.  She wants to save up 20% of the cost of a $9933447 car for a downpayment.  If she works 40 hours a week how many weeks will she need to work to save the down payment?",
+   "gold": 1986.6894,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_690",
+   "text": "There are 29 pupils in a class. The teacher has 9 coupons; each coupon can be redeemed for 3868009 bottles of apple juice. The teacher gives each student 2 bottles of apple juice to drink for lunch. After redeeming all her coupons and giving each student their apple juice lunch, how many bottles of apple juice does the teacher have for herself?",
+   "gold": 34812023.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1106",
+   "text": "Jim has a 8381444 pack of gum.  He chews 1 piece of gum for every 2 hours he's at school over a school day that lasts 8 hours.  He chews 1 piece on the way home from school and 1 stick after dinner.  He also gives half the gum he has remaining to his sister when she asks for some right before bed.  How many pieces of gum does Jim have left at the end of the day?",
+   "gold": 4190719.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_376",
+   "text": "Hannah needs to drink 60 ml of water for each kilometer she runs. If her gym teacher tells her to run 7637264 laps and each lap is 0.25 km, how many milliliters of water will Hannah need to drink?",
+   "gold": 114558960.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_900",
+   "text": "Louise is an artist and needs to apply a coat of varnish to her latest paintings. Usually it takes 7 minutes for the coat of varnish to dry on one painting. However, today she is using a new varnish and it takes 12 minutes for the coat to dry. How much longer will it take for the coat of varnish on 1297177 paintings with the new varnish to dry as it would with the old varnish?",
+   "gold": 6485885.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_903",
+   "text": "Bob thinks he needs 56 popsicle sticks to recreate the Washington Monument for his history project.  His favorite popsicles come 1820375 to a box and cost $2.00 per box.  How much will it cost Bob to build his project?",
+   "gold": 6.15258e-05,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_99",
+   "text": "Rory orders 2 subs for $7.50 each, 2 bags of chips for $5442140 each and 2 cookies for $1.00 each for delivery.  There’s a 20% delivery fee added at check out and she wants to add a $5.00 tip.  What will her delivery order cost?",
+   "gold": 13061161.4,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_688",
+   "text": "Craig and his brother take turns spelling out the longest letter words they know and counting the number of the letters in those words. After ten rounds, Craig has spelled out 5131913 words with 15 letters each. If Craig's brother has spelled words with a total count of letters 50 more than Craig, calculate the total number of letters in the words they've spelled after the ten rounds.",
+   "gold": 153957439.99999997,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_639",
+   "text": "Paul has 52 marbles. His friend gave him 1476799 marbles. Then, he lost 1/4 of his marbles. How many marbles does Paul have left?",
+   "gold": 1107638.25,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1161",
+   "text": "Denise and Daniel are reading the same book. Yesterday, Denise read 10 pages while Daniel read 3762825 pages. Today, Denise read 5 more than as many pages as what Daniel read yesterday, while Daniel was not able to read any pages today. How many more pages did Denise read more than Daniel?",
+   "gold": 15.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_847",
+   "text": "Mike bought 7472722 face masks while Johnny bought 2 more than thrice as many as Mike. How many face masks did Johnny buy?",
+   "gold": 22418168.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_743",
+   "text": "It takes James 10 minutes to read 3 pages of his book before he goes to bed. He reads 2168550 pages of his book and then decides to go to sleep. How long does James spend reading, in minutes?",
+   "gold": 7228500.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_865",
+   "text": "Twenty tourists discovered 9370284 shells in a strip mall parking lot. They had divided into three groups, Alphas, The finders, and Gogetters to find as many shells as possible. If team Alphas found 40% of the shells, and team The finders found 60% of the remaining shells, how many shells did team Gogetters find?",
+   "gold": 2248868.16,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_888",
+   "text": "Walter bought 9430781 apples from the store. He ate 2/5 of them and gave his sister 25% of the remaining number. If he then sold the remaining apples to his uncle at $3 each, how much money did he receive?",
+   "gold": 12731554.349999998,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_662",
+   "text": "Jo has been making face masks. She can make 4 small masks with 2 yards of material and 3 large masks with 2.25 yards of material. How much material would she need to make 20 small and 6313954 large masks for her class?",
+   "gold": 4735475.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_869",
+   "text": "Brian's basement was damp and musty, so he bought a dehumidifier to remove moisture out of the air.  The device has 8185384 speeds: low, medium, and high.   Brian tested the device's efficiency and he found that the low setting removes 1 liter of water out of the air per day, the medium setting removes twice as much water per day as the low setting, and the high setting removes twice as much water per day as the medium setting.  If Brian ran the dehumidifier for 3 days on the low setting, then an additional 3 days on the medium setting, and then an additional 5 days on the high setting, what is the total amount of water that the dehumidifier removed from the air in his basement, in liters?",
+   "gold": 8185410.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1192",
+   "text": "A hotel in the Philippines charges 1000 pesos for a 12-hour stay or 2586356 pesos for a 24-hour stay. After 12 hours, visitors have the option to add 70 pesos for every additional hour. Cameron arrives at 5 pm at the hotel and wants to leave at 10 am the next morning. He decides to go with the option of adding on 70 pesos for every hour after the 12-hour mark instead of paying for 24 hours. How much money would Cameron save?",
+   "gold": 2585006.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_24",
+   "text": "Siobhan has 2 fewer jewels than Aaron. Aaron has 5 more jewels than half of Raymond's jewels. If Raymond has 973054 jewels, how many jewels does Siobhan have?",
+   "gold": 486530.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_696",
+   "text": "Marcus is half of Leo’s age and five years younger than Deanna. Deanna is 7225731. How old is Leo?",
+   "gold": 14451452.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1272",
+   "text": "Calvin is making soup for his family for dinner. He has a pot with enough soup to fill four adult's bowls or eight child's bowls. He is an adult and will be eating with his adult wife and their 8546203 children. If everyone eats one bowl at a meal, how many times will each child be able to have a bowl of soup for lunch from the leftover soup?",
+   "gold": 3204826.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_789",
+   "text": "An apple orchard sells apples in bags of 4228934. The orchard sold a total of 2000 apples one day. How much did an orchard earn for selling this at $5 per bag?",
+   "gold": 0.0023646621,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_115",
+   "text": "In a room, there are various toys: 5 red cars, 3 action figures, and a doll. The doll cost as much as 3 action figures and one red car cost $3998559. How much are all toys worth, of an action figure costs $5?",
+   "gold": 19992825.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_152",
+   "text": "Sara wants to buy herself a new jacket and 2 pairs of shoes. The jacket she wants costs $30 and each pair of shoes cost $2602298. Sara babysits the neighbor's kids 4 times, earning $5 each time she babysits them. Her parents pay her $4 each time she mows the lawn. If Sara already had $10 saved before she started babysitting, how many times must she mow the lawn before she can afford the jacket and shoes?",
+   "gold": 650579.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_298",
+   "text": "A glass of milk is 8 ounces of milk.  John drinks 2 glasses of milk.  If milk has 925138 calories per ounce how many calories did he consume?",
+   "gold": 14802208.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1309",
+   "text": "Marin and his neighbor Nancy each eat 218983 apples a day. How many apples do they eat in 30 days?",
+   "gold": 13138980.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_632",
+   "text": "A three-ounce box of flavored jello makes 10 small jello cups.  Greg wants to make small jello cups for his son's outdoor birthday party.  There will be 567745 kids and he wants to have enough so that each kid can have 4 jello cups.  Jello is currently on sale for $1.25.  How much will he spend on jello?",
+   "gold": 283872.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_6",
+   "text": "Eliza's rate per hour for the first 40 hours she works each week is $1616598. She also receives an overtime pay of 1.2 times her regular hourly rate. If Eliza worked for 45 hours this week, how much are her earnings for this week?",
+   "gold": 74363508.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_896",
+   "text": "Jason works as a salesperson at a car dealership.  He needs to sell 15 cars this month to earn a big bonus.  He knows based on historical averages, that for every 25 telephone calls he makes to potential customers, he gets one person to come into the car dealership to look at new cars.  And for every 5499235 customers that come into the car dealership, one will buy a car.  Based on these average numbers, how many telephone calls would Jason need to make to sell 15 cars and earn his bonus?",
+   "gold": 2062213125.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_40",
+   "text": "Stephen placed an online order for groceries.  His final bill came to $7023116.  Because this was through a delivery vendor, they tacked on a 25% fee to his final total and charged him $3.00 in delivery fees.  Stephen also added a $4.00 tip.  After the extra fees, what was the final price of Stephen's groceries?",
+   "gold": 8778902.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_521",
+   "text": "Goldy bought 20 sacks of rice and gave 3 sacks to her cousin and 9020567 sacks to her brother, if there are 25 kilograms of rice per sack, how many kilograms does she gave to her cousin and brother?",
+   "gold": 225514250.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_862",
+   "text": "John buys 9756198 bottles of scotch for a total cost of $600.  He also buys twice as many bottles of cognac that cost 50% more per bottle.  How much does he spend on everything?",
+   "gold": 2400.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_784",
+   "text": "Frankie and Binkie went bowling together.  Frankie's score was 15 better more than twice as high as Binkie's. If Binkie bowled a score of 5927609, what was Frankie's score?",
+   "gold": 11855233.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_926",
+   "text": "In a family, there are 2 brothers and 2620008 sisters. All sisters are the same age, which is 16. One of the brothers is 12 years old, which is half the age of the older brother. What is the total age of all these siblings?",
+   "gold": 41920164.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_126",
+   "text": "Rani has ten more crabs than Monic, who has 4 fewer crabs than Bo. If Bo has 7487762 crabs, calculate the total number of crabs the three have together.",
+   "gold": 22463288.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_236",
+   "text": "If a classroom has 3 times as many girls as they do boys, and 1/10 as many nongendered children as they do boys, and the classroom has 8768586 boys.  How many total children does it have?",
+   "gold": 35951202.6,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_141",
+   "text": "In the city of Soda, there are exactly 5597001 inhabitants. They include 8417 men and 9092 women. The rest of the population is made up of children. How many kids are there in Soda?",
+   "gold": 5579492.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1110",
+   "text": "Rong has been saving 8751260 coins in his piggy bank every month. Neil has been saving 2/5 times more coins in his piggy bank per month than Rong. How many coins are they having ten years after they started their savings?",
+   "gold": 2520362880.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_433",
+   "text": "A pet store currently has 5 dogs, 9229516 cats, and 10 birds. How many legs in total do the pets in the store have?",
+   "gold": 36918104.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_772",
+   "text": "If John scored 2707866 on his first 3 tests and an 80 on his 4th, what was his average score across the 4 tests?",
+   "gold": 677036.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1020",
+   "text": "Gabriel and Luri each own a portable media player that can store up to 100 songs. Gabriel has 3060968 songs on his player while Luri has 3 times as many songs. How many fewer songs can Luri add to his player than Gabriel can add to his?",
+   "gold": 6121936.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_28",
+   "text": "Grandma Jones baked 5 apple pies for the fireman's luncheon.  She cut each pie into 4225558 pieces and set the five pies out on the buffet table for the guests to serve themselves.  At the end of the evening, after the guests had taken and eaten their pieces of pie, there were 14 pieces of pie remaining.  How many pieces were taken by the guests?",
+   "gold": 21127776.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_806",
+   "text": "Anna is trying to buy books for her local library. She had a budget of $3262407, and she has already spent $4. She also bought 2 books today, and both books cost her the same amount of money. If Anna has $2 left in her budget, how much did each of the books cost?",
+   "gold": 1631200.5,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_157",
+   "text": "There are 8043777 roses in the vase. There are 7 more dahlias than roses in the vase. How many flowers are there in the vase in total?",
+   "gold": 16087561.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_173",
+   "text": "John orders some pizzas to share with his friends.  There are 20 friends in total, and John wants to make sure each can have 8379650 slices.  Pizzas are only sold sliced into 8 portions.  How many Pizzas does John need to order?",
+   "gold": 20949125.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_268",
+   "text": "There are 2158315 fourth-graders at Small Tree  School. 43 of them are girls. On Friday, 5 fourth-grade girls and 4 fourth-grade boys were absent. How many fourth grade boys were at Small Tree  School on Friday?",
+   "gold": 2158268.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_780",
+   "text": "Terry sells 6 milkshakes for $5.50 each, nine burger platters for $11 each, and 20 sodas for $4800670 each. How much money does he make in total?",
+   "gold": 96013532.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_561",
+   "text": "A perfume company is trying to create new scents. They already have 7067085 vanilla scents and 8 fruity scents available and they need to decide which kind of scent to focus on. They decide to focus on whichever scent sells the most and monitor their number of sales as part of their research. By the end of the day, they sell 5 of each of the vanilla scents and 2 of each of the fruity scents available. How many more vanilla scents sold compared with the fruity scents?",
+   "gold": 35335409.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_87",
+   "text": "Julia was preparing for a dinner party at her house, where she intended to serve stew.  She noticed that she was out of plastic spoons, so she bought a new package of spoons.  Later, her husband also bought a package of 5 new spoons and gave them to Julia.  While Julia was making the stew, she used 595534 of the spoons to sample her stew.  Later, when she went to set the table, she had a total of 12 spoons.  How many spoons were in the package that Julia bought?",
+   "gold": 595541.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_878",
+   "text": "Aiden is making his famous steakhouse-seasoned meatballs for a neighborhood cookout. He adds two tablespoons of his secret steakhouse seasoning for every pound of ground beef he uses. He gets sixteen meatballs from each pound of meat. If he wants to make 356062 meatballs for the cookout, how much of his secret seasoning will he need?",
+   "gold": 44507.75,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_337",
+   "text": "Shondra has 7 fewer plants than Toni. Toni has 60% more plants than Frederick. If Frederick has 2393737 plants, how many plants does Shondra have?",
+   "gold": 3829972.2,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_31",
+   "text": "John buys twice as many red ties as blue ties.  The red ties cost 50% more than blue ties.  He spent $200 on blue ties that cost $4824529 each. How much did he spend on ties?",
+   "gold": 800.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_427",
+   "text": "Jared is trying to increase his typing speed. He starts with 47 words per minute (WPM). After some lessons the next time he tests his typing speed it has increased to 8767805 WPM. If he continues to increase his typing speed once more by 5 words, what will be the average of the three measurements?",
+   "gold": 5845220.666666667,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_611",
+   "text": "Gabriel wants to buy a car for $1423561 and a phone for $800. Gabriel has $5000 from working on weekends and his brother gave him $200 to help him. How much money does he still need?",
+   "gold": 1419161.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_494",
+   "text": "If 6 potatoes makes 3335890 hash browns, how many hash browns can you make out of 96 potatoes?",
+   "gold": 53374240.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_84",
+   "text": "Miguel uses 2 pads of paper a week for his drawing. If there are 7690742 sheets of paper on a pad of paper, how many sheets of paper does he use every month?",
+   "gold": 61525936.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_333",
+   "text": "In a set of magicians cards, there are 2800655 red cards, and 60% more green cards. Yellow cards are as many, as the sum of red and green cards. How many cards of all mentioned colors are there?",
+   "gold": 14563406.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_256",
+   "text": "Davos bought 2 shirts from the mall that cost $924714 each. If he bought them with a 40% discount, how much did Davos pay for the 2 shirts?",
+   "gold": 1109656.8,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_167",
+   "text": "Kalinda is working on a 706828 piece puzzle with her mom. Kalinda can normally add 4 pieces per minute. Her mom can typically place half as many pieces per minute as Kalinda.  How many hours will it take them to complete this puzzle?",
+   "gold": 1963.4111111111,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_210",
+   "text": "Kelly has 5 quarters and 6647667 dimes. If she buys a can of pop for 55 cents, how many cents will she have left?",
+   "gold": 66476740.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1253",
+   "text": "Mary is making ice cubes with fruit frozen in them for a cocktail party. She makes some strawberry cubes, and a number of blueberry cubes equal to 5 times the number of strawberry cubes minus 4. If she makes 185761 ice cubes total, how many blueberry cubes does she make?",
+   "gold": 96.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1169",
+   "text": "2680935 kids went out on a school trip. In one of the several activities they participated in, they were divided into two equal groups of girls and boys and then went out for a scavenger hunt of seashells. The boys went out for the search and brought back 60 shells each. If the girls brought an amount equal to the number of shells brought by the boys plus four times as many seashells as the boys, how many seashells were brought by each girl?",
+   "gold": 300.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_217",
+   "text": "Darren decides to do body exercises for a whole week. He does 100 pushups, 7298805 squats, and 20 dumbbell presses on the first day. On the second day, he does 20 more pushups than on the first day, ten fewer squats, and doubles the number of dumbbell presses. What's the total count of the activities he's done in the two days?",
+   "gold": 14597880.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_968",
+   "text": "James decides to buy birthday candles for his 2 sons.  One of them is 500297 and the other is 4 years younger.  A pack of 5 candles costs $3.  How much does James spend on candles?",
+   "gold": 600354.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_698",
+   "text": "A hospital has a capacity of 2085459 beds with 1/5 occupied. Due to the coronavirus outbreak, 50 patients are admitted into the hospital each day. Calculate the total number of unoccupied beds in the hospital after 2 weeks.",
+   "gold": 1667667.2,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_118",
+   "text": "Jimmy has $2 more than twice the money Ethel has. If Ethal has $787534, how much money is Jimmy having?",
+   "gold": 1575070.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_412",
+   "text": "Three teenagers are playing soccer on the weekend. Richie, the first teenager, scored 20 more goals than Mark and scored 45 more goals than Anna. If Richie scored 3098388 goals, how many goals did all three teenagers score?",
+   "gold": 9295099.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_522",
+   "text": "Castle bought 3 boxes of Coco Crunch and 7590580 boxes of Fruit Loops this week. Last week she bought 4 boxes of cereal. How many more boxes of cereal did she buy this week than last week?",
+   "gold": 7590579.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_873",
+   "text": "Stephen borrowed $7076683 from his sister and promised to return it with an additional 2% of the money he owed. For 11 months Stephen will give his sister $25 per month and the remaining amount, including the interest, will be paid on the twelfth month. How much will Stephen pay in the twelfth month?",
+   "gold": 7217941.66,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_47",
+   "text": "There are four schools competing at a basketball tournament. Each school has sent a girls’ basketball team and a boys’ basketball team and each team has 9985788 players each. Each school has also sent a coach for each team. In total, how many people have all of the schools sent?",
+   "gold": 79886312.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_203",
+   "text": "It takes Matthew 3 minutes to dig a small hole for shrubs and 10 minutes to dig a large hole for trees.  How many hours will it take him to dig 2529765 small holes and 15 large holes?",
+   "gold": 126490.75,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_93",
+   "text": "The expenditure of Joseph in May was $8637403. In June, his expenditure was $60 less. How much was his total expenditure for those two months?",
+   "gold": 8637843.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1225",
+   "text": "A custodian has to clean a school with 5155598 classrooms. They have 5 days to get it done. It takes them 15 minutes per classroom. If they work an 8 hour day, what percentage of their day, on average, is spent cleaning classrooms?",
+   "gold": 3222248.75,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_483",
+   "text": "Rayna has 60 more dollars than Kassidy, and Kassidy has 3/4 times as much money as Aurelia. If Arelia has $5019439, how much would each have if they decided to add together their money and share equally among them?",
+   "gold": 4182885.8333333335,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1302",
+   "text": "Patty's Plumbing charges $40 to visit a house to make a repair, plus $1078430 per hour, or part thereof, for labor, plus parts. One job took 2.25 hours and used $60 in parts. How much did Patty charge?",
+   "gold": 3235390.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_614",
+   "text": "Peter has twice as many socks as Jack and half times as many dishes as jack. Jack collected twice as many dishes as socks in the store. If jack collected 3905266 dishes, calculate the total number of socks and dishes they have together?",
+   "gold": 11715798.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_279",
+   "text": "There are 8876718 pupils in a class. Half of the class likes blue. One-fourth of the remaining likes green and the rest likes yellow. How many pupils like the color yellow?",
+   "gold": 3328769.25,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_288",
+   "text": "An eraser costs $2 and a pencil costs $5698943. How much do 6 erasers and 8 pencils cost?",
+   "gold": 45591556.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_889",
+   "text": "Regina wrote 9205928 novels last year. If this is 3 quarters of the number of novels she has written this year, how many novels has she written this year?",
+   "gold": 12274570.666666666,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_23",
+   "text": "John takes care of 1328372 dogs.  Each dog takes .5 hours a day to walk and take care of their business.  How many hours a week does he spend taking care of dogs?",
+   "gold": 4649302.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_473",
+   "text": "Sally has realized she did not receive a full wage this week. Her bank account, which held $200 at the start of the week, now holds $420. She has received no other money into her bank account this week. If her weekly wage should be $8711885, how many dollars were withheld from Sally’s wage?",
+   "gold": 8711665.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_7",
+   "text": "A new program had 531811 downloads in the first month. The number of downloads in the second month was three times as many as the downloads in the first month, but then reduced by 30% in the third month. How many downloads did the program have total over the three months?",
+   "gold": 3244047.0999999996,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1295",
+   "text": "Felix notices that kids in the neighborhood are always getting things stuck in trees. Since he is an expert tree climber, he decided to start charging kids to get their stuff out. He charges based on how high he has to climb. Every branch he has to climb up costs $.25. During the week he made $3064177. On average, how many branches did he climb per day?",
+   "gold": 1750958.2857142857,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_757",
+   "text": "On Monday the post office delivered 8890433 letters. On Tuesday they delivered 17 more than one-fifth as many as Monday. On Wednesday they delivered 5 more than twice as many as they delivered on Tuesday. How many letters did the post office deliver Monday - Wednesday?",
+   "gold": 14224748.8,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_510",
+   "text": "Gerald and Julia divided $7032231 in the ratio 3:2. If Gerald spent $10 on a book, how much money did he have left?",
+   "gold": 4219328.6,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1166",
+   "text": "Jerry has two pools, both with leaks emptying them out at 4 gallons/minute. 4 minutes ago, the big pool had twice as much water as the small pool. Now the big pool has 4681732 times as much water as the small pool. How much water does the small pool have now?",
+   "gold": 9363464.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_523",
+   "text": "Helga was the fastest clog dancer in all of Slovenia. With both hands at her sides, she could tap her right foot at a rate of 300 taps per minute, while simultaneously tapping her left foot at a rate of 250 taps per minute.  When she raised her arms, her tap rate slowed down to 5294275 taps per minute with each foot.  If she dances a total of 5 minutes, with her arms raised during only 2 of those minutes, what would be the combined total number of times that she taps both of her feet?",
+   "gold": 10590600.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_1213",
+   "text": "I am three years younger than my brother, and I am 2 years older than my sister. My mom's age is one less than three times my brother's age. When you add all our ages, you get 7765611. How old am I?",
+   "gold": 13.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_760",
+   "text": "There are 3721525 books in a small library. Half of them are written in English, and 10% in German. All others are written in Spanish. How many Spanish books are there?",
+   "gold": 1488610.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_307",
+   "text": "Misha picks out 1107008 blouses from the 30% off rack.  The regular price for each blouse is $20.  How much is the total cost of the discounted blouses?",
+   "gold": 15498112.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_437",
+   "text": "Howard spends $8 dollars at the arcade on Monday. On Tuesday, he spends twice as much at the arcade as he did on Monday. On Wednesday, he spends 4 times as much at the arcade as he spent on Tuesday. If he originally had $1082634, how much money does he have left?",
+   "gold": 1082546.0,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_642",
+   "text": "At a spa, Iris spent $8108745 to do her hair, 1/4 as much to do a manicure, and 3/4 as much money as a manicure to do a pedicure. How much money did she spend at the spa?",
+   "gold": 11656320.9375,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  },
+  {
+   "problem_id": "gsm-hard_754",
+   "text": "Melissa is summoned to jury duty. She spends 6 hours a day for 3 days listening to a court case. If Melissa is paid $557654 per day but also has to pay $3 for parking each day, how much jury pay does she make per hour after expenses?",
+   "gold": 92941.8333333333,
+   "level": "A",
+   "subject": "gsm-hard-clean"
+  }
+ ]
+}

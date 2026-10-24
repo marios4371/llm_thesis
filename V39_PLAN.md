@@ -157,3 +157,103 @@ The probe itself is CogMath's, and ablation-based attribution is ContextCite's. 
   - a rewritten base sentence counted as added raises the hit share and its chance share together;
   - a change inside the question's core lowers both.
 - **Only ignored conditions are detectable.** A condition the model uses wrongly changes the answer when deleted.
+
+## 10. Interim (2026-10-22; 66 of 131 rows; NO verdict)
+
+`results_Octomber/pretest_v39.json` is worker 0 of the Kaggle run (`--shard 0/2`); its frozen hashes match. Worker 1's 65 rows are not here yet: 24 TARGET, 34 CONTROL, 7 GUARD.
+
+### 10.1 Numbers so far (`python pretest_v39.py --summary-only --out results_Octomber/pretest_v39.json`)
+
+| | TARGET | CONTROL | GUARD |
+|---|---|---|---|
+| read / analysed | 13 / 11 | 40 / 39 | 13 / 13 |
+| **PRIMARY flag** | **2/11 = 0.18** | **8/39 = 0.21** | 9/13 = 0.69 |
+| with question clauses | 0.18 | 0.21 | 0.85 |
+| numeric units only | 0.18 | 0.10 | 0.54 |
+| textual ledger (no model) | 2/11 | 0/39 | 3/13 |
+| added units invariant | 1/13 | 1/41 | 8/15 |
+| same units invariant | 3/25 | 6/78 | 5/22 |
+
+- **DETECTION so far:** −0.02, Fisher p = 0.71.
+- **LOCALIZATION:** 2 flagged TARGET rows, where 10 are needed.
+- **AUROC of the invariant share, T vs C:** 0.495.
+- **No variant without a parsable answer** (0 of 273).
+- **Cost:** 200 s per row (3.7 h for 66 rows on one T4). That is about twice the section 6 estimate: a batch waits for its longest completion, and 4-bit decoding slows as the batch grows.
+
+### 10.2 What the first half shows (post-hoc; not a verdict)
+
+- **The probe works where ignoring happens.** On GUARD, 8 of the 9 flagged rows flag the inserted distractor: the model ignores irrelevant text, and deleting it leaves the answer unchanged.
+- **The confident errors mostly do not ignore anything.** In 9 of 11 analysed TARGET rows, every informative deletion changes the wrong answer. Only 1 of 13 added units is invariant. The model reads the added clause and gets something else wrong:
+
+| row | what went wrong | what deletion shows |
+|---|---|---|
+| p2_1012 | arithmetic slip, 198 + 92 + 594 = 984 | nothing is ignored |
+| p2_2433 | the sauté time inside the first sentence is dropped | sentence deletion cannot isolate a sub-sentence omission |
+| p2_1625, p2_1639 | fees taken on the original instead of the discounted price; arguably an ambiguous base | nothing is ignored |
+| p2_2193, p2_2184 | only the rabbits among the 60 white animals are counted as animals | the added clause is used, but misread |
+| p2_2257 | the 7 flowers she already owns are ignored | detected, but it is an original sentence, so not a localization hit |
+| p2_1689 | the added weekends-only clause is ignored | detected, a hit |
+
+- **CONTROL false alarms are narrative sentences** that the cue list marks as informative, e.g. "When Priya watches her brother, she gets out a variety of toys for him."
+- **Offline cross-check on all 37 TARGET rows** (stored samples, the frozen v38 audit and surgery): 8 rows have a consensus that the trace audit refutes, and in 5 of them the propagated repair reaches the gold answer (p2_169, p2_1012, p2_948, p2_2380, p2_922). Those "reading" errors are arithmetic slips that ADAPT-RS already handles.
+
+### 10.3 What the second half would need (a guide, not a pre-registered futility rule)
+
+- **DETECTION:** about 12 of its roughly 22 analysed TARGET rows must be flagged (55%), against 2 of 11 so far (18%). With a uniform prior updated on the first half, the probability is about 0.035.
+- **LOCALIZATION:** at least 8 more flagged TARGET rows, with hits well above chance.
+
+## 11. FINAL (2026-10-22; 131/131 rows; Kaggle T4 x2, both workers exit 0)
+
+The pre-registered summary printed at the end of the Kaggle run (log of the run at code 3869ace8, `test_v39.py` 61/61, frozen hashes `clause_ablation.py 260bafc6b5bc`, `v39_ablation.json ef6833dabaed`):
+
+| | TARGET | CONTROL | GUARD |
+|---|---|---|---|
+| read / analysed | 37 / 32 (5 greedy flips) | 74 / 70 (4 flips) | 20 / 20 |
+| **PRIMARY flag** | **7/32 = 0.22** | **15/70 = 0.21** | 14/20 = 0.70 |
+| with question clauses | 8/32 = 0.25 | 15/70 = 0.21 | 16/20 = 0.80 |
+| numeric units only | 6/32 = 0.19 | 9/70 = 0.13 | 12/20 = 0.60 |
+| textual ledger (no model) | 4/32 = 0.12 | 0/70 | 7/20 = 0.35 |
+| added units invariant | 3/42 | 1/74 | 13/21 |
+| modified units invariant | 1/7 | 2/24 | 1/11 |
+| same units invariant | 8/84 | 13/138 | 6/34 |
+
+### 11.1 The pre-registered reading
+
+- **DETECTION: NOT MET.** f<sub>T</sub> 0.22 − f<sub>C</sub> 0.21 = +0.00, Fisher p = 0.575.
+- **LOCALIZATION: NOT MET.** 4 of 7 flagged TARGET rows hit a changed unit: 0.57 against a chance of 0.49 (excess +0.08), and only 7 rows where 10 are needed. p = 0.48.
+- **VERDICT: NO-GO.**
+
+**Reported, not decisive:**
+- AUROC of the invariant share, T vs C: 0.504.
+- f<sub>T</sub>/f<sub>C</sub> = 1.02, against the 2.74 a gated Reader would need.
+- One row per template: T 5/18 vs C 4/30, Fisher p = 0.19.
+- Per pool, T vs C: P2a 0.15 vs 0.12, P2b 0.20 vs 0.25, V21 0.33 vs 0.24.
+- On TARGET, deletion and the ledger overlap on 1 row: 6 rows deletion only, 3 ledger only.
+- No variant without a parsable answer (0 of 560).
+- Cost: 224 s per row on average. Worker 0 took 66 rows × 200 s and worker 1 took 65 rows × 249 s: about **8.2 GPU-hours**, 4.6 h of wall time. That is roughly twice the section 6 estimate.
+
+### 11.2 What the null says (post-hoc; the bars above are the result)
+
+**The probe works.** Deleting text the model really ignores leaves its answer unchanged:
+- On GUARD, 14 of 20 rows are flagged, and in 12 of them the flagged units include the inserted distractor.
+- 13 of the 21 inserted (added) GUARD units are invariant.
+
+**The confident P2 errors do not ignore the added clause.**
+- Only **3 of 42** added units in analysed TARGET rows are invariant (7%). CONTROL is at 1 of 74 (1%).
+- Truly ignored text is invariant 62% of the time (GUARD). Against that, TARGET's 7% differs with post-hoc Fisher p = 7e-6. Greedy instability after a deletion cannot explain the gap, because the GUARD rate already includes it.
+- TARGET vs CONTROL: p = 0.13.
+
+**In the confidently wrong rows, the model reads the added condition and applies it wrongly.** The interim showed this unit by unit (section 10.2):
+- an arithmetic slip, 198 + 92 + 594 = 984;
+- a sub-sentence omission, the sauté time;
+- fees taken on the original instead of the discounted price;
+- only the rabbits counted among the 60 white animals.
+
+**The probe flags sentences the answer does not depend on, which is not quite the same as sentences the model skipped.** In p2_2257 the model uses "Daphne already owns 7 flowers", but it charges all 11 plants including the 7 she owns, so the sentence has no effect on the answer.
+
+**Consequence for the thesis.** On P2, "recitation" is **misapplication, not omission**. Every method that looks for an ignored or unspent condition cannot reach these errors: v21's ledger (4/32 here), v39's deletion probe, and any "re-read the clause you skipped" repair. This is consistent with v24's Reader findings: a reading changes the answer both ways because the model does read. Separately, 5 of the 37 TARGET rows are carry slips that v38's surgery already propagates to the gold answer (section 10.2).
+
+### 11.3 Files
+
+- `results_Octomber/pretest_v39.json` is worker 0 (`--shard 0/2`, 66 rows).
+- Worker 1's `pretest_v39_gpu1.json` (65 rows) belongs next to it as `results_Octomber/pretest_v39_gpu1.json`. `python pretest_v39.py --summary-only --out results_Octomber/pretest_v39.json` then merges both and reprints this section's table.
