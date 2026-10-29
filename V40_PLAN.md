@@ -111,6 +111,19 @@ Per row and model:
 
 The laptop has a GTX 1650 with 4 GB of VRAM and 7.8 GB of RAM. Models of 4B parameters or less fit on the GPU; 7–8B models run mostly on the CPU.
 
+### 5.1 FROZEN 2026-10-26 after the pilot (10 v36 rows per model; Ollama 0.40.8; no accuracy read)
+
+| model | s/row | tok/s | tokens/sample | truncated | unparsed | checked | prefill | hours for 200 rows | decision |
+|---|---|---|---|---|---|---|---|---|---|
+| `llama3.2:3b` (Meta) | 35 | 45.6 | 320 | 2% | 0% | 60% | yes | 2.0 | **IN** |
+| `phi4-mini` (Microsoft) | 70 | 17.8 | 248 | 0% | 0% | 58% | yes | 3.9 | **IN** |
+| `gemma3:4b` (Google) | 320 | 7.7 | 491 | 12% | 0% | 90% | yes | 17.8 | **IN, last**: it gets the remaining hours (~12 h ≈ 135 rows, above the 100-row inclusion bar) |
+| `qwen3:4b` (Alibaba) | 493 | 14.2 | 1399 | 64% | 0% | 92% | yes | 27.4 | **OUT** by criterion (a): it does not fit the laptop budget; 64% of its samples hit the 1536-token cap even with thinking off |
+
+- **Criteria (b) and (c).** Every candidate passes them: no unparsed answers, and 58–92% of samples carry a checked claim.
+- **Run order:** llama3.2:3b → phi4-mini → gemma3:4b. The laptop budget is `--max-hours 18`, decided before any main-row sample.
+- **Kaggle:** DeepSeek-Math-7B-RL and Granite-3.1-8B-Instruct, as planned.
+
 ## 6. How to run
 
 **Thursday–Friday, once:** pull the candidate models (`ollama pull llama3.2:3b`, …).

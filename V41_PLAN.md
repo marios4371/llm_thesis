@@ -58,3 +58,25 @@ Sessions 1–4 total about 28 h. After session 2, v41 already has about 245 rows
     python pretest_v41.py --summary-only --out results_Octomber/pretest_v41.json
 
 The v38 files in `results_Octomber/` add the pooled v38 + v41 line.
+
+## 6. RESULT (2026-10-29; 254 of 319 rows; Kaggle sessions 1 and 3)
+
+`results_Octomber/preset_V41_2nd.json` holds rows 0–253 of the manifest, in order. Its first 121 rows are byte-identical to session 1's file. The frozen hashes are v38's, and no surgery-stage errors were recorded. Session 2 did not resume (its input file had another name) and re-drew rows 0–117. Its numbers are kept below as a re-draw; the file itself was overwritten.
+
+| arm | right / 254 | calls/row |
+|---|---|---|
+| SC5 | 161 | 5.00 |
+| ADAPT | 165 | 3.44 |
+| ADAPT-R | 169 | 3.53 |
+| **ADAPT-RS** | **177** | 3.49 |
+
+**The pre-registered reading** (≥ 150 rows):
+- **PRIMARY: REPLICATED and significant.** ADAPT-RS vs ADAPT-R: W9 L1, net +8, sign p = 0.0215.
+- **SECONDARY: NO WORSE THAN THE VOTE.** ADAPT-RS vs SC5: W20 L4, net +16, p = 0.0015.
+
+**Reported, not decisive:**
+- **v38 + v41 pooled, 454 rows.** ADAPT-RS vs ADAPT-R: **W18 L1, net +17, p = 0.0001**. ADAPT-RS vs SC5: W33 L6, net +27, p < 0.0001.
+- **Surgery.** 143 refuted samples, all of them operable. Propagation rescued 99 of 140 wrong samples and broke 1 of 3 right ones. Coverage: 11 of the 75 rows with no right sample gain one.
+- **Precision of the audit.** It refuted 3 of 731 right samples and 140 of 378 wrong ones.
+- **Session 2's independent re-draw of rows 0–117.** ADAPT-RS 79, ADAPT-R 77, ADAPT 73, SC5 73. ADAPT-RS vs ADAPT-R: W2 L0. Vs SC5: W6 L0.
+- **The remaining 65 rows (254–318)** can still be run (Colab); the verdict above does not depend on them.

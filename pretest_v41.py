@@ -158,10 +158,22 @@ def main() -> int:
     ap.add_argument('--summary-only', action='store_true')
     ap.add_argument('--reverse', action='store_true')
     ap.add_argument('--merge', action='append', default=[])
+    ap.add_argument('--require-resume', action='store_true',
+                    help='refuse to start unless --out already holds completed rows (a session that cannot '
+                         'find its file would re-run rows 0.. and waste the session, as session 2 did)')
     args = ap.parse_args()
     if args.build_manifest:
         return build_manifest(args.force)
     install()
+    if args.require_resume and not args.summary_only:
+        out = args.out or OUT
+        n = (sum(V38.complete(r) for r in V38.V24._read(out).get('rows', {}).values())
+             if os.path.exists(out) else 0)
+        if n == 0:
+            print(f"REFUSING TO START: {out} is missing or holds no complete row (--require-resume). "
+                  f"Put the last result file there under that exact name.")
+            return 4
+        print(f"resuming: {n} complete rows in {out}")
     if args.summary_only:
         return summarise([args.out or (OUT_STUB if args.stub else OUT)] + args.merge)
     code = V38.run(args)
